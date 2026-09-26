@@ -780,6 +780,38 @@ pub fn push_artifact(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/// The URL to print for something just pushed to `endpoint`.
+///
+/// The hub's own answer is used as it stands, with one exception: a hub
+/// that is not treeship's and still answers with a treeship.dev address is
+/// an unconfigured self-hosted hub (0.31.9 hard-coded that string), and
+/// nothing exists at that address. Then, or when the hub returns no URL,
+/// the object is where we just put it: the hub's own API path, which
+/// `treeship verify <url>` accepts. Nothing here trusts a request header;
+/// the endpoint is the one the operator attached.
+pub(crate) fn share_url(endpoint: &str, returned: Option<&str>, api_path: &str) -> String {
+    let own = format!("{}{}", endpoint.trim_end_matches('/'), api_path);
+    let Some(returned) = returned.filter(|u| !u.is_empty()) else {
+        return own;
+    };
+    if is_treeship_host(host_of(returned)) && !is_treeship_host(host_of(endpoint)) {
+        return own;
+    }
+    returned.to_string()
+}
+
+fn host_of(url: &str) -> &str {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let rest = rest.split('/').next().unwrap_or("");
+    let rest = rest.rsplit('@').next().unwrap_or(rest);
+    rest.split(':').next().unwrap_or("")
+}
+
+fn is_treeship_host(host: &str) -> bool {
+    let h = host.to_ascii_lowercase();
+    h == "treeship.dev" || h.ends_with(".treeship.dev")
+}
+
 /// Push a single artifact to a specific hub connection.
 fn push_artifact_to_hub(
     ctx: &crate::ctx::Ctx,
@@ -812,7 +844,11 @@ fn push_artifact_to_hub(
         .send_json(&body)?
         .into_json()?;
 
-    let hub_url = resp["hub_url"].as_str().unwrap_or("").to_string();
+    let hub_url = share_url(
+        &entry.endpoint,
+        resp["hub_url"].as_str(),
+        &format!("/v1/artifacts/{}", record.artifact_id),
+    );
     let rekor_index = resp["rekor_index"].as_u64();
 
     // 4. Update local record with hub_url
@@ -959,9 +995,6 @@ fn print_push_result(printer: &Printer, hub_name: &str, result: &PushResult) {
             ("rekor", &rekor_str),
         ],
     );
-    if !result.hub_url.is_empty() {
-        printer.hint(&format!("treeship open {}", result.hub_url));
-    }
     printer.blank();
 }
 
@@ -1151,6 +1184,55 @@ mod tests {
     use super::*;
     use crate::config::HubConnection;
     use tempfile::tempdir;
+
+    #[test]
+    fn share_url_keeps_the_hubs_answer_unless_it_points_at_treeship_from_elsewhere() {
+        // The public hub's answer stands.
+        assert_eq!(
+            share_url(
+                "https://api.treeship.dev",
+                Some("https://treeship.dev/verify/art_1"),
+                "/v1/artifacts/art_1"
+            ),
+            "https://treeship.dev/verify/art_1"
+        );
+        // A self-hosted hub with a page site: its answer stands.
+        assert_eq!(
+            share_url(
+                "https://hub.example.com",
+                Some("https://receipts.example.com/verify/art_1"),
+                "/v1/artifacts/art_1"
+            ),
+            "https://receipts.example.com/verify/art_1"
+        );
+        // A self-hosted hub still answering with treeship.dev: corrected.
+        assert_eq!(
+            share_url(
+                "http://localhost:18089/",
+                Some("https://treeship.dev/verify/art_1"),
+                "/v1/artifacts/art_1"
+            ),
+            "http://localhost:18089/v1/artifacts/art_1"
+        );
+        // No answer at all: the hub's own path.
+        assert_eq!(
+            share_url("http://localhost:18089", None, "/v1/receipt/ssn_1"),
+            "http://localhost:18089/v1/receipt/ssn_1"
+        );
+        assert_eq!(
+            share_url("http://localhost:18089", Some(""), "/v1/receipt/ssn_1"),
+            "http://localhost:18089/v1/receipt/ssn_1"
+        );
+        // A lookalike host is not treeship.
+        assert_eq!(
+            share_url(
+                "https://hub.example.com",
+                Some("https://treeship.dev.evil.example/verify/art_1"),
+                "/v1/artifacts/art_1"
+            ),
+            "https://treeship.dev.evil.example/verify/art_1"
+        );
+    }
 
     fn conn(hub_id: &str, secret: Option<String>) -> HubConnection {
         HubConnection {

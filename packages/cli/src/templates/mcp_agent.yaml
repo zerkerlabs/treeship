@@ -9,7 +9,6 @@ audience: [developer]
 session:
   actor: agent://mcp
   auto_start: true
-  auto_push: true
 
 # MCP bridge handles attestation -- no shell command rules needed.
 # Install: npm install @treeship/mcp
@@ -22,7 +21,6 @@ capture:
   model_metadata: false
 
 hub:
-  auto_push: true
   push_on: [session_close]
 
 onboarding: |

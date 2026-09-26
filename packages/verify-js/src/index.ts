@@ -95,14 +95,71 @@ async function loadWasm(): Promise<WasmBindings> {
 /** Accepted input shapes across all exported functions. */
 export type VerifyTarget = string | URL | Record<string, unknown>;
 
+/**
+ * The JSON API URL for a receipt URL a person pasted.
+ *
+ * `/receipt/<id>` (the human page) becomes `/v1/receipt/<id>`; `/v1/receipt/<id>`
+ * and the site's `/api/receipt/<id>` mirror are already the API and are kept.
+ * The host is never rewritten, a trailing slash is dropped, the query string
+ * is kept and the fragment dropped. Anything else throws rather than being
+ * fetched. Through 0.31.9 this was a blind `replace('/receipt/', …)`, which
+ * turned the documented `https://api.treeship.dev/v1/receipt/<id>` into
+ * `/v1/v1/receipt/<id>` and a 404. The rule is shared with the CLI
+ * (`receipt_api_url` in verify_external.rs) through
+ * `tests/vectors/receipt-urls.json`; change both or neither.
+ *
+ * @internal Exported for the shared-vector test; not part of the package's
+ * supported API.
+ */
+export function receiptApiUrl(raw: string): string {
+  const refuse = () =>
+    new Error(
+      `not a receipt URL: ${raw} (expected …/receipt/<session id> or …/v1/receipt/<session id>)`,
+    );
+  const schemeEnd = raw.indexOf('://');
+  if (schemeEnd < 0) throw refuse();
+  const scheme = raw.slice(0, schemeEnd).toLowerCase();
+  if (scheme !== 'http' && scheme !== 'https') throw refuse();
+  const afterScheme = raw.slice(schemeEnd + 3);
+  const slash = afterScheme.indexOf('/');
+  const host = slash < 0 ? afterScheme : afterScheme.slice(0, slash);
+  const pathAndQuery = slash < 0 ? '' : afterScheme.slice(slash);
+  // Userinfo (`treeship.dev@evil.example`) reads as one host and fetches
+  // another; a pasted receipt link never carries it.
+  if (host.length === 0 || host.includes('@')) throw refuse();
+  const noFragment = pathAndQuery.split('#')[0];
+  const q = noFragment.indexOf('?');
+  const query = q < 0 ? null : noFragment.slice(q + 1);
+  const path = (q < 0 ? noFragment : noFragment.slice(0, q)).replace(/\/+$/, '');
+
+  // The id is whatever follows the receipt segment: exactly one path
+  // segment of id characters, so `..`, `%2F` and friends never reach the
+  // request.
+  const idAfter = (marker: string): [number, string] | null => {
+    const i = path.indexOf(marker);
+    if (i < 0) return null;
+    const id = path.slice(i + marker.length);
+    return /^[A-Za-z0-9_-]+$/.test(id) ? [i, id] : null;
+  };
+
+  let apiPath: string;
+  if (idAfter('/v1/receipt/')) apiPath = path;
+  else if (idAfter('/api/receipt/')) apiPath = path;
+  else {
+    const hit = idAfter('/receipt/');
+    if (!hit) throw refuse();
+    apiPath = `${path.slice(0, hit[0])}/v1/receipt/${hit[1]}`;
+  }
+  return `${scheme}://${host}${apiPath}${query === null ? '' : `?${query}`}`;
+}
+
 async function normalizeToJson(target: VerifyTarget): Promise<string> {
   if (typeof target === 'object' && !(target instanceof URL)) {
     return JSON.stringify(target);
   }
   const raw = target instanceof URL ? target.toString() : target;
   if (raw.startsWith('http://') || raw.startsWith('https://')) {
-    // Accept both the Hub JSON API path and the human-readable mirror.
-    const apiUrl = raw.replace('/receipt/', '/v1/receipt/');
+    const apiUrl = receiptApiUrl(raw);
     const res = await fetch(apiUrl, { headers: { accept: 'application/json' } });
     if (!res.ok) throw new Error(`fetch ${apiUrl} returned HTTP ${res.status}`);
     return await res.text();

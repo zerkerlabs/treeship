@@ -327,6 +327,133 @@ pub fn verify_participant_envelope(
     Ok(stmt)
 }
 
+/// The artifact id of a participant envelope.
+///
+/// `session join` stores the pending envelope (joining signature only) under
+/// `art_` + the first 16 bytes of SHA-256 over its JSON, and `session
+/// countersign` keeps that id when it appends the host signature. So the id
+/// is re-derived from the envelope with its countersign removed, not from the
+/// DSSE PAE as for every other artifact.
+pub fn participant_artifact_id(envelope: &Envelope) -> Result<String, ParticipantVerifyError> {
+    use sha2::{Digest, Sha256};
+    let mut pending = envelope.clone();
+    pending.signatures.truncate(1);
+    let bytes = pending
+        .to_json()
+        .map_err(|e| ParticipantVerifyError::BadPayload(format!("encode pending envelope: {e}")))?;
+    Ok(format!("art_{}", hex::encode(&Sha256::digest(bytes)[..16])))
+}
+
+/// Why a participant could not be verified from a package's own bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParticipantArtifactError {
+    /// The participant envelope or its invitation failed a check.
+    Participant(ParticipantVerifyError),
+    /// Anything about the invitation or the binding between the two.
+    Invitation(String),
+}
+
+impl std::fmt::Display for ParticipantArtifactError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Participant(e) => write!(f, "{e}"),
+            Self::Invitation(m) => write!(f, "{m}"),
+        }
+    }
+}
+
+/// Verify a sealed participant against the invitation it redeems, both taken
+/// from the same sealed set, with the invitation's signing key as the package
+/// names it (CLI-3). Package verify used to check a participant like any
+/// other artifact, as a DSSE PAE signature by `signatures[0]`, and failed
+/// every countersigned join: the joining agent and the host sign the
+/// participant's canonical bytes, not the PAE.
+///
+/// Checks, in order:
+/// 1. the invitation's DSSE signature verifies under `invitation_key`, its id
+///    re-derives to `participant.invitation_ref`, and it is an invitation;
+/// 2. `invitation_key` is the invitation's `issuer`, so the host key the
+///    countersign is checked against is a key the package carries (and that
+///    the caller's signer-trust row covers);
+/// 3. both participant signatures verify over the canonical bytes
+///    ([`verify_participant_envelope`] against the issuer);
+/// 4. participant and invitation name `session_id`, the sealing session;
+/// 5. the participant id re-derives to `participant_id`
+///    ([`participant_artifact_id`]).
+///
+/// TODO(W1-3, Lane B): `treeship verify`'s `verify_session_participant`
+/// (packages/cli/src/commands/verify.rs) runs the same checks against local
+/// storage; move it onto this function so the two verifiers cannot drift.
+pub fn verify_participant_artifact(
+    envelope: &Envelope,
+    participant_id: &str,
+    invitation: &Envelope,
+    invitation_key: VerifyingKey,
+    session_id: &str,
+) -> Result<SessionParticipantStatement, ParticipantArtifactError> {
+    use crate::statements::invitation::{InvitationStatement, TYPE_INVITATION};
+    let inv_err = |m: String| ParticipantArtifactError::Invitation(m);
+
+    let stmt: SessionParticipantStatement = envelope.unmarshal_statement().map_err(|e| {
+        ParticipantArtifactError::Participant(ParticipantVerifyError::BadPayload(e.to_string()))
+    })?;
+
+    let inv_sig = invitation.signatures.first().ok_or_else(|| {
+        inv_err(format!(
+            "invitation {} carries no signature",
+            stmt.invitation_ref
+        ))
+    })?;
+    let res = crate::attestation::verify_with_key(invitation, &inv_sig.keyid, invitation_key)
+        .map_err(|e| {
+            inv_err(format!(
+                "invitation {} signature invalid: {e}",
+                stmt.invitation_ref
+            ))
+        })?;
+    if res.artifact_id != stmt.invitation_ref {
+        return Err(inv_err(format!(
+            "participant names invitation {} but the sealed invitation re-derives to {}",
+            stmt.invitation_ref, res.artifact_id
+        )));
+    }
+    let inv: InvitationStatement = invitation
+        .unmarshal_statement()
+        .map_err(|e| inv_err(format!("invitation payload invalid: {e}")))?;
+    if inv.type_ != TYPE_INVITATION {
+        return Err(inv_err(format!(
+            "{} is not an invitation",
+            stmt.invitation_ref
+        )));
+    }
+    if inv.issuer != URL_SAFE_NO_PAD.encode(invitation_key.to_bytes()) {
+        return Err(inv_err(format!(
+            "invitation {} names issuer {} but is signed by a different key ({})",
+            stmt.invitation_ref, inv.issuer, inv_sig.keyid
+        )));
+    }
+
+    verify_participant_envelope(envelope, &inv.issuer)
+        .map_err(ParticipantArtifactError::Participant)?;
+
+    if stmt.session_ref != session_id || inv.session_ref != session_id {
+        return Err(inv_err(format!(
+            "participant joins session {} by an invitation to {}, but this package seals {}",
+            stmt.session_ref, inv.session_ref, session_id
+        )));
+    }
+    let derived =
+        participant_artifact_id(envelope).map_err(ParticipantArtifactError::Participant)?;
+    if derived != participant_id {
+        return Err(ParticipantArtifactError::Participant(
+            ParticipantVerifyError::BadPayload(format!(
+                "sealed as {participant_id} but the pending envelope re-derives to {derived}"
+            )),
+        ));
+    }
+    Ok(stmt)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

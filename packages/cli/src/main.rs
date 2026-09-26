@@ -2,11 +2,13 @@ mod commands;
 mod config;
 mod ctx;
 mod execution_identity;
+mod exit;
 mod otel;
 mod printer;
 mod redact;
 mod templates;
 mod tui;
+mod validate;
 
 use clap::{Args, Parser, Subcommand};
 use printer::{Format, Printer};
@@ -609,8 +611,14 @@ enum Command {
     ///
     /// Examples:
     ///   treeship checkpoint
+    ///   treeship checkpoint --publish
     #[command(hide = true)]
-    Checkpoint,
+    Checkpoint {
+        /// Publish the sealed checkpoint to the attached hub in the same
+        /// command; a failed push exits nonzero
+        #[arg(long, default_value_t = false)]
+        publish: bool,
+    },
 
     /// Merkle tree operations
     ///
@@ -720,6 +728,11 @@ enum Command {
     ///   treeship zk-tls-setup
     #[command(hide = true)]
     ZkTlsSetup,
+
+    /// The command tree as JSON, for the contract test. Not a stable
+    /// interface.
+    #[command(name = "__dump-cli", hide = true)]
+    DumpCli,
 
     /// Print version and build info
     Version,
@@ -1759,7 +1772,7 @@ enum AttestCommand {
     /// Examples:
     ///   treeship attest action --actor agent://researcher --action tool.call
     ///   treeship attest action --actor agent://checkout --action stripe.charge.create \
-    ///     --input-digest sha256:abc123 --output-digest sha256:def456 \
+    ///     --input-digest sha256:<64 hex> --output-digest sha256:<64 hex> \
     ///     --parent art_a1b2c3d4 --approval-nonce abc123xyz
     ///   treeship attest action --v2 --actor agent://checkout --action payments.charge \
     ///     --grant grn_a1b2c3d4e5f60718 --effect-confidence not_verified
@@ -3187,13 +3200,41 @@ fn main() {
 
     let cli = Cli::parse();
 
+    // `--format xml` used to run as text and exit 0.
+    if let Err(e) = validate::output_format(&cli.format) {
+        Printer::new(Format::Text, false, cli.no_color).failure(&e.to_string(), &[]);
+        std::process::exit(exit::code_for(e.as_ref()));
+    }
     let format = Format::from_str(&cli.format);
     let printer = Printer::new(format, cli.quiet, cli.no_color);
 
     if let Err(e) = dispatch(&cli, &printer) {
         printer.failure(&e.to_string(), &[]);
-        std::process::exit(exit_code(&e.to_string()));
+        // The code comes from the error's type (exit.rs), never its words.
+        std::process::exit(exit::code_for(e.as_ref()));
     }
+}
+
+/// The command tree as data, for `tests/json_contract.rs` and anything
+/// else that must cover every command rather than the ones a hand-written
+/// list remembers. Hidden commands are included and marked.
+fn dump_command(cmd: &clap::Command) -> serde_json::Value {
+    let args: Vec<String> = cmd
+        .get_arguments()
+        .filter(|a| !a.is_global_set())
+        .map(|a| a.get_id().to_string())
+        .collect();
+    let subcommands: Vec<serde_json::Value> = cmd
+        .get_subcommands()
+        .filter(|c| c.get_name() != "help")
+        .map(dump_command)
+        .collect();
+    serde_json::json!({
+        "name": cmd.get_name(),
+        "hidden": cmd.is_hide_set(),
+        "args": args,
+        "subcommands": subcommands,
+    })
 }
 
 /// Print top-level help with every subcommand visible, including the
@@ -3201,9 +3242,11 @@ fn main() {
 fn print_help_all() {
     use clap::CommandFactory;
     let mut cmd = Cli::command();
+    // Test-only commands (`__dump-cli`) stay hidden even here.
     let names: Vec<String> = cmd
         .get_subcommands()
         .map(|c| c.get_name().to_string())
+        .filter(|n| !n.starts_with("__"))
         .collect();
     for name in names {
         cmd = cmd.mut_subcommand(name, |sc| sc.hide(false));
@@ -3213,7 +3256,16 @@ fn print_help_all() {
 
 fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     match &cli.command {
-        Command::Ui => tui::run(cli.config.as_deref()),
+        Command::Ui => {
+            use std::io::IsTerminal;
+            if !std::io::stdout().is_terminal() {
+                return Err(
+                    "treeship ui needs a terminal (stdout is not a TTY); use `treeship status` or `treeship status --format json` instead"
+                        .into(),
+                );
+            }
+            tui::run(cli.config.as_deref())
+        }
 
         Command::Dashboard(args) => commands::dashboard::run(
             commands::dashboard::DashboardOptions {
@@ -3243,7 +3295,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             #[cfg(not(feature = "otel"))]
             {
                 let _ = sub; // suppress unused warning
-                commands::otel::not_available(printer);
+                commands::otel::not_available(printer)?;
             }
             Ok(())
         }
@@ -3278,7 +3330,20 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
         Command::ZkTlsSetup => commands::zk::tls_notary_setup(printer),
 
         Command::Version => {
-            println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));
+            if printer.format == Format::Json {
+                printer.json(&serde_json::json!({
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "implementation": "rust",
+                }));
+            } else {
+                println!("treeship {} (rust)", env!("CARGO_PKG_VERSION"));
+            }
+            Ok(())
+        }
+
+        Command::DumpCli => {
+            use clap::CommandFactory;
+            printer.json(&dump_command(&Cli::command()));
             Ok(())
         }
 
@@ -3848,9 +3913,9 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                         (Some(s), _) => s.clone(),
                         (None, "list") => String::new(),
                         (None, _) => {
-                            return Err(
-                                "--system <URI> is required: who produced this receipt".into()
-                            )
+                            return Err(exit::usage(
+                                "--system <URI> is required: who produced this receipt",
+                            ))
                         }
                     },
                     kind: a.kind.clone(),
@@ -4108,7 +4173,9 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             }
         },
 
-        Command::Checkpoint => commands::merkle::checkpoint(cli.config.as_deref(), printer),
+        Command::Checkpoint { publish } => {
+            commands::merkle::checkpoint_with(cli.config.as_deref(), *publish, printer)
+        }
 
         Command::Merkle(sub) => match sub {
             MerkleCommand::Proof(a) => {
@@ -4120,22 +4187,14 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 } else if a.args.len() == 1 {
                     (None, a.args[0].as_str())
                 } else {
-                    return Err("usage: treeship merkle verify [root] <proof.json>".into());
+                    return Err(exit::usage(
+                        "usage: treeship merkle verify [root] <proof.json>",
+                    ));
                 };
                 commands::merkle::verify(root, path, printer)
             }
             MerkleCommand::Status => commands::merkle::status(cli.config.as_deref(), printer),
             MerkleCommand::Publish => commands::merkle::publish(cli.config.as_deref(), printer),
         },
-    }
-}
-
-fn exit_code(msg: &str) -> i32 {
-    if msg.contains("not initialized") || msg.contains("treeship init") {
-        3
-    } else if msg.contains("required") || msg.contains("no command given") {
-        4
-    } else {
-        1
     }
 }

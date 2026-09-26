@@ -17,6 +17,8 @@ treeship daemon start --foreground
 treeship daemon start --no-push
 ```
 
+Without `--foreground` the daemon runs as a detached process and the command returns once it has written `.treeship/daemon.pid` (`<pid> <start epoch>`); its output goes to `.treeship/daemon.log`. `--foreground` keeps it attached to the terminal.
+
 ### Options
 
 | Option | Description |
@@ -41,6 +43,10 @@ Check whether the daemon is running.
 ```bash
 treeship daemon status
 ```
+
+## Checkpoint cadence
+
+Opt-in. With `checkpoint.every` set in `.treeship/config.yaml` (for example `6h`), the daemon seals a checkpoint and publishes it to the attached hub whenever the newest local checkpoint is older than the interval, and logs each publish. Without the setting nothing is sealed or published on a schedule; without a running daemon the setting does nothing, and `treeship doctor` says so. See [`treeship checkpoint`](/cli/merkle#on-a-schedule).
 
 ## File write attestation
 

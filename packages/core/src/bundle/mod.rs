@@ -534,12 +534,11 @@ mod tests {
         let (store, dir) = tmp_store();
         let signer = Ed25519Signer::generate("key_test").unwrap();
         let verifier = crate::attestation::Verifier::from_signer(&signer);
-        let a1 = sign_and_store(
-            &store,
-            &signer,
-            &payload_type("action"),
-            &ActionStatement::new("agent://a", "tool.call"),
-        );
+        // One statement, signed in both stores. It carries a timestamp, so
+        // building it twice gave different bytes (and ids) whenever the two
+        // constructions straddled a second: a flaky "same bytes, same id".
+        let stmt = ActionStatement::new("agent://a", "tool.call");
+        let a1 = sign_and_store(&store, &signer, &payload_type("action"), &stmt);
         let anchor = |mech: &str, proof: Option<serde_json::Value>| RecordAnchor {
             mechanism: mech.into(),
             observed_at: "2026-09-24T00:00:00Z".into(),
@@ -568,12 +567,7 @@ mod tests {
         assert_eq!(ef.anchors[&a1][0].mechanism, "rekor");
 
         let (store2, dir2) = tmp_store();
-        let local = sign_and_store(
-            &store2,
-            &signer,
-            &payload_type("action"),
-            &ActionStatement::new("agent://a", "tool.call"),
-        );
+        let local = sign_and_store(&store2, &signer, &payload_type("action"), &stmt);
         assert_eq!(local, a1, "same bytes, same id");
         store2
             .add_anchor(

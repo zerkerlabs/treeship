@@ -256,6 +256,30 @@ fn verify_approval_artifact_exists(nonce: &str) -> bool {
 pub fn pending(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let entries = list_pending_files();
 
+    if printer.format == crate::printer::Format::Json {
+        let now_ms = epoch_ms();
+        let approvals: Vec<serde_json::Value> = entries
+            .iter()
+            .enumerate()
+            .map(|(i, (_path, pa))| {
+                serde_json::json!({
+                    "index": i + 1,
+                    "command": pa.command,
+                    "label": pa.label,
+                    "actor": pa.actor,
+                    "requested_at": pa.requested_at,
+                    "waiting_ms": now_ms.saturating_sub(pa.requested_at_ms),
+                    "rule": pa.rule,
+                })
+            })
+            .collect();
+        printer.json(&serde_json::json!({
+            "count": approvals.len(),
+            "approvals": approvals,
+        }));
+        return Ok(());
+    }
+
     if entries.is_empty() {
         printer.blank();
         printer.dim_info("  no pending approvals");
@@ -355,7 +379,10 @@ pub fn approve(
     printer.info(&format!("  command:  {}", pa.command));
     printer.info(&format!("  nonce:    {}  (binding token)", nonce));
     printer.blank();
-    printer.dim_info("  The command will now proceed.");
+    printer.dim_info(
+        "  Recorded. A shell hook cannot hold a command back, so if it did not run, run it again:",
+    );
+    printer.dim_info(&format!("    {}", pa.command));
     printer.blank();
 
     Ok(())

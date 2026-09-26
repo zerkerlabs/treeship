@@ -379,8 +379,16 @@ pub fn check(p: &PurchaseArgs<'_>, config: Option<&str>, printer: &Printer) -> C
         }));
     } else {
         printer.section("mandate check");
+        // `checked` names every rule that ran, violated or not, and the
+        // violations name what failed; so a violated mandate used to print
+        // "PASS amount_range" above "FAIL Amount exceeds maximum". Rules
+        // read as passed only when the whole mandate is satisfied.
         for c in &result.checked {
-            printer.info(&format!("  {} {c}", printer.green("PASS")));
+            if result.satisfied {
+                printer.info(&format!("  {} {c}", printer.green("PASS")));
+            } else {
+                printer.info(&format!("  {} {c}", printer.dim("checked")));
+            }
         }
         for v in &result.violations {
             printer.info(&format!("  {} {v}", printer.red("FAIL")));

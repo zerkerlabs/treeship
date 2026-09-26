@@ -63,11 +63,11 @@
       "plugin": {
         "available": true,
         "type": "hook",
-        "install": "openclaw plugins install @treeship/openclaw-plugin",
+        "install": "cd integrations/openclaw-plugin && npm install && npm run build && openclaw plugins install --local ./",
         "source_path": "integrations/openclaw-plugin",
-        "release_status": "shipped",
+        "release_status": "candidate",
         "marketplace_url": null,
-        "notes": "Hooks: before_tool_call + after_tool_call in Gateway process. Captures paired intent+result. Multi-registered snake_case+camelCase via registerHook+api.on. Landed in v0.10.4 (#77, fix 41271cd)."
+        "notes": "Hooks: before_tool_call + after_tool_call in Gateway process. Captures paired intent+result. Multi-registered snake_case+camelCase via registerHook+api.on. Landed in v0.10.4 (#77, fix 41271cd). @treeship/openclaw-plugin is not published to npm (`npm view` returns E404); the registry one-liner `openclaw plugins install @treeship/openclaw-plugin` will fail until it is. Local build+install works today."
       }
     },
     {
@@ -127,11 +127,11 @@
       "plugin": {
         "available": true,
         "type": "hook",
-        "install": "treeship integrations install kimi-code",
+        "install": "see integrations/kimi-code-plugin/config.toml.template (no automated installer yet)",
         "source_path": "integrations/kimi-code-plugin",
         "release_status": "candidate",
         "marketplace_url": null,
-        "notes": "Hooks: PreToolUse + PostToolUse via [[hooks]] arrays in ~/.kimi/config.toml. Kimi Code CLI exposes 13 lifecycle events (Beta). Plugin mirrors openclaw-plugin pattern. End-to-end parity-test verified."
+        "notes": "Hooks: PreToolUse + PostToolUse via [[hooks]] arrays in ~/.kimi/config.toml. Kimi Code CLI exposes 13 lifecycle events (Beta). Plugin mirrors openclaw-plugin pattern. End-to-end parity-test verified. There is no `treeship integrations install` command; merge config.toml.template into ~/.kimi/config.toml by hand."
       }
     },
     {

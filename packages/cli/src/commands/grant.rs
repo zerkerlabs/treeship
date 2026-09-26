@@ -173,7 +173,9 @@ fn scope_covered(needle: &str, haystack: &[String]) -> bool {
 /// existing one.
 pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     if args.scope.is_empty() {
-        return Err("at least one --scope is required\n  example: --scope payments.charge".into());
+        return Err(crate::exit::usage(
+            "at least one --scope is required\n  example: --scope payments.charge",
+        ));
     }
     // `--expiry` takes an RFC 3339 instant or a duration from now (30d, 12h,
     // 45m). The help text carried a fixed date that fell into the past and
@@ -606,6 +608,33 @@ fn format_rfc3339(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
 }
 
+/// The id of a grant_revocation.v1 receipt this store already holds for
+/// `grant_id`, if any.
+fn existing_revocation(ctx: &ctx::Ctx, grant_id: &str) -> Option<String> {
+    let pt = treeship_core::statements::payload_type("receipt");
+    for entry in ctx.storage.list_by_type(&pt) {
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        if stmt.kind != "grant_revocation.v1" {
+            continue;
+        }
+        let same = stmt
+            .payload
+            .as_ref()
+            .and_then(|p| p.get("grant_id"))
+            .and_then(|v| v.as_str())
+            == Some(grant_id);
+        if same {
+            return Some(entry.id.clone());
+        }
+    }
+    None
+}
+
 /// Withdraw a grant by minting a signed `grant_revocation.v1` receipt.
 ///
 /// # Why a receipt and not a flag on the grant
@@ -673,6 +702,13 @@ pub fn revoke(
              A revocation signed by anyone else is ignored by verifiers, so minting one \
              here would tell you the grant was withdrawn when it was not.",
             grant.grantor, signer_pub
+        )
+        .into());
+    }
+
+    if let Some(existing) = existing_revocation(&ctx, &grant.grant_id) {
+        return Err(format!(
+            "grant {id} is already revoked by {existing}; a second revocation receipt would add nothing"
         )
         .into());
     }

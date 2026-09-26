@@ -86,6 +86,41 @@ fn parse_contract(raw: &str) -> Result<(String, Option<String>), String> {
     }
 }
 
+/// The resolution this store already holds for a judgement: its id, who
+/// decided, and what.
+fn existing_resolution(ctx: &ctx::Ctx, judgement_id: &str) -> Option<(String, String, String)> {
+    let pt = treeship_core::statements::payload_type("receipt");
+    for entry in ctx.storage.list_by_type(&pt) {
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        if stmt.kind != "judgement.resolution.v1" {
+            continue;
+        }
+        let Some(p) = stmt.payload.as_ref() else {
+            continue;
+        };
+        if p.get("judgement").and_then(|v| v.as_str()) != Some(judgement_id) {
+            continue;
+        }
+        let by = p
+            .get("by")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let decision = p
+            .get("decision")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+            .to_string();
+        return Some((entry.id.clone(), by, decision));
+    }
+    None
+}
+
 /// `treeship judge --resolve <judgement> --by human://alice --decision allow`:
 /// the human label, as its own signed artifact chained onto the session and
 /// naming the judgement it resolves. A field a machine fills in would be the
@@ -100,14 +135,14 @@ fn resolve(
     let by = args
         .by
         .as_deref()
-        .ok_or("--by <URI> is required: who decided (human://alice)")?;
+        .ok_or_else(|| crate::exit::usage("--by <URI> is required: who decided (human://alice)"))?;
     if !by.contains("://") {
         return Err(format!("--by must be a URI such as human://{by}").into());
     }
     let decision = args
         .decision
         .as_deref()
-        .ok_or("--decision is required: allow, deny or route")?;
+        .ok_or_else(|| crate::exit::usage("--decision is required: allow, deny or route"))?;
     if !matches!(decision, "allow" | "deny" | "route") {
         return Err(format!("--decision {decision:?}: use allow, deny or route").into());
     }
@@ -119,6 +154,12 @@ fn resolve(
     let stmt: ReceiptStatement = rec.envelope.unmarshal_statement()?;
     if stmt.kind != "judgement.v1" {
         return Err(format!("{id} is a {} receipt, not a judgement.v1", stmt.kind).into());
+    }
+    if let Some((existing, by, decision)) = existing_resolution(ctx, &id) {
+        return Err(format!(
+            "{id} is already resolved: {existing} by {by} decided {decision}. A second resolution would contradict the record; the standing one is the decision"
+        )
+        .into());
     }
     let jp = stmt.payload.clone().unwrap_or(Value::Null);
     let outcome = jp.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
@@ -328,10 +369,9 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     if let Some(id) = args.resolve.clone() {
         return resolve(&ctx, &args, &id, printer);
     }
-    let tool = args
-        .tool
-        .clone()
-        .ok_or("--tool <NAME> is required (or --resolve <judgement id> to resolve one)")?;
+    let tool = args.tool.clone().ok_or_else(|| {
+        crate::exit::usage("--tool <NAME> is required (or --resolve <judgement id> to resolve one)")
+    })?;
     let contract = args.contract.as_deref().map(parse_contract).transpose()?;
 
     let input = match &args.input {

@@ -24,7 +24,8 @@ The policy applies to: code you write, tests you add, docs you change, commits y
 
 ## 1. WHAT TREESHIP IS
 
-Treeship is a portable trust layer for AI agent workflows. Every action, approval, and handoff gets a **cryptographically signed artifact** --a tamper-proof receipt verifiable by anyone, anywhere, without trusting any infrastructure.
+<!-- claims:receipt-tamper-evidence -->
+Treeship is a portable trust layer for AI agent workflows. Every action, approval, and handoff gets a **cryptographically signed artifact** --a tamper-evident receipt verifiable by anyone, anywhere, without trusting any infrastructure. Tamper-evident, not tamper-proof: editing a signed payload breaks its signature, but the key holder can always mint a new receipt, and fields outside the signed payload are not covered.
 
 **The loop:** `treeship wrap -- your-agent-command` → signed artifact → `treeship hub push` → `https://treeship.dev/verify/art_xxx` --shareable proof that something happened.
 
@@ -57,6 +58,8 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 
 ### What is NOT built yet
 
+<!-- claims:rekor-artifact-anchoring -->
+<!-- claims:checkpoint-root-anchoring -->
 1. **ZK TLS (TLSNotary)** -- fully specced, feature-flagged, TLSNotary still alpha
 2. **`treeship attach claude/cursor`** -- agent process detection (the official Claude Code plugin at `integrations/claude-code-plugin/` covers Claude Code via PostToolUse hooks; standalone process attach for Cursor/Cline is still planned)
 3. **Checkpoint anchoring** -- per-artifact Rekor anchoring works as of TS-2026-003 (it never did before: every submission was rejected and the failure was swallowed). Checkpoint roots are not anchored yet, local-only sessions get nothing, and an anchor proves existence by push time, not creation time. RFC 3161 timestamps are not implemented.
@@ -299,6 +302,7 @@ POST /v1/dock/authorize
   Insert into ships, set dock_challenges.approved = 1
   Return: { "dock_id": "..." }
 
+<!-- claims:rekor-artifact-anchoring -->
 POST /v1/artifacts  [DPoP authenticated]
   Body: { artifact_id, payload_type, envelope_json, digest, signed_at, parent_id }
   Verify DPoP (see DPoP section below)
@@ -313,10 +317,12 @@ GET /v1/artifacts/:id
   Return artifact record as JSON. 404 if not found.
 
 GET /v1/verify/:id
-  Look up artifact, 404 if not found
-  Run subprocess: treeship verify {id} --format json
-  Return the JSON output directly
-  If treeship binary not found: { "outcome": "error", "message": "verifier unavailable" }
+  Retired. Returns 410 with { "outcome": "retired", ... } on purpose: a
+  subprocess with no access to the caller's trust roots produced a verdict
+  representing the server's policy, not the verifier's, and it returned
+  outcome:error for valid artifacts in production. The hub is transport and
+  index only; verify locally against your own pinned roots (`treeship
+  verify`, `package verify`, or `@treeship/verify` in-process).
 
 GET /v1/workspace
   List artifacts for the authenticated dock. DPoP required.
@@ -359,6 +365,7 @@ GET /.well-known/treeship/revoked.json
 Clean up dpop_jtis WHERE seen_at < now-300 on each request.
 ```
 
+<!-- claims:rekor-artifact-anchoring -->
 **Rekor anchoring** (`internal/rekor`, TS-2026-003):
 ```
 POST https://rekor.sigstore.dev/api/v1/log/entries
@@ -416,6 +423,7 @@ Default endpoint: https://api.treeship.dev
        → treeship hub push <artifact-id>
 ```
 
+<!-- claims:rekor-artifact-anchoring -->
 **treeship hub push <id>**
 ```
 1. Load artifact from local storage. Error if not found.
@@ -479,8 +487,8 @@ curl -X POST http://localhost:8080/v1/dock/authorize \
 treeship attest action --actor agent://test --action tool.call
 treeship hub push art_xxxxx
 
-# Should return passing ChainResult:
-curl http://localhost:8080/v1/verify/art_xxxxx
+# /v1/verify is retired (410) -- verify locally instead:
+treeship verify art_xxxxx
 ```
 
 ---

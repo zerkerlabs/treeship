@@ -157,6 +157,13 @@ pub fn action(
     printer: &Printer,
 ) -> Result<String, Box<dyn std::error::Error>> {
     validate_v2_flags(&args)?;
+    crate::validate::actor_uri("--actor", &args.actor)?;
+    if let Some(d) = args.input_digest.as_deref() {
+        crate::validate::sha256_digest("--input-digest", d)?;
+    }
+    if let Some(d) = args.output_digest.as_deref() {
+        crate::validate::sha256_digest("--output-digest", d)?;
+    }
     // Inside an active session a receipt chains onto the session's head by
     // default. Before this, an action attested without --parent was sealed
     // as `unchained`, and since every documented quickstart omits --parent,
@@ -454,6 +461,19 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
         .clone()
         .unwrap_or_else(|| "hub://local/revocations".into());
     let mandate = mandate_from_grant(&leaf, chain, &revocation_path);
+
+    // The receipt records the violation either way; the person signing it
+    // should not learn that from `verify` later.
+    if !treeship_core::statements::action_v2::action_in_scope(&args.action, &leaf.scope) {
+        printer.warn(
+            "this action is outside the grant's scope",
+            &[
+                ("action", args.action.as_str()),
+                ("scope", &leaf.scope.join(", ")),
+            ],
+        );
+        printer.hint("the receipt will be signed as it is; `treeship verify` will report AUTHORITY INVALID for it");
+    }
 
     let mut stmt = ActionStatementV2::new(&args.actor, &args.action, mandate);
     stmt.audience = Some(
@@ -1118,6 +1138,9 @@ pub struct HandoffArgs {
 
 pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(args.config.as_deref())?;
+    // A handoff of artifacts nobody has is signed garbage; verify used to
+    // find out later ("not found") with no hint that the input was wrong.
+    crate::validate::artifacts_exist(&ctx.storage, &args.artifacts)?;
 
     let mut stmt = HandoffStatement::new(&args.from, &args.to, args.artifacts.clone());
     stmt.approval_ids = args.approvals.clone();
@@ -1186,7 +1209,7 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
             let Some(pkg) = crate::commands::session::find_package_for_session(session_id) else {
                 return Err(format!(
                     "no sealed session package for {session_id} under this workspace's .treeship/sessions/; \
-                     close it first (treeship session close) or check the id (treeship session list)"
+                     close it first (treeship session close) or check the id (treeship session status)"
                 )
                 .into());
             };
@@ -1834,6 +1857,11 @@ pub struct DecisionArgs {
 }
 
 pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    crate::validate::actor_uri("--actor", &args.actor)?;
+    crate::validate::confidence(args.confidence)?;
+    if let Some(d) = args.prompt_digest.as_deref() {
+        crate::validate::sha256_digest("--prompt-digest", d)?;
+    }
     let ctx = ctx::open(args.config.as_deref())?;
     // The deciding agent signs; use its own key when registered.
     let signer = resolve_actor_signer(&ctx, &args.actor)?;
@@ -2001,6 +2029,7 @@ pub fn endorsement(
 
     let parent = resolve_parent(&ctx, args.parent_id.clone());
 
+    crate::validate::endorsement_kind(&args.kind)?;
     let mut stmt = EndorsementStatement::new(&args.endorser, &args.kind);
     stmt.subject = SubjectRef {
         artifact_id: Some(args.subject_id.clone()),

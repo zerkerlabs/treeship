@@ -9,7 +9,6 @@ audience: [developer]
 session:
   actor: agent://contributor
   auto_start: true
-  auto_push: true
 
 attest:
   commands:
@@ -39,7 +38,6 @@ capture:
   lockfile_changes: true
 
 hub:
-  auto_push: true
   push_on: [git_push]
 
 onboarding: |
@@ -51,7 +49,7 @@ onboarding: |
     git push    -> push receipt linked to preceding tests
 
   Add to your PR description:
-    treeship share last
+    treeship session report
     -> https://treeship.dev/verify/art_xxx
 
   Proves: tests ran before commit, lockfile clean, signed by your key.

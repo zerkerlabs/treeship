@@ -32,11 +32,17 @@ struct FileTimes {
 /// Acquire an exclusive lock on the PID file. Returns the open file handle
 /// which must be held for the lifetime of the daemon process. The lock is
 /// automatically released when the process exits or crashes.
+///
+/// The file is opened without truncation and locked before anything is
+/// written: two `daemon start`s racing used to both truncate the file,
+/// so the loser wiped the winner's pid and left a live daemon nobody
+/// could stop. The pid is written through the locked handle.
 fn acquire_pid_lock(pid_path: &Path) -> Result<std::fs::File, Box<dyn std::error::Error>> {
     let file = std::fs::OpenOptions::new()
+        .read(true)
         .write(true)
         .create(true)
-        .truncate(true)
+        .truncate(false)
         .open(pid_path)?;
 
     #[cfg(unix)]
@@ -53,6 +59,35 @@ fn acquire_pid_lock(pid_path: &Path) -> Result<std::fs::File, Box<dyn std::error
     set_restrictive_permissions(pid_path);
 
     Ok(file)
+}
+
+/// Write "<pid> <start epoch>" through the locked handle.
+fn write_pid(file: &mut std::fs::File, pid: u32, start_epoch: u64) -> std::io::Result<()> {
+    file.set_len(0)?;
+    file.write_all(format!("{pid} {start_epoch}").as_bytes())?;
+    file.sync_all()
+}
+
+/// Is a daemon holding the pid-file lock right now? Decided by trying the
+/// lock, not by `kill -0` on a pid that may have been reused since.
+#[cfg(unix)]
+fn pid_file_locked(pid_path: &Path) -> bool {
+    use std::os::unix::io::AsRawFd;
+    let Ok(file) = std::fs::OpenOptions::new().read(true).open(pid_path) else {
+        return false;
+    };
+    // A shared lock is refused while the daemon holds its exclusive one.
+    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
+    ret != 0
+}
+
+#[cfg(not(unix))]
+fn pid_file_locked(pid_path: &Path) -> bool {
+    std::fs::read_to_string(pid_path)
+        .ok()
+        .and_then(|t| parse_pid_line(&t))
+        .map(process_alive)
+        .unwrap_or(false)
 }
 
 /// Set file permissions to 0600 (owner read/write only) on Unix.
@@ -100,19 +135,47 @@ fn config_yaml_path(ts: &Path) -> PathBuf {
 // Running check
 // ---------------------------------------------------------------------------
 
+/// The pid file holds "<pid> <start epoch>". Through 0.31.9 this parsed
+/// the whole line as one number, so every read failed, `status` called a
+/// running daemon "stopped", deleted the file, and the daemon (which
+/// exits when its pid file disappears) died of a status check.
 fn read_pid(ts: &Path) -> Option<u32> {
     let p = pid_path(ts);
     if !p.exists() {
         return None;
     }
     let txt = std::fs::read_to_string(&p).ok()?;
-    txt.trim().parse::<u32>().ok()
+    parse_pid_line(&txt)
 }
 
-fn is_running(ts: &Path) -> bool {
-    match read_pid(ts) {
-        None => false,
-        Some(pid) => process_alive(pid),
+fn parse_pid_line(txt: &str) -> Option<u32> {
+    txt.split_whitespace().next()?.parse::<u32>().ok()
+}
+
+/// What the pid file says, for `status` and `stop`: nothing, a live
+/// daemon (the lock is held; the pid is what the file says, if it parses),
+/// a dead one (stale file), or a file that does not parse.
+enum PidFile {
+    Absent,
+    Live(Option<u32>),
+    Stale(u32),
+    Unreadable,
+}
+
+fn pid_file_state(ts: &Path) -> PidFile {
+    let p = pid_path(ts);
+    if !p.exists() {
+        return PidFile::Absent;
+    }
+    let pid = std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|t| parse_pid_line(&t));
+    if pid_file_locked(&p) {
+        return PidFile::Live(pid);
+    }
+    match pid {
+        Some(pid) => PidFile::Stale(pid),
+        None => PidFile::Unreadable,
     }
 }
 
@@ -551,9 +614,12 @@ pub fn start(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ts = ts_dir().ok_or("no .treeship directory found -- run treeship init first")?;
 
-    if is_running(&ts) {
-        let pid = read_pid(&ts).unwrap_or(0);
-        return Err(format!("daemon already running (pid {})", pid).into());
+    if let PidFile::Live(pid) = pid_file_state(&ts) {
+        return Err(match pid {
+            Some(pid) => format!("daemon already running (pid {pid})"),
+            None => "daemon already running (pid file locked)".to_string(),
+        }
+        .into());
     }
 
     let config_yaml = config_yaml_path(&ts);
@@ -570,16 +636,36 @@ pub fn start(
     // Validate config.yaml is parseable before starting
     let _project = ProjectConfig::load(&config_yaml)?;
 
+    // Background by default: re-run this binary with --foreground, detached
+    // from this terminal, its output in daemon.log, and report the pid the
+    // child wrote. Through 0.31.9 the daemon ran in the foreground whatever
+    // the flag said and printed "tip: run with &".
+    if !foreground {
+        let pid = spawn_background(&ts, config, no_push)?;
+        printer.blank();
+        printer.success(
+            "daemon started",
+            &[
+                ("pid", &pid.to_string()),
+                ("log", &log_path(&ts).display().to_string()),
+            ],
+        );
+        if no_push {
+            printer.dim_info("  auto-push disabled (--no-push)");
+        }
+        printer.blank();
+        return Ok(());
+    }
+
     // Open context (loads keys + storage)
     let ctx = ctx::open(config)?;
 
-    // Acquire exclusive lock on PID file before writing
+    // Lock first, then write through the locked handle; the handle lives
+    // as long as the daemon.
     let pid = std::process::id();
     let start_epoch = epoch_secs();
-    let _pid_lock = acquire_pid_lock(&pid_path(&ts))?;
-
-    // Write PID + start epoch to the locked file
-    std::fs::write(pid_path(&ts), format!("{} {}", pid, start_epoch))?;
+    let mut pid_lock = acquire_pid_lock(&pid_path(&ts))?;
+    write_pid(&mut pid_lock, pid, start_epoch)?;
 
     daemon_log(&ts, &format!("daemon started (pid {})", pid));
 
@@ -594,16 +680,23 @@ pub fn start(
     }
     printer.blank();
 
-    if !foreground {
-        printer.dim_info("  tip: run with & to background: treeship daemon start &");
-        printer.blank();
-    }
-
     // Determine project root (parent of .treeship)
     let root = ts.parent().unwrap_or(Path::new(".")).to_path_buf();
 
     // Initial snapshot (regular tree + sensitive dotfiles)
     let initial_project = ProjectConfig::load(&config_yaml).ok();
+    // `checkpoint.every`: the last attempt, so a failing hub is retried
+    // once per interval, not every 2 seconds.
+    let mut last_checkpoint_attempt: u64 = 0;
+    if let Some(every) = super::cadence::checkpoint_every(&config_yaml) {
+        daemon_log(
+            &ts,
+            &format!(
+                "checkpoint cadence: every {} (seal + publish to the attached hub)",
+                super::cadence::label(every)
+            ),
+        );
+    }
     let mut file_snapshot = snapshot_files(&root, &ts);
     if let Some(ref proj) = initial_project {
         snapshot_sensitive_files(&root, proj, &mut file_snapshot);
@@ -689,6 +782,10 @@ pub fn start(
             auto_push_new_artifacts(&ctx, &ts);
         }
 
+        if let Some(every) = super::cadence::checkpoint_every(&config_yaml) {
+            publish_checkpoint_if_due(config, &ts, every, &mut last_checkpoint_attempt);
+        }
+
         // ZK: Process proof job queue (background, non-blocking)
         #[cfg(feature = "zk")]
         {
@@ -705,12 +802,136 @@ pub fn start(
 // daemon stop
 // ---------------------------------------------------------------------------
 
+/// Start the daemon as a detached child (`daemon start --foreground` on
+/// this same binary) and return its pid once it has written the pid file.
+/// Seal and publish a checkpoint when `checkpoint.every` says one is due,
+/// judged by the newest local checkpoint's own signed time. Each publish
+/// and each failure goes to daemon.log.
+fn publish_checkpoint_if_due(
+    config: Option<&str>,
+    ts: &Path,
+    every: Duration,
+    last_attempt: &mut u64,
+) {
+    let now = epoch_secs();
+    let latest = super::merkle::load_latest_checkpoint()
+        .ok()
+        .flatten()
+        .map(|cp| cp.signed_at);
+    if !super::cadence::due(latest.as_deref(), every, now) {
+        return;
+    }
+    // After a failure, wait a full interval (capped at 10 minutes) before
+    // trying again.
+    let backoff = every.as_secs().min(600);
+    if now.saturating_sub(*last_attempt) < backoff {
+        return;
+    }
+    *last_attempt = now;
+    let quiet = Printer::new(crate::printer::Format::Text, true, true);
+    match super::merkle::checkpoint_with(config, true, &quiet) {
+        Ok(()) => {
+            let root = super::merkle::load_latest_checkpoint()
+                .ok()
+                .flatten()
+                .map(|cp| cp.root)
+                .unwrap_or_default();
+            daemon_log(ts, &format!("checkpoint sealed and published ({root})"));
+        }
+        Err(e) => daemon_log(ts, &format!("checkpoint cadence: not published: {e}")),
+    }
+}
+
+fn spawn_background(
+    ts: &Path,
+    config: Option<&str>,
+    no_push: bool,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let exe = std::env::current_exe()?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path(ts))?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("daemon").arg("start").arg("--foreground");
+    if no_push {
+        cmd.arg("--no-push");
+    }
+    if let Some(c) = config {
+        cmd.arg("--config").arg(c);
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(log.try_clone()?))
+        .stderr(std::process::Stdio::from(log));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // A new session: no controlling terminal, so closing this one does
+        // not take the daemon down. `stop` reaches it through the pid file.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    let mut child = cmd.spawn()?;
+
+    // The child locks and writes the pid file after its own checks; wait
+    // for that, and notice if the child exits first (config error, lock
+    // held by another daemon).
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        // The pid file must name OUR child: two starts racing both see a
+        // live daemon, and only the one whose child holds the lock won.
+        if let PidFile::Live(Some(pid)) = pid_file_state(ts) {
+            if pid == child.id() {
+                return Ok(pid);
+            }
+        }
+        if let Some(status) = child.try_wait()? {
+            if let PidFile::Live(Some(pid)) = pid_file_state(ts) {
+                return Err(format!("daemon already running (pid {pid})").into());
+            }
+            return Err(format!(
+                "daemon exited before writing its pid file ({status}); see {}",
+                log_path(ts).display()
+            )
+            .into());
+        }
+        if std::time::Instant::now() > deadline {
+            return Err(format!(
+                "daemon did not write its pid file within 5s; see {}",
+                log_path(ts).display()
+            )
+            .into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 pub fn stop(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ts = ts_dir().ok_or("no .treeship directory found")?;
 
-    let pid = match read_pid(&ts) {
-        Some(p) => p,
-        None => {
+    let pid = match pid_file_state(&ts) {
+        PidFile::Live(p) => p,
+        PidFile::Stale(p) => {
+            let _ = std::fs::remove_file(pid_path(&ts));
+            printer.dim_info(&format!(
+                "  daemon is not running (stale pid file for {p} removed)"
+            ));
+            return Ok(());
+        }
+        PidFile::Unreadable => {
+            return Err(format!(
+                "daemon.pid does not parse; if no daemon is running, remove {}",
+                pid_path(&ts).display()
+            )
+            .into());
+        }
+        PidFile::Absent => {
             printer.dim_info("  daemon is not running");
             return Ok(());
         }
@@ -719,18 +940,22 @@ pub fn stop(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     // Remove PID file -- the daemon loop will notice and exit
     let _ = std::fs::remove_file(pid_path(&ts));
 
-    daemon_log(&ts, &format!("stop requested for pid {}", pid));
+    let pid_label = pid
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| "unknown".into());
+    daemon_log(&ts, &format!("stop requested for pid {pid_label}"));
 
-    // On unix, also send SIGTERM as a courtesy
+    // On unix, also send SIGTERM as a courtesy. Only to the pid the locked
+    // file named: the lock proves that pid is the daemon, not a reused one.
     #[cfg(unix)]
-    {
+    if let Some(pid) = pid {
         unsafe {
             libc::kill(pid as libc::pid_t, libc::SIGTERM);
         }
     }
 
     printer.blank();
-    printer.success("daemon stopped", &[("pid", &pid.to_string())]);
+    printer.success("daemon stopped", &[("pid", &pid_label)]);
     printer.blank();
 
     Ok(())
@@ -757,26 +982,42 @@ pub fn status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     // `status` matches Lane D's hub::status convention (enum string),
     // and `running` is a boolean alias so callers can branch on a
     // single field without parsing the string.
+    // A pid file is removed only when it names a process that is gone.
+    // A file that does not parse is reported, never deleted: deleting it
+    // is what stops a daemon that wrote it in a format this build does
+    // not read (0.31.9 full test, CLI-8).
+    let state = pid_file_state(&ts);
+    if let PidFile::Stale(_) = state {
+        let _ = std::fs::remove_file(pid_path(&ts));
+    }
+
     if printer.format == crate::printer::Format::Json {
-        let body = if is_running(&ts) {
-            let pid = read_pid(&ts).unwrap_or(0);
-            let uptime_secs = read_start_time(&ts).map(|start| epoch_secs().saturating_sub(start));
-            serde_json::json!({
-                "status":      "running",
-                "running":     true,
-                "pid":         pid,
-                "uptime_secs": uptime_secs,
-            })
-        } else {
-            // Clean up stale PID file even in JSON mode -- the side
-            // effect is unrelated to the output channel.
-            if pid_path(&ts).exists() {
-                let _ = std::fs::remove_file(pid_path(&ts));
+        let body = match state {
+            PidFile::Live(pid) => {
+                let uptime_secs =
+                    read_start_time(&ts).map(|start| epoch_secs().saturating_sub(start));
+                serde_json::json!({
+                    "status":      "running",
+                    "running":     true,
+                    "pid":         pid,
+                    "uptime_secs": uptime_secs,
+                })
             }
-            serde_json::json!({
+            PidFile::Stale(pid) => serde_json::json!({
                 "status":  "stopped",
                 "running": false,
-            })
+                "stale_pid_removed": pid,
+            }),
+            PidFile::Unreadable => serde_json::json!({
+                "status":  "unknown",
+                "running": false,
+                "pid_file": pid_path(&ts),
+                "error": "daemon.pid does not parse",
+            }),
+            PidFile::Absent => serde_json::json!({
+                "status":  "stopped",
+                "running": false,
+            }),
         };
         printer.json(&body);
         return Ok(());
@@ -785,8 +1026,10 @@ pub fn status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     printer.blank();
     printer.section("daemon");
 
-    if is_running(&ts) {
-        let pid = read_pid(&ts).unwrap_or(0);
+    if let PidFile::Live(pid) = state {
+        let pid = pid
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "unknown".into());
         let uptime_str = match read_start_time(&ts) {
             Some(start) => {
                 let now = epoch_secs();
@@ -801,13 +1044,28 @@ pub fn status(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
             uptime_str,
         ));
     } else {
-        // Clean up stale PID file if process is dead
-        if pid_path(&ts).exists() {
-            let _ = std::fs::remove_file(pid_path(&ts));
+        match state {
+            PidFile::Unreadable => {
+                printer.warn(
+                    "daemon.pid does not parse",
+                    &[("file", &pid_path(&ts).display().to_string())],
+                );
+                printer.hint(
+                    "if no daemon is running, remove the file; otherwise stop it with its pid",
+                );
+            }
+            PidFile::Stale(pid) => {
+                printer.info(&format!("  {} stopped", printer.dim("○")));
+                printer.dim_info(&format!("  stale pid file for {pid} removed"));
+                printer.blank();
+                printer.hint("treeship daemon start");
+            }
+            _ => {
+                printer.info(&format!("  {} stopped", printer.dim("○")));
+                printer.blank();
+                printer.hint("treeship daemon start");
+            }
         }
-        printer.info(&format!("  {} stopped", printer.dim("○")));
-        printer.blank();
-        printer.hint("treeship daemon start");
     }
 
     printer.blank();
@@ -960,12 +1218,6 @@ fn process_proof_queue(ts: &std::path::Path, ctx: &crate::ctx::Ctx) {
 // rather than being stapled onto a signed object afterward, so this path is not
 // re-added. A future proof-augmented checkpoint, if needed, is a sibling object
 // signed independently, never an in-place mutation.
-
-/// Enqueue a proof job. Called by session close when zk.auto_prove is enabled.
-#[cfg(feature = "zk")]
-pub fn enqueue_proof_job(session_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    enqueue_proof_job_with_root(session_id, None, None)
-}
 
 /// Enqueue a proof job with the session's root_artifact_id and tip preserved.
 /// The root ID is needed by the daemon to know where the chain starts,

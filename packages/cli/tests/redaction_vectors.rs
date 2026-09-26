@@ -23,7 +23,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 fn vectors_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -101,9 +101,11 @@ fn decode_payload(path: &Path) -> String {
     let payload = envelope["payload"]
         .as_str()
         .expect("artifact has a DSSE payload");
-    let bytes = STANDARD_NO_PAD
+    // DSSE payloads are base64url; the standard alphabet fails whenever the
+    // payload contains `_`, which made this test flaky.
+    let bytes = URL_SAFE_NO_PAD
         .decode(payload.trim_end_matches('='))
-        .expect("payload is base64");
+        .expect("payload is base64url");
     String::from_utf8(bytes).expect("payload is utf-8")
 }
 
