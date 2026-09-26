@@ -115,10 +115,10 @@ Claude Code reads `CLAUDE.md` from the project root automatically. The template 
 
 ## Method 3: MCP server only
 
-If you don't want hooks but want MCP tool calls captured:
+If you don't want hooks but want MCP tool calls captured, add the server yourself. Claude Code reads MCP servers from a project's `.mcp.json` (project-scoped) or `~/.claude.json` (user-scoped, under a top-level `mcpServers` key) -- not from `~/.claude/mcp.json`, which Claude Code never reads:
 
 ```json
-// ~/.claude/mcp.json
+// .mcp.json (project root)
 {
   "mcpServers": {
     "treeship": {
