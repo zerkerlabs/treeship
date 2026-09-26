@@ -73,7 +73,12 @@ pub fn is_local_path(s: &str) -> bool {
 
 /// Run external verification. The dispatcher (commands::verify::run) decides
 /// which mode to call based on the target shape.
-pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> ExternalExit {
+pub fn run(
+    target: &str,
+    certificate: Option<&str>,
+    config: Option<&str>,
+    printer: &Printer,
+) -> ExternalExit {
     // Resolve the target into a parsed receipt or certificate.
     let target_kind = classify_target(target);
     let (receipt, package_checks, source_label, exit_for_load) = match target_kind {
@@ -96,7 +101,7 @@ pub fn run(target: &str, certificate: Option<&str>, printer: &Printer) -> Extern
             // + inclusion proofs + timeline order); we then surface them as
             // structured steps.
             // The same verifier, trust and verdict as `package verify`.
-            let checks = match super::package::default_verdict(path, None).map(|(c, _)| c) {
+            let checks = match super::package::default_verdict(path, config).map(|(c, _)| c) {
                 Ok(c) => c,
                 Err(e) => {
                     printer.failure(

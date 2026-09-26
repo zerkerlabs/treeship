@@ -40,6 +40,8 @@ import json, os, subprocess, sys
 bin_, here, work = sys.argv[1:4]
 expected = json.load(open(os.path.join(here, "expected.json")))["vectors"]
 MODES = {"cli": [], "cli_strict": ["--strict"], "cli_structural": ["--structural"]}
+# cli_pinned: default mode after the strict pass pinned the keys (a reader
+# who has pinned the producer). Run only for vectors that list it.
 ACCEPTING = {"verified", "signatures-pass"}
 
 def ship(name):
@@ -80,7 +82,8 @@ for name, exp in sorted(expected.items()):
     if "pin_keys_from" in exp:
         keys = json.load(open(os.path.join(here, exp["pin_keys_from"], "keys.json")))["keys"]
     xf = exp.get("xfail", {})
-    for mode, args in MODES.items():
+    modes = list(MODES.items()) + [("cli_pinned", [])]
+    for mode, args in modes:
         if mode not in exp:
             continue
         if mode == "cli_strict":
@@ -93,7 +96,12 @@ for name, exp in sorted(expected.items()):
             problems.append(f"verdict {got}, expected {exp[mode]}")
         if (got == "failed") != (rc != 0):
             problems.append(f"verdict {got} exited {rc}")
-        if name.startswith("tampered/") and got in ACCEPTING:
+        # A vector may declare that, with nothing pinned, it is byte-for-byte
+        # an honest package under an unknown key (a forger's own package):
+        # only the unpinned `cli` column is then allowed to accept, and the
+        # pinned columns must fail.
+        exempt = mode == "cli" and exp.get("unpinned_indistinguishable")
+        if name.startswith("tampered/") and got in ACCEPTING and not exempt:
             problems.append(f"tampered vector accepted as {got}")
         label = f"{name} [{mode}]"
         if mode in xf:

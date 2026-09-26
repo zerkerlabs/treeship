@@ -900,6 +900,8 @@ pub fn verify_package_with_options(
         &mut checks,
     );
     push_approval_signer(pkg_dir, &sealed.approval_signers, trust, &mut checks);
+    push_key_id_collisions(pkg_dir, trust, &mut checks);
+    push_approval_evidence(pkg_dir, &receipt, structural_only, &mut checks);
     if body_bound {
         checks.push(VerifyCheck::pass(
             "receipt_body_binding",
@@ -1325,8 +1327,10 @@ fn verify_receipt_binding(
     checks.push(VerifyCheck::pass(
         "receipt_binding",
         &format!(
-            "close record signed by {} ({how}) binds receipt.json ({}) and names this session",
-            sig.keyid, actual
+            "close record signed by {} (fp {}; {how}) binds receipt.json ({}) and names this session",
+            sig.keyid,
+            key_fingerprint(vk),
+            actual
         ),
     ));
     (true, vouched)
@@ -1561,6 +1565,155 @@ fn verify_stapled_anchors(
     checks.push(VerifyCheck::pass("anchoring", &detail));
 }
 
+/// The short fingerprint `treeship trust` shows for a key.
+fn key_fingerprint(vk: &ed25519_dalek::VerifyingKey) -> String {
+    crate::statements::invitation::pubkey_fingerprint_short(&crate::trust::encode_ed25519_pubkey(
+        vk,
+    ))
+}
+
+/// How a trusted key is trusted here: the pinned root it matched, by label,
+/// kind and fingerprint, never just the package's key id (a key id is only a
+/// label the signer picked).
+fn describe_trusted(
+    kid: &str,
+    vk: &ed25519_dalek::VerifyingKey,
+    trust: &crate::trust::TrustRootStore,
+) -> String {
+    let fp = key_fingerprint(vk);
+    let root = trust.roots().iter().find(|r| {
+        SIGNER_KINDS.contains(&r.kind)
+            && crate::trust::decode_ed25519_pubkey(&r.public_key)
+                .map(|k| k.to_bytes() == vk.to_bytes())
+                .unwrap_or(false)
+    });
+    match root {
+        Some(r) if r.label == OWN_KEY_LABEL => format!("{kid} (this ship's own, fp {fp})"),
+        Some(r) => format!(
+            "{kid} (pinned as {:?}, {}, fp {fp})",
+            r.label,
+            r.kind.as_str()
+        ),
+        None => format!("{kid} (fp {fp})"),
+    }
+}
+
+/// `key_id_collision`: a key id in this package names a different public key
+/// than the root pinned here under that same id. Key ids are labels; a
+/// forger who re-signs a victim's chain under their own key can reuse the
+/// victim's id, and the package then reads as the victim's. FAIL, naming
+/// both fingerprints.
+fn push_key_id_collisions(
+    pkg_dir: &Path,
+    trust: &crate::trust::TrustRootStore,
+    checks: &mut Vec<VerifyCheck>,
+) {
+    let keys = package_verifying_keys(pkg_dir);
+    let mut clashes = Vec::new();
+    for (kid, vk) in &keys {
+        for r in trust.roots() {
+            if &r.key_id != kid || !SIGNER_KINDS.contains(&r.kind) {
+                continue;
+            }
+            let Ok(pinned) = crate::trust::decode_ed25519_pubkey(&r.public_key) else {
+                continue;
+            };
+            if pinned.to_bytes() != vk.to_bytes() {
+                clashes.push(format!(
+                    "{kid}: the package's key has fp {}, the root pinned here as {kid} ({:?}) has fp {}",
+                    key_fingerprint(vk),
+                    r.label,
+                    key_fingerprint(&pinned)
+                ));
+            }
+        }
+    }
+    if !clashes.is_empty() {
+        checks.push(VerifyCheck::fail(
+            "key_id_collision",
+            &format!(
+                "a key id in this package names a different public key than the root pinned here under that id, so the package would read as someone else's: {}",
+                clashes.join("; ")
+            ),
+        ));
+    }
+}
+
+/// `approval_evidence`: every sealed action that consumes an approval has
+/// its use record in the package's `approvals/` bundle. The close record
+/// digests receipt.json only, so deleting `approvals/` used to hide the
+/// approval-use and replay rows (and any failure among them) while the
+/// package still verified.
+fn push_approval_evidence(
+    pkg_dir: &Path,
+    receipt: &SessionReceipt,
+    structural_only: bool,
+    checks: &mut Vec<VerifyCheck>,
+) {
+    // (action id, digest of its signed approvalNonce)
+    let consuming: Vec<(&str, String)> = receipt
+        .artifacts
+        .iter()
+        .filter_map(|a| {
+            let nonce = std::fs::read(
+                pkg_dir
+                    .join(ARTIFACTS_DIR)
+                    .join(format!("{}.json", sanitize_filename(&a.artifact_id))),
+            )
+            .ok()
+            .and_then(|raw| crate::attestation::Envelope::from_json(&raw).ok())
+            .and_then(|env| env.payload_bytes().ok())
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| {
+                v.get("approvalNonce")
+                    .and_then(|n| n.as_str())
+                    .map(str::to_string)
+            })?;
+            Some((
+                a.artifact_id.as_str(),
+                crate::statements::nonce_digest(&nonce),
+            ))
+        })
+        .collect();
+    if consuming.is_empty() {
+        return;
+    }
+    let bundle = read_approvals_bundle(pkg_dir).unwrap_or_default();
+    // A use record covers an action by the digest of the nonce it consumed
+    // (the record is reserved before the action exists, so it may not name
+    // the action's id).
+    let covered: std::collections::BTreeSet<&str> = bundle
+        .uses
+        .iter()
+        .map(|u| u.nonce_digest.as_str())
+        .collect();
+    let missing: Vec<&str> = consuming
+        .iter()
+        .filter(|(_, d)| !covered.contains(d.as_str()))
+        .map(|(id, _)| *id)
+        .collect();
+    if missing.is_empty() {
+        checks.push(VerifyCheck::pass(
+            "approval_evidence",
+            &format!(
+                "{} approval-consuming action(s), each with its use record in approvals/",
+                consuming.len()
+            ),
+        ));
+    } else {
+        let detail = format!(
+            "{} sealed action(s) consume an approval but the package carries no use record for them in approvals/ ({}): the approval-use and replay checks cannot run",
+            missing.len(),
+            missing.join(", ")
+        );
+        checks.push(if structural_only {
+            VerifyCheck::warn("approval_evidence", &detail)
+        } else {
+            VerifyCheck::fail("approval_evidence", &detail)
+        });
+    }
+}
+
 /// `approval_signer`: the keys that signed sealed approvals. Pinned or this
 /// ship's own: PASS. Otherwise WARN naming the pin (`--strict` fails it, and
 /// [`package_verdict`] caps the verdict at `SignaturesPass`). A bad approval
@@ -1598,8 +1751,9 @@ fn push_approval_signer(
         .filter_map(|k| {
             let vk = keys.get(*k)?;
             Some(format!(
-                "treeship trust add {k} {} --kind cert_issuer --yes",
-                crate::trust::encode_ed25519_pubkey(vk)
+                "treeship trust add {k} {} --kind cert_issuer  (fp {})",
+                crate::trust::encode_ed25519_pubkey(vk),
+                key_fingerprint(vk)
             ))
         })
         .collect();
@@ -1655,11 +1809,12 @@ fn push_signer_trust(
         ks.iter()
             .filter_map(|k| {
                 let vk = keys.get(*k)?;
-                // `--yes`: the printed command is what gets pasted, and
-                // without it trust add refuses to run non-interactively.
+                // No `--yes`: the key comes from the package itself, so
+                // the reader confirms it (fingerprint shown) before pinning.
                 Some(format!(
-                    "treeship trust add {k} {} --kind cert_issuer --yes",
-                    crate::trust::encode_ed25519_pubkey(vk)
+                    "treeship trust add {k} {} --kind cert_issuer  (fp {})",
+                    crate::trust::encode_ed25519_pubkey(vk),
+                    key_fingerprint(vk)
                 ))
             })
             .collect::<Vec<_>>()
@@ -1699,6 +1854,14 @@ fn push_signer_trust(
                 own.join(", ")
             )
         };
+        let matched: Vec<String> = signers
+            .iter()
+            .filter(|k| trusted(k))
+            .filter_map(|k| keys.get(k).map(|vk| describe_trusted(k, vk, trust)))
+            .collect();
+        if !matched.is_empty() {
+            detail.push_str(&format!("; matched: {}", matched.join(", ")));
+        }
         if let Some(v) = vouched.filter(|v| !trusted(&v.key)) {
             detail.push_str(&format!(
                 "; {} is not pinned but is the record key the session.close signed by {} names",

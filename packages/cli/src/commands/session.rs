@@ -3223,19 +3223,11 @@ fn local_verify_summary(pkg_dir: &Path, config: Option<&str>) -> (String, Vec<se
     summarize_verify_checks(&checks)
 }
 
-/// Always-on INFORMATIONAL scope caveats: not session-specific problems, so
-/// they are surfaced in `warnings` but must NOT flip a cryptographically-clean
-/// session's top-line verdict to "warn". `receipt_body_binding` states the
-/// (universal) fact that a package binds the artifacts + Merkle root but not
-/// the unsigned narrative — true of every package, so letting it downgrade the
-/// status makes "pass" unreachable and drains the field of meaning.
-const INFORMATIONAL_CHECKS: &[&str] = &["receipt_body_binding"];
-
 /// Reduce a package verify's check list to `(verification_status, warnings)`.
-/// Pure so the status policy is unit-testable. `fail` if any check failed;
-/// `warn` if there is an ACTIONABLE warning (anything not in
-/// `INFORMATIONAL_CHECKS`); else `pass`. Every warn/fail is still listed in
-/// `warnings`, informational or not, so nothing is hidden.
+/// Pure so the status policy is unit-testable. The status is package
+/// verify's verdict (`package_verdict`): verified -> `pass`, signatures-pass
+/// -> `warn`, failed -> `fail`, the same word the dashboard shows. Every
+/// warn/fail row is still listed in `warnings`, so nothing is hidden.
 fn summarize_verify_checks(
     checks: &[treeship_core::session::VerifyCheck],
 ) -> (String, Vec<serde_json::Value>) {
@@ -3256,31 +3248,21 @@ fn summarize_verify_checks(
             }
         }
     }
-    // `pass` needs rows that passed (treeship_core::session::package_verdict),
-    // not merely none that failed: an empty package, or one with no close
-    // record, is not a verified session.
-    if let treeship_core::session::PackageVerdict::Failed(reason) =
-        treeship_core::session::package_verdict(checks, false)
-    {
-        if !any_fail {
-            warnings.push(serde_json::json!({
-                "kind": "verdict", "headline": reason, "status": "fail",
-            }));
+    // The status is package verify's verdict, the same word the dashboard
+    // shows: verified -> pass, signatures-pass -> warn, failed -> fail.
+    // Every warn/fail row is still listed in `warnings`; none of them flips
+    // the status on its own.
+    let status = match treeship_core::session::package_verdict(checks, false) {
+        treeship_core::session::PackageVerdict::Verified => "pass",
+        treeship_core::session::PackageVerdict::Failed(reason) => {
+            if !any_fail {
+                warnings.push(serde_json::json!({
+                    "kind": "verdict", "headline": reason, "status": "fail",
+                }));
+            }
+            "fail"
         }
-        any_fail = true;
-    }
-    let has_actionable_warn = warnings.iter().any(|w| {
-        w.get("kind")
-            .and_then(|k| k.as_str())
-            .map(|k| !INFORMATIONAL_CHECKS.contains(&k))
-            .unwrap_or(true)
-    });
-    let status = if any_fail {
-        "fail"
-    } else if has_actionable_warn {
-        "warn"
-    } else {
-        "pass"
+        _ => "warn",
     };
     (status.into(), warnings)
 }
@@ -3564,14 +3546,25 @@ mod verify_summary_tests {
     }
 
     #[test]
-    fn actionable_warn_downgrades_to_warn() {
+    fn a_non_trust_warning_is_listed_but_the_status_is_the_verdict() {
         let mut checks = verified_rows();
         checks.extend([
             VerifyCheck::pass("merkle_root", "ok"),
             VerifyCheck::warn("receipt_body_binding", "caveat"),
             VerifyCheck::warn("reconcile_degraded", "git backstop disabled mid-session"),
         ]);
-        assert_eq!(summarize_verify_checks(&checks).0, "warn");
+        // Same word as the dashboard and package verify: verified.
+        let (status, warnings) = summarize_verify_checks(&checks);
+        assert_eq!(status, "pass");
+        assert!(warnings.iter().any(|w| w["kind"] == "reconcile_degraded"));
+        // An unpinned signer is the verdict's warn.
+        let mut unpinned = checks.clone();
+        for c in unpinned.iter_mut() {
+            if c.name == "signer_trust" {
+                *c = VerifyCheck::warn("signer_trust", "unpinned");
+            }
+        }
+        assert_eq!(summarize_verify_checks(&unpinned).0, "warn");
     }
 
     #[test]

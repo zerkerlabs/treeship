@@ -18,7 +18,7 @@ cargo test -p treeship-core --test package_vectors            # receipt_only (co
 
 ## Rules
 
-1. A tampered vector is never `verified` or `signatures-pass`, in any mode.
+1. A tampered vector is never `verified` or `signatures-pass`, in any mode. The one exception is explicit: a vector marked `unpinned_indistinguishable` (a forger's own, self-consistent package) may accept in the unpinned `cli` column only, because with nothing pinned it is byte-for-byte an honest package under an unknown key; its pinned columns (`cli_strict`, `cli_pinned`) must fail.
 2. The receipt-only verifier never says more than `structural-pass`.
 3. `failed` exits nonzero; every other verdict exits 0.
 4. An `xfail` column passes only while it gives exactly its pinned wrong

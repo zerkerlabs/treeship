@@ -963,3 +963,68 @@ fn a_bad_approval_signature_fails_the_package() {
         treeship_core::session::PackageVerdict::Failed(_)
     ));
 }
+
+#[test]
+fn a_key_id_reused_for_a_different_key_fails() {
+    // Round 3: the attacker re-signs the victim's chain under its own key but
+    // keeps the victim's key id. The reader pinned the victim under that id.
+    let tmp = tempfile::tempdir().unwrap();
+    let victim = Ed25519Signer::generate("key_57e0c8ba2b2bc32c").unwrap();
+    let forger = Ed25519Signer::generate("key_57e0c8ba2b2bc32c").unwrap();
+    let (pkg, _) = build(tmp.path(), &forger);
+    seal_record(&pkg, &forger);
+    let checks = verify_package_with_options(&pkg, &pinned_all(&[&victim]), false).unwrap();
+    let row = find(&checks, "key_id_collision").expect("collision row");
+    assert_eq!(row.status, VerifyStatus::Fail, "{}", row.detail);
+    assert!(
+        row.detail.contains("key_57e0c8ba2b2bc32c"),
+        "{}",
+        row.detail
+    );
+    assert!(matches!(
+        treeship_core::session::package_verdict(&checks, false),
+        treeship_core::session::PackageVerdict::Failed(_)
+    ));
+    // The honest package under the same pin has no collision row.
+    let tmp2 = tempfile::tempdir().unwrap();
+    let (pkg2, _) = build(tmp2.path(), &victim);
+    seal_record(&pkg2, &victim);
+    let checks = verify_package_with_options(&pkg2, &pinned_all(&[&victim]), false).unwrap();
+    assert!(find(&checks, "key_id_collision").is_none());
+    assert!(find(&checks, "signer_trust")
+        .unwrap()
+        .detail
+        .contains("pinned as"));
+}
+
+#[test]
+fn an_approval_consuming_action_without_its_use_record_fails() {
+    // Round 3: approvals/ is outside the close record's digest; deleting it
+    // hid the approval-use and replay rows. An action that consumes an
+    // approval must have its use record in the package.
+    let tmp = tempfile::tempdir().unwrap();
+    let producer = Ed25519Signer::generate("key_producer").unwrap();
+    let start = sign_start(&producer);
+    let mut stmt = ActionStatement::new("agent://t", "deploy");
+    stmt.parent_id = Some(start.id.clone());
+    stmt.approval_nonce = Some("0011223344556677".into());
+    let r = sign(&payload_type("action"), &stmt, &producer).unwrap();
+    let consumer = Signed {
+        id: r.artifact_id.clone(),
+        digest: r.digest.clone(),
+        envelope: r.envelope.to_json().unwrap(),
+        signed_at: stmt.timestamp.clone(),
+    };
+    let close = sign_close(&producer, &consumer.id, None);
+    let pkg = pack(
+        tmp.path(),
+        &[(&start, false), (&consumer, false), (&close, false)],
+        &[&producer],
+        &producer,
+        &close.id,
+    );
+    let checks = verify_package_with_options(&pkg, &pinned_all(&[&producer]), false).unwrap();
+    let row = find(&checks, "approval_evidence").expect("approval_evidence row");
+    assert_eq!(row.status, VerifyStatus::Fail, "{}", row.detail);
+    assert!(row.detail.contains(&consumer.id), "{}", row.detail);
+}

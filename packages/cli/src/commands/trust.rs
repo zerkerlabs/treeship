@@ -98,6 +98,7 @@ pub fn add(
     kind: &str,
     label: Option<&str>,
     yes: bool,
+    replace: bool,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let kind = TrustRootKind::parse(kind).ok_or_else(|| {
@@ -175,6 +176,32 @@ pub fn add(
         .iter()
         .find(|r| r.key_id == key_id && r.kind == kind)
         .cloned();
+
+    // A key id is only a label. Re-pointing an id already pinned (under any
+    // kind) at a different public key needs --replace, and says what is
+    // being replaced: pasting a pin line from a forged package must not
+    // silently swap out the real key (and drop every package it signed).
+    if let Some(prev) = store
+        .roots()
+        .iter()
+        .find(|r| r.key_id == key_id && r.public_key != canonical_pk)
+    {
+        let prev_fp = pubkey_fingerprint(&prev.public_key);
+        if !replace {
+            return Err(format!(
+                "{key_id} is already pinned ({}, label {:?}) with a different public key: pinned fp {prev_fp}, this key fp {fingerprint}. \
+                 Key ids are labels; this is either a rotated key or a different signer reusing the id. \
+                 If you have confirmed the new key out of band, re-run with --replace",
+                prev.kind.as_str(),
+                prev.label,
+            )
+            .into());
+        }
+        printer.warn(
+            &format!("replacing {key_id}: fp {prev_fp} -> fp {fingerprint}"),
+            &[],
+        );
+    }
 
     // Confirmation gate. JSON callers MUST pass --yes; an interactive
     // y/N prompt on stdout/stdin doesn't compose with --output json

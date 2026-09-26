@@ -958,6 +958,7 @@ treeship trust add [OPTIONS] --kind <KIND> <KEY_ID> <PUBLIC_KEY>
 | `--kind <KIND>` | What this root is allowed to verify [possible values: hub_checkpoint, hub_org, cert_issuer, revoker, agent_cert, session_host, transparency_log, ship] |
 | `--label <LABEL>` | Optional human-readable label. Shown by `treeship trust list` |
 | `--yes` | Skip the interactive confirmation prompt. Required for non-interactive use (CI, scripts, JSON output mode) |
+| `--replace` | Replace a root already pinned under this key id with a different public key. Without it, trust add refuses: a key id is only a label, and silently re-pointing it at another key would make every package signed under that id read as the new key's |
 
 ### `treeship trust remove`
 
