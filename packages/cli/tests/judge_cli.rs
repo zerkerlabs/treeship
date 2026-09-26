@@ -489,10 +489,17 @@ fn an_escalated_judgement_is_open_until_a_signed_resolution_names_it() {
         .unwrap(),
     )
     .unwrap();
-    use base64::{engine::general_purpose::STANDARD, Engine};
+    // DSSE payloads are base64url; the standard alphabet fails whenever the
+    // payload contains `-` or `_`, which made this test flaky.
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     let stmt: Value = serde_json::from_slice(
-        &STANDARD
-            .decode(rec["envelope"]["payload"].as_str().unwrap())
+        &URL_SAFE_NO_PAD
+            .decode(
+                rec["envelope"]["payload"]
+                    .as_str()
+                    .unwrap()
+                    .trim_end_matches('='),
+            )
             .unwrap(),
     )
     .unwrap();
@@ -621,10 +628,17 @@ fn the_receipt_carries_the_response_digest_the_request_id_and_the_state_file() {
         &std::fs::read(ws.root.join(format!(".treeship/artifacts/{id}.json"))).unwrap(),
     )
     .unwrap();
-    use base64::{engine::general_purpose::STANDARD, Engine};
+    // DSSE payloads are base64url; the standard alphabet fails whenever the
+    // payload contains `-` or `_`, which made this test flaky.
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     let stmt: Value = serde_json::from_slice(
-        &STANDARD
-            .decode(rec["envelope"]["payload"].as_str().unwrap())
+        &URL_SAFE_NO_PAD
+            .decode(
+                rec["envelope"]["payload"]
+                    .as_str()
+                    .unwrap()
+                    .trim_end_matches('='),
+            )
             .unwrap(),
     )
     .unwrap();
