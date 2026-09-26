@@ -447,7 +447,7 @@ pub fn prove_chain_with_root(
         artifacts.len()
     ));
 
-    let public_key = ctx.keys.public_key(&ctx.config.default_key_id)?;
+    let public_key = ctx.keys.public_key(&ctx.keys.default_key_id()?)?;
     let pub_key_arr: [u8; 32] = public_key
         .try_into()
         .map_err(|_| "invalid public key length")?;

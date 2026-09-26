@@ -167,6 +167,13 @@ pub enum ConfigError {
         stub: PathBuf,
         target: PathBuf,
     },
+    /// A save through a project stub whose `extends` does not point at this
+    /// user's global config. A repository can ship any stub it likes; it
+    /// must not be able to choose which file a command writes.
+    SaveThroughStub {
+        stub: PathBuf,
+        target: PathBuf,
+    },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -186,6 +193,13 @@ impl std::fmt::Display for ConfigError {
                 target.display(),
                 stub.display(),
                 stub.display()
+            ),
+            Self::SaveThroughStub { stub, target } => write!(
+                f,
+                "{} extends {}, which is not this user's global config, so this command will not write through it. To change that config, run the command with --config {}",
+                stub.display(),
+                target.display(),
+                target.display()
             ),
             Self::NoHome => write!(f, "cannot determine home directory"),
         }
@@ -488,12 +502,32 @@ fn apply_overrides(cfg: &mut Config, raw: &serde_json::Value) {
 }
 
 pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
-    let dir = path.parent().unwrap_or(path);
-    fs::create_dir_all(dir)?;
-    #[cfg(unix)]
+    // Exactly the path given, never a stub's `extends`. A repository can
+    // ship any stub it likes; it must not choose which file gets written.
+    // A symlink at the path is refused too: replacing it would write
+    // wherever it points.
+    if fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+        return Err(ConfigError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "refusing to write the config through a symlink at {}",
+                path.display()
+            ),
+        )));
+    }
+    let dir = path.parent().unwrap_or(path);
+    if !dir.exists() {
+        fs::create_dir_all(dir)?;
+        // Only a directory this call created gets 0700; a directory the
+        // user set up keeps the mode they chose.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+        }
     }
     // Write back the paths exactly as they were read. Without this, the
     // first save after any load (hub attach, legacy migration, key
@@ -509,13 +543,56 @@ pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
         }
         None => serde_json::to_vec_pretty(cfg)?,
     };
-    fs::write(path, &json)?;
+    // Atomic: a crash mid-write leaves the previous config, never a
+    // truncated one. The temp file is created exclusively (O_EXCL) under a
+    // random name, so a planted symlink at a predictable name cannot turn
+    // the write into a write somewhere else.
+    let mut tmp = tempfile::Builder::new()
+        .prefix(".config.json.")
+        .tempfile_in(dir)?;
+    {
+        use std::io::Write as _;
+        tmp.write_all(&json)?;
+        tmp.flush()?;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o600))?;
     }
+    tmp.persist(path).map_err(|e| e.error)?;
     Ok(())
+}
+
+/// The `extends` a project stub at `path` names, if it is one.
+fn stub_extends(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    let raw: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    raw.get("extends")?.as_str().map(str::to_string)
+}
+
+/// Where a change to the hub connections is written. A project stub holds
+/// no connections; they live in the global config it extends, so the
+/// write goes there, and only there: a stub whose `extends` names any
+/// other file is refused (a repository must not choose what `hub attach`
+/// writes). A config that is not a stub is written where it was read.
+pub fn hub_write_target(config_path: &Path) -> Result<PathBuf, ConfigError> {
+    let Some(extends) = stub_extends(config_path) else {
+        return Ok(config_path.to_path_buf());
+    };
+    let global = global_config_path()?;
+    let target = resolve_extends(config_path, &extends);
+    let same = match (fs::canonicalize(&target), fs::canonicalize(&global)) {
+        (Ok(t), Ok(g)) => t == g,
+        _ => false,
+    };
+    if !same {
+        return Err(ConfigError::SaveThroughStub {
+            stub: config_path.to_path_buf(),
+            target,
+        });
+    }
+    Ok(global)
 }
 
 /// Migrate v0.1/v0.2 flat `hub` config to v0.4 `hub_connections` map.
@@ -754,6 +831,87 @@ mod tests {
         });
         std::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
         path
+    }
+
+    #[test]
+    fn hub_writes_follow_a_stub_only_to_the_global_config() {
+        let root = temp_dir();
+        let global_dir = root.join("home").join(".treeship");
+        std::fs::create_dir_all(&global_dir).unwrap();
+        let global = global_dir.join("config.json");
+        std::fs::write(&global, b"{}").unwrap();
+        std::env::set_var("TREESHIP_CONFIG", &global);
+
+        let stub = write_stub(&root.join("project").join(".treeship"), &global);
+        assert_eq!(hub_write_target(&stub).unwrap(), global);
+
+        // A traversal to another file this user can write: refused.
+        let elsewhere = root.join("elsewhere.json");
+        std::fs::write(&elsewhere, b"{}").unwrap();
+        let bad = write_stub(
+            &root.join("evil").join(".treeship"),
+            Path::new("../../elsewhere.json"),
+        );
+        let err = hub_write_target(&bad).unwrap_err();
+        assert!(matches!(err, ConfigError::SaveThroughStub { .. }), "{err}");
+
+        // Not a stub: written where it was read.
+        let plain = root.join("plain.json");
+        std::fs::write(&plain, b"{\"ship_id\":\"x\"}").unwrap();
+        assert_eq!(hub_write_target(&plain).unwrap(), plain);
+        std::env::remove_var("TREESHIP_CONFIG");
+    }
+
+    /// A symlink planted at the temp name an older version used must not
+    /// become the write target: the temp file is created exclusively under
+    /// a random name.
+    #[cfg(unix)]
+    #[test]
+    fn save_never_writes_through_a_planted_temp_symlink() {
+        let root = temp_dir();
+        let dir = root.join("ws").join(".treeship");
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = root.join("authorized_keys");
+        std::fs::write(&victim, b"ssh-ed25519 AAAA victim").unwrap();
+        let planted = dir.join(format!("config.json.tmp-{}", std::process::id()));
+        std::os::unix::fs::symlink(&victim, &planted).unwrap();
+        let cfg_path = dir.join("config.json");
+        let cfg = new_config(&cfg_path, "ship_x", "key_x", None);
+        save(&cfg, &cfg_path).unwrap();
+        assert_eq!(std::fs::read(&victim).unwrap(), b"ssh-ed25519 AAAA victim");
+        assert!(cfg_path.exists());
+        assert!(planted.is_symlink(), "the planted link was replaced");
+    }
+
+    #[test]
+    fn save_writes_exactly_the_path_given_and_refuses_a_symlink() {
+        let root = temp_dir();
+        let global_dir = root.join("home").join(".treeship");
+        std::fs::create_dir_all(&global_dir).unwrap();
+        let global = global_dir.join("config.json");
+        std::fs::write(&global, b"{\"marker\":true}").unwrap();
+
+        // A stub is overwritten in place (init --force makes it a
+        // workspace of its own); the file it extends is not touched.
+        let stub = write_stub(&root.join("project").join(".treeship"), &global);
+        let cfg = new_config(&stub, "ship_x", "key_x", Some("p".to_string()));
+        save(&cfg, &stub).unwrap();
+        assert_eq!(std::fs::read(&global).unwrap(), b"{\"marker\":true}");
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&stub).unwrap()).unwrap();
+        assert_eq!(written["ship_id"], "ship_x");
+
+        #[cfg(unix)]
+        {
+            let link_dir = root.join("link").join(".treeship");
+            std::fs::create_dir_all(&link_dir).unwrap();
+            let target = root.join("target.json");
+            std::fs::write(&target, b"{\"keep\":1}").unwrap();
+            let link = link_dir.join("config.json");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            assert!(save(&cfg, &link).is_err());
+            assert_eq!(std::fs::read(&target).unwrap(), b"{\"keep\":1}");
+        }
     }
 
     fn write_stub(dir: &Path, extends_path: &Path) -> PathBuf {
