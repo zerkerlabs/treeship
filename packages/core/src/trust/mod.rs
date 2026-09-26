@@ -385,11 +385,7 @@ impl TrustRootStore {
     pub fn save(&self, path: &Path) -> Result<(), TrustRootError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
-            }
+            let _ = crate::fs_safe::set_mode_nofollow(parent, 0o700);
         }
         let file = TrustRootFile {
             version: SCHEMA_VERSION,
@@ -399,12 +395,9 @@ impl TrustRootStore {
             path: path.to_path_buf(),
             msg: e.to_string(),
         })?;
-        fs::write(path, &json)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-        }
+        // Never through a link (a linked trust_roots.json is refused, not
+        // followed); the mode is set at creation.
+        crate::fs_safe::write_atomic(path, &json, 0o600)?;
         Ok(())
     }
 

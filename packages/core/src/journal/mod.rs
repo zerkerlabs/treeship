@@ -27,7 +27,7 @@
 //!     many times?" -- everything else stays in the signed grant +
 //!     receipt where it already is.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -416,14 +416,10 @@ fn write_record_checkpoint(
     index: u64,
     rec: &JournalCheckpoint,
 ) -> Result<(), JournalError> {
-    fs::create_dir_all(j.records_dir())?;
+    crate::fs_safe::create_dir_all_below(&j.dir, &j.records_dir())?;
     let name = record_filename(index, "journal-checkpoint", &rec.record_digest);
     let path = j.records_dir().join(&name);
-    let tmp = path.with_extension("json.tmp");
-    let mut f = File::create(&tmp)?;
-    f.write_all(&serde_json::to_vec_pretty(rec)?)?;
-    f.sync_all()?;
-    fs::rename(&tmp, &path)?;
+    crate::fs_safe::write_atomic(&path, &serde_json::to_vec_pretty(rec)?, 0o600)?;
     Ok(())
 }
 
@@ -444,7 +440,8 @@ fn ensure_meta(j: &Journal) -> Result<(), JournalError> {
         format: "json-records",
     };
     let bytes = serde_json::to_vec_pretty(&meta)?;
-    fs::write(&path, bytes)?;
+    crate::fs_safe::refuse_symlinks_below(&j.dir, &path)?;
+    crate::fs_safe::write_atomic(&path, &bytes, 0o600)?;
     Ok(())
 }
 
@@ -452,21 +449,21 @@ fn ensure_meta(j: &Journal) -> Result<(), JournalError> {
 // Indexes (rebuildable cache)
 // ---------------------------------------------------------------------------
 
-fn append_index(path: &Path, line: &str) -> Result<(), JournalError> {
+fn append_index(j: &Journal, path: &Path, line: &str) -> Result<(), JournalError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        crate::fs_safe::create_dir_all_below(&j.dir, parent)?;
     }
-    let mut f = OpenOptions::new().append(true).create(true).open(path)?;
+    let mut f = crate::fs_safe::open_append_nofollow(path, 0o600)?;
     writeln!(f, "{line}")?;
     Ok(())
 }
 
 fn index_grant(j: &Journal, index: u64, grant_id: &str) -> Result<(), JournalError> {
-    append_index(&j.by_grant_path(grant_id), &index.to_string())
+    append_index(j, &j.by_grant_path(grant_id), &index.to_string())
 }
 
 fn index_nonce(j: &Journal, index: u64, nonce_digest: &str) -> Result<(), JournalError> {
-    append_index(&j.by_nonce_path(nonce_digest), &index.to_string())
+    append_index(j, &j.by_nonce_path(nonce_digest), &index.to_string())
 }
 
 fn update_indexes_for_use(j: &Journal, index: u64, rec: &ApprovalUse) -> Result<(), JournalError> {
@@ -1126,7 +1123,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let j = Journal::new(dir.path());
         fs::create_dir_all(j.locks_dir()).unwrap();
-        let held = OpenOptions::new()
+        let held = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)

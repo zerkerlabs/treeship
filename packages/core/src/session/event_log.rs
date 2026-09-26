@@ -98,6 +98,7 @@ impl EventLog {
     /// count (and rewrites the sidecar) when the sidecar is missing,
     /// short-read, or stale from a crashed previous appender.
     pub fn open(session_dir: &Path) -> Result<Self, EventLogError> {
+        crate::fs_safe::refuse_symlink(session_dir)?;
         std::fs::create_dir_all(session_dir)?;
         let path = session_dir.join("events.jsonl");
         // Read-only. `open` used to call `read_counter_or_recount`, which
@@ -541,6 +542,7 @@ fn write_counter(events_path: &Path, count: u64, byte_size: u64) -> Result<(), s
             "counter path has no parent",
         )
     })?;
+    crate::fs_safe::refuse_symlink(dir)?;
     std::fs::create_dir_all(dir)?;
 
     let mut buf = [0u8; 16];

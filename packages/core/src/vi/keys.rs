@@ -67,7 +67,7 @@ pub fn save_agent_key(
         label: label.map(str::to_string),
     };
     let json = serde_json::to_string_pretty(&rec).map_err(|e| ViError::Key(e.to_string()))?;
-    crate::fs_safe::write_nofollow(&path, json.as_bytes(), 0o600)
+    crate::fs_safe::write_atomic(&path, json.as_bytes(), 0o600)
         .map_err(|e| ViError::Key(format!("write {}: {e}", path.display())))?;
     Ok(path)
 }

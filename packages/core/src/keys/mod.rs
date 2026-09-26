@@ -312,7 +312,7 @@ impl Store {
         {
             return;
         }
-        let _ = crate::fs_safe::write_nofollow(&path, format!("{current}\n").as_bytes(), 0o600);
+        let _ = crate::fs_safe::write_atomic(&path, format!("{current}\n").as_bytes(), 0o600);
     }
 
     /// Generates a new Ed25519 keypair, encrypts and stores it.
@@ -1576,21 +1576,16 @@ fn read_or_create_machine_seed(store_dir: &Path) -> Result<String, KeyError> {
     // global path only when the keystore has no usable parent (store_dir is
     // "/" or similar pathological input).
     let target = match local_seed_path.as_ref() {
-        Some(p) => {
-            let _ = fs::create_dir_all(p.parent().unwrap_or(Path::new(".")));
-            p.clone()
-        }
-        None => {
-            let _ = fs::create_dir_all(global_seed_path.parent().unwrap_or(Path::new(".")));
-            global_seed_path.clone()
-        }
+        Some(p) => p.clone(),
+        None => global_seed_path.clone(),
     };
     // The seed is secret material: never written through a link, and its
-    // directory must not be one either.
+    // directory must not be one either (checked before it is created).
     if let Some(parent) = target.parent() {
         crate::fs_safe::refuse_symlink(parent)?;
+        let _ = fs::create_dir_all(parent);
     }
-    crate::fs_safe::write_nofollow(&target, seed_hex.as_bytes(), 0o600).map_err(KeyError::Io)?;
+    crate::fs_safe::write_atomic(&target, seed_hex.as_bytes(), 0o600).map_err(KeyError::Io)?;
     Ok(seed_hex)
 }
 
@@ -1833,12 +1828,9 @@ pub fn derive_machine_key_stable(store_dir: &Path) -> Result<[u8; 32], KeyError>
         .map(std::path::PathBuf::from)
         .map_err(|_| KeyError::Crypto("HOME not set".to_string()))?;
     let seed_dir = home.join(".treeship").join(".internal");
+    crate::fs_safe::refuse_symlink(&seed_dir)?;
     let _ = fs::create_dir_all(&seed_dir);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&seed_dir, fs::Permissions::from_mode(0o700));
-    }
+    let _ = crate::fs_safe::set_mode_nofollow(&seed_dir, 0o700);
 
     let seed_path = seed_dir.join("machine_seed_v2");
     let seed = if seed_path.exists() {
@@ -1849,14 +1841,8 @@ pub fn derive_machine_key_stable(store_dir: &Path) -> Result<[u8; 32], KeyError>
         // fallback. Same OsRng rationale as the v1 seed above.
         OsRng.fill_bytes(&mut bytes);
         let seed_hex = hex_encode(&bytes);
-        crate::fs_safe::refuse_symlink(&seed_dir)?;
-        crate::fs_safe::write_nofollow(&seed_path, seed_hex.as_bytes(), 0o600)
+        crate::fs_safe::write_atomic(&seed_path, seed_hex.as_bytes(), 0o600)
             .map_err(KeyError::Io)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&seed_path, fs::Permissions::from_mode(0o600));
-        }
         seed_hex
     };
 
@@ -1990,7 +1976,7 @@ impl Store {
             let dir_meta = fs::metadata(&self.dir)?;
             let dir_mode = dir_meta.permissions().mode() & 0o777;
             if dir_mode != 0o700 {
-                fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))?;
+                crate::fs_safe::set_mode_nofollow(&self.dir, 0o700)?;
                 changed.push((self.dir.clone(), dir_mode, 0o700));
             }
 
@@ -2002,7 +1988,7 @@ impl Store {
                 }
                 let mode = entry.metadata()?.permissions().mode() & 0o777;
                 if mode != 0o600 {
-                    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+                    crate::fs_safe::set_mode_nofollow(&path, 0o600)?;
                     changed.push((path, mode, 0o600));
                 }
             }

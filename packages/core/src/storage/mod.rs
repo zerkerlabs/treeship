@@ -346,7 +346,7 @@ fn add_to_index(idx: &mut Index, entry: IndexEntry) {
 
 fn write_600(path: &Path, data: &[u8]) -> Result<(), StorageError> {
     // Mode 0600 at creation, and never through a link at the file.
-    crate::fs_safe::write_nofollow(path, data, 0o600)?;
+    crate::fs_safe::write_atomic(path, data, 0o600)?;
     Ok(())
 }
 

@@ -225,15 +225,18 @@ pub fn build_package_with_approvals(
     let session_id = &receipt.session.id;
     let pkg_dir = output_dir.join(format!("{session_id}.treeship"));
 
-    std::fs::create_dir_all(&pkg_dir)?;
-    std::fs::create_dir_all(pkg_dir.join(ARTIFACTS_DIR))?;
-    std::fs::create_dir_all(pkg_dir.join(PROOFS_DIR))?;
+    // A package is written below the sessions directory the caller named;
+    // nothing from there down may be a link, and every file is created
+    // fresh (never through a link or into a hard link).
+    crate::fs_safe::create_dir_all_below(output_dir, &pkg_dir)?;
+    crate::fs_safe::create_dir_all_below(output_dir, &pkg_dir.join(ARTIFACTS_DIR))?;
+    crate::fs_safe::create_dir_all_below(output_dir, &pkg_dir.join(PROOFS_DIR))?;
 
     let mut file_count = 0usize;
 
     // 1. receipt.json -- canonical serialization
     let receipt_bytes = serde_json::to_vec_pretty(receipt)?;
-    std::fs::write(pkg_dir.join(RECEIPT_FILE), &receipt_bytes)?;
+    crate::fs_safe::write_atomic(&pkg_dir.join(RECEIPT_FILE), &receipt_bytes, 0o644)?;
     file_count += 1;
 
     let receipt_hash = Sha256::digest(&receipt_bytes);
@@ -241,26 +244,30 @@ pub fn build_package_with_approvals(
 
     // 2. merkle.json -- standalone copy of the Merkle section
     let merkle_bytes = serde_json::to_vec_pretty(&receipt.merkle)?;
-    std::fs::write(pkg_dir.join(MERKLE_FILE), &merkle_bytes)?;
+    crate::fs_safe::write_atomic(&pkg_dir.join(MERKLE_FILE), &merkle_bytes, 0o644)?;
     file_count += 1;
 
     // 3. render.json
     let render_bytes = serde_json::to_vec_pretty(&receipt.render)?;
-    std::fs::write(pkg_dir.join(RENDER_FILE), &render_bytes)?;
+    crate::fs_safe::write_atomic(&pkg_dir.join(RENDER_FILE), &render_bytes, 0o644)?;
     file_count += 1;
 
     // 4. Write inclusion proofs as individual files
     for proof_entry in &receipt.merkle.inclusion_proofs {
         let proof_bytes = serde_json::to_vec_pretty(proof_entry)?;
         let filename = format!("{}.proof.json", proof_entry.artifact_id);
-        std::fs::write(pkg_dir.join(PROOFS_DIR).join(filename), &proof_bytes)?;
+        crate::fs_safe::write_atomic(
+            &pkg_dir.join(PROOFS_DIR).join(filename),
+            &proof_bytes,
+            0o644,
+        )?;
         file_count += 1;
     }
 
     // 5. preview.html stub
     if receipt.render.generate_preview {
         let preview = render_preview_html_with_approvals(receipt, bundle);
-        std::fs::write(pkg_dir.join(PREVIEW_FILE), preview.as_bytes())?;
+        crate::fs_safe::write_atomic(&pkg_dir.join(PREVIEW_FILE), preview.as_bytes(), 0o644)?;
         file_count += 1;
     }
 
@@ -272,12 +279,12 @@ pub fn build_package_with_approvals(
         // The sealed set's own envelopes and keys, independent of whether
         // any approval evidence exists.
         if !b.sealed_envelopes.is_empty() {
-            std::fs::create_dir_all(pkg_dir.join(ARTIFACTS_DIR))?;
+            crate::fs_safe::create_dir_all_below(output_dir, &pkg_dir.join(ARTIFACTS_DIR))?;
             for (artifact_id, envelope_bytes) in &b.sealed_envelopes {
                 let safe = sanitize_filename(artifact_id);
                 let path = pkg_dir.join(ARTIFACTS_DIR).join(format!("{safe}.json"));
                 if !path.exists() {
-                    std::fs::write(path, envelope_bytes)?;
+                    crate::fs_safe::write_atomic(&path, envelope_bytes, 0o644)?;
                     file_count += 1;
                 }
             }
@@ -296,7 +303,7 @@ pub fn build_package_with_approvals(
             .filter(|(_, a)| !a.is_empty())
             .collect();
         if !proofs.is_empty() {
-            std::fs::create_dir_all(pkg_dir.join(ANCHORS_DIR))?;
+            crate::fs_safe::create_dir_all_below(output_dir, &pkg_dir.join(ANCHORS_DIR))?;
             for (artifact_id, anchors) in proofs {
                 let safe = sanitize_filename(artifact_id);
                 std::fs::write(
@@ -311,7 +318,11 @@ pub fn build_package_with_approvals(
                 schema: PACKAGE_KEYS_SCHEMA.into(),
                 keys: b.signer_keys.iter().cloned().collect(),
             };
-            std::fs::write(pkg_dir.join(KEYS_FILE), serde_json::to_vec_pretty(&keys)?)?;
+            crate::fs_safe::write_atomic(
+                &pkg_dir.join(KEYS_FILE),
+                &serde_json::to_vec_pretty(&keys)?,
+                0o644,
+            )?;
             file_count += 1;
         }
         if !b.grants.is_empty()
@@ -320,15 +331,15 @@ pub fn build_package_with_approvals(
             || !b.revocations.is_empty()
             || !b.action_envelopes.is_empty()
         {
-            std::fs::create_dir_all(pkg_dir.join(APPROVALS_GRANTS))?;
-            std::fs::create_dir_all(pkg_dir.join(APPROVALS_USES))?;
-            std::fs::create_dir_all(pkg_dir.join(APPROVALS_CHECKPOINTS))?;
+            crate::fs_safe::create_dir_all_below(output_dir, &pkg_dir.join(APPROVALS_GRANTS))?;
+            crate::fs_safe::create_dir_all_below(output_dir, &pkg_dir.join(APPROVALS_USES))?;
+            crate::fs_safe::create_dir_all_below(output_dir, &pkg_dir.join(APPROVALS_CHECKPOINTS))?;
             // v0.9.10 PR A: write action envelopes that consumed an
             // approval. The artifacts/ directory was created earlier
             // for the package layout but never populated; closing the
             // action↔use binding gap requires the verifier to be able
             // to read each consuming action's `meta.approval_use_id`.
-            std::fs::create_dir_all(pkg_dir.join(ARTIFACTS_DIR))?;
+            crate::fs_safe::create_dir_all_below(output_dir, &pkg_dir.join(ARTIFACTS_DIR))?;
             for (artifact_id, envelope_bytes) in &b.action_envelopes {
                 let safe = sanitize_filename(artifact_id);
                 std::fs::write(
@@ -398,7 +409,7 @@ pub fn build_package_with_approvals(
                 revocations: revocation_ids,
             };
             let index_bytes = serde_json::to_vec_pretty(&index)?;
-            std::fs::write(pkg_dir.join(APPROVALS_INDEX_FILE), &index_bytes)?;
+            crate::fs_safe::write_atomic(&pkg_dir.join(APPROVALS_INDEX_FILE), &index_bytes, 0o644)?;
             file_count += 1;
         }
     }
