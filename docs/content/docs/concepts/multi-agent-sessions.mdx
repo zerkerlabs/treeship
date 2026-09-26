@@ -46,6 +46,33 @@ The host runs [`treeship session countersign`](/docs/cli/session#treeship-sessio
 
 A participant envelope is only valid once both signatures are present. Verification rejects an envelope that is missing the host countersign, carries too many signatures, has any signature that does not verify, or whose countersign key does not match the invitation's issuer.
 
+## Joining from another machine
+
+Everything above assumes the joiner and the host run on the same machine, so the host can countersign straight from the local artifact store. Two agents on different machines -- a joiner's laptop and a host's server, say -- need one more step to get the pending envelope across, plus a liveness check that replaces "the host read it from local storage" with real proof.
+
+```text
+host:    treeship session invite <session_id>                         ->  invitation blob
+joiner:  treeship session join --invite <blob> --actor agent://... --out pending.json
+                                                                        ->  send pending.json to the host
+host:    treeship session mint-challenge                              ->  nonce + issued_at
+                                                                        ->  send the nonce to the joiner
+joiner:  treeship session answer-challenge <participant_id> --challenge <nonce> --actor agent://...
+                                                                        ->  send the response file back to the host
+host:    treeship session countersign --pending pending.json \
+           --challenge <nonce> --challenge-issued-at <issued_at> \
+           --challenge-response response.json
+```
+
+`session join --out <file>` writes the same pending participant envelope both to the local artifact store and to a file, so it can be copied (scp, a shared drive, pasted through chat, whatever channel you already trust for moving files) to the host's machine. The host then countersigns with `--pending <file>` instead of a participant id.
+
+<Callout type="warn">
+Across machines the challenge is not optional: `countersign --pending` without `--challenge` and `--challenge-response` is refused. The joiner's signed answer to a nonce the host just minted is the only evidence, at countersign time, that the joiner still controls its key -- there's no local artifact store to trust instead. `--challenge-issued-at` is required too, so countersign has a window to judge the answer against; without it there's no way to tell a fresh challenge from a stale, replayed one.
+
+On the same machine the challenge is still optional today: omit it and countersign proceeds with a warning that the join wasn't liveness-checked. **This becomes mandatory everywhere, same machine or not, in 0.32.**
+</Callout>
+
+A minted challenge is valid for 10 minutes from `--challenge-issued-at` by default (`TREESHIP_JOIN_CHALLENGE_WINDOW_SECS` to change it). Past that window, or if the joiner's answer falls outside it, countersign refuses and tells you to mint a fresh one. Countersign is also single-use per invitation -- reserved in the host's Approval Use Journal before it signs, never released -- so a second countersign attempt against the same invitation is refused (`has already been countersigned`), and it refuses to finalize a join into a session that isn't open on this host right now, whether that's because the session was closed after the invitation was minted or because the invitation was never for a session started here at all. See [`treeship session countersign`](/docs/cli/session#treeship-session-countersign) for the exact commands and error text.
+
 ## The SessionHost trust root
 
 The invitation issuer's public key is embedded in every invitation. Before `treeship session join` honors an invitation, that key must be pinned locally as a `session_host` trust root. Without the pin, a self-signed forgery would verify cryptographically but be quarantined by trust-root enforcement.
