@@ -144,10 +144,18 @@ pub struct JoinArgs {
     pub invite_file: Option<String>,
     pub actor: String,
     pub format: String,
+    /// Also write the pending participant envelope to this file, for a host
+    /// on another machine (`session countersign --pending <file>`).
+    pub out: Option<String>,
 }
 
 pub struct CountersignArgs {
-    pub participant_id: String,
+    /// The participant in this ship's store (a same-machine join). Exactly
+    /// one of this and `pending` is given.
+    pub participant_id: Option<String>,
+    /// A pending participant envelope file from a joiner on another machine
+    /// (`session join --out`).
+    pub pending: Option<String>,
     pub format: String,
     /// The nonce the host issued for the room-join liveness challenge.
     /// Must be supplied together with `challenge_response`, or neither.
@@ -677,6 +685,11 @@ pub fn join(
     };
     c.storage.write(&record)?;
 
+    if let Some(out) = args.out.as_deref() {
+        write_new_file(std::path::Path::new(out), &pending_env.to_json()?)
+            .map_err(|e| format!("write --out {out}: {e}"))?;
+    }
+
     let format = Format::from_str(&args.format);
     if format == Format::Json {
         printer.json(&serde_json::json!({
@@ -724,22 +737,34 @@ pub fn countersign(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let c = ctx::open(ctx_override)?;
 
-    // Read the pending participant artifact.
-    let rec = c
-        .storage
-        .read(&args.participant_id)
-        .map_err(|e| format!("participant artifact {}: {e}", args.participant_id))?;
+    // The pending participant: from this ship's store (the joiner ran
+    // `session join` here), or from a file a joiner on another machine sent
+    // (`session join --out`). Either way its id is re-derived from its bytes.
+    let cross_ship = args.pending.is_some();
+    let rec = match (&args.participant_id, &args.pending) {
+        (Some(_), Some(_)) | (None, None) => {
+            return Err(crate::exit::usage(
+                "give either a participant id (same-machine join) or --pending <file> (a join on another machine)",
+            ));
+        }
+        (Some(id), None) => c
+            .storage
+            .read(id)
+            .map_err(|e| format!("participant artifact {id}: {e}"))?,
+        (None, Some(path)) => read_pending_file(path)?,
+    };
+    let participant_id = rec.artifact_id.clone();
     if rec.payload_type != payload_type("session-participant") {
         return Err(format!(
             "artifact {} is not a session-participant envelope (type={})",
-            args.participant_id, rec.payload_type,
+            participant_id, rec.payload_type,
         )
         .into());
     }
     if rec.envelope.signatures.len() != 1 {
         return Err(format!(
             "participant artifact {} already has {} signatures; expected exactly 1 (pending)",
-            args.participant_id,
+            participant_id,
             rec.envelope.signatures.len(),
         )
         .into());
@@ -834,27 +859,6 @@ pub fn countersign(
             }
         }
     }
-    // Single-use: the invitation nonce must ALREADY be consumed in the
-    // Approval Use Journal (join consumes it with max_uses=1). This both
-    // enforces single-use and forces the honest join path — a joiner who
-    // hand-crafted a pending envelope to bypass join never consumed the
-    // nonce, so there is no journal record and we refuse. `use_number` is
-    // `consumed_count + 1`, so a consumed invitation reads >= 2.
-    let j = Journal::new(journal_dir_for_ctx(&c));
-    let nonce_d = nonce_digest(&invitation.nonce);
-    let replay = journal::check_replay(&j, &stmt.invitation_ref, &nonce_d, Some(1))
-        .map_err(|e| format!("journal check failed: {e}"))?;
-    let consumed = replay.use_number.map(|n| n >= 2).unwrap_or(false);
-    if !consumed {
-        return Err(
-            "this invitation has not been consumed via `treeship session join` \
-             (no single-use journal record) — countersign refused. A pending \
-             participant envelope must come from a real join, not a hand-crafted \
-             submission."
-                .into(),
-        );
-    }
-
     // Optional liveness gate: proves the joining agent controls its key
     // RIGHT NOW, at countersign time, not just whenever `session join` ran.
     // Opt-in and additive -- omitting both flags countersigns exactly as
@@ -862,8 +866,23 @@ pub fn countersign(
     // since a half-supplied challenge is the AI-assisted-development
     // policy's "vacuous pass" failure mode dressed up as a flag.
     let mut challenge_answered_at: Option<String> = None;
+    let mut liveness_notice: Option<&str> = None;
     match (&args.challenge, &args.challenge_response) {
-        (None, None) => {}
+        // Across ships the answer to a challenge the host just minted is the
+        // only evidence that the joiner holds its key now: required.
+        (None, None) if cross_ship => {
+            return Err(crate::exit::usage(
+                "--pending needs --challenge and --challenge-response: across machines the joiner's answer to your challenge is the only proof it holds its key now (mint one with `treeship session mint-challenge`)",
+            ));
+        }
+        (None, None) => {
+            liveness_notice = Some(
+                "no --challenge: this join is not liveness-checked (the challenge becomes mandatory for every countersign in 0.32)",
+            );
+            if Format::from_str(&args.format) != Format::Json {
+                printer.warn(liveness_notice.unwrap_or_default(), &[]);
+            }
+        }
         (Some(_), None) | (None, Some(_)) => {
             return Err(
                 "--challenge and --challenge-response must be supplied together (or neither)"
@@ -897,7 +916,7 @@ pub fn countersign(
             let answered_at = check_join_challenge(
                 &response,
                 &stmt.session_ref,
-                &args.participant_id,
+                &participant_id,
                 &stmt.joining_agent,
                 nonce,
                 &joiner_vk,
@@ -909,6 +928,140 @@ pub fn countersign(
             challenge_answered_at = Some(answered_at);
         }
     }
+
+    // The challenge must be fresh and its answer must come after it. The
+    // joiner signs its own `signed_at`, so it is bounded on both sides: not
+    // before the host minted the challenge, not later than now (plus clock
+    // skew), and the challenge itself no older than the window. Across
+    // machines the issued-at instant is required: without it there is no
+    // window to judge. All of this runs before the use is reserved.
+    if cross_ship && args.challenge_issued_at.is_none() {
+        return Err(crate::exit::usage(
+            "--pending needs --challenge-issued-at (as `treeship session mint-challenge` printed it): the challenge must be shown to be fresh",
+        ));
+    }
+    let mut liveness: Option<treeship_core::statements::SessionLivenessStatement> = None;
+    if let (Some(nonce), Some(answered_at), Some(issued_at)) = (
+        args.challenge.as_deref(),
+        challenge_answered_at.as_deref(),
+        args.challenge_issued_at.as_deref(),
+    ) {
+        let parse = |t: &str, what: &str| {
+            treeship_core::statements::parse_rfc3339_to_unix(t)
+                .ok_or_else(|| format!("{what} {t:?} is not RFC 3339"))
+        };
+        let issued = parse(issued_at, "--challenge-issued-at")?;
+        let answered = parse(answered_at, "the challenge response's signed_at")?;
+        let now = now_unix_secs();
+        let window = challenge_window_secs();
+        if now > issued + window {
+            return Err(format!(
+                "the challenge was minted at {issued_at}, more than {window}s ago; mint a fresh one (`treeship session mint-challenge`). Countersign refused"
+            )
+            .into());
+        }
+        if issued > now + CHALLENGE_CLOCK_SKEW_SECS {
+            return Err(format!(
+                "--challenge-issued-at {issued_at} is in the future; countersign refused"
+            )
+            .into());
+        }
+        if answered < issued || answered > now + CHALLENGE_CLOCK_SKEW_SECS {
+            return Err(format!(
+                "the challenge response is signed at {answered_at}, outside the window from the challenge ({issued_at}) to now; countersign refused"
+            )
+            .into());
+        }
+        let stmt_l = treeship_core::statements::SessionLivenessStatement::new(
+            &stmt.session_ref,
+            &participant_id,
+            &stmt.joining_agent,
+            nonce,
+            issued_at,
+            answered_at,
+        );
+        if stmt_l.interval_seconds().is_none() {
+            return Err(format!(
+                "refusing to attest liveness: --challenge-issued-at {issued_at:?} is not before the response's signed_at {answered_at:?}"
+            )
+            .into());
+        }
+        liveness = Some(stmt_l);
+    }
+
+    // The invitation's session must be the one open here: an unexpired
+    // invitation from a session this host already closed must not admit
+    // anyone into it after the fact.
+    match crate::commands::session::load_session() {
+        Some(m) if m.session_id == invitation.session_ref => {}
+        Some(m) => {
+            return Err(format!(
+                "the invitation is for session {}, but the open session here is {}; countersign refused",
+                invitation.session_ref, m.session_id
+            )
+            .into())
+        }
+        None => {
+            return Err(format!(
+                "the invitation's session {} is not open on this ship (closed, or never started here); countersign refused",
+                invitation.session_ref
+            )
+            .into())
+        }
+    }
+
+    // Single use, enforced by the host: countersign reserves the use in THIS
+    // ship's journal before it signs, and never releases it (a countersign
+    // that fails after this point is recovered with a new invitation, never
+    // by re-using this one). It used to require that `session join` had
+    // consumed the nonce here, which a joiner on another machine never does,
+    // and which then let the host countersign any further pending envelope
+    // for the same invitation. max_uses is the pinned invitation's.
+    let j = Journal::new(journal_dir_for_ctx(&c));
+    let nonce_d = nonce_digest(&invitation.nonce);
+    let countersign_grant = format!("{}#countersign", stmt.invitation_ref);
+    let use_id = {
+        let mut buf = [0u8; 16];
+        use rand::RngCore;
+        rand::rngs::OsRng.fill_bytes(&mut buf);
+        format!("use_cs_{}", hex::encode(buf))
+    };
+    journal::reserve_use(
+        &j,
+        ApprovalUse {
+            type_: TYPE_APPROVAL_USE.into(),
+            use_id,
+            grant_id: countersign_grant,
+            grant_digest: digest_of_envelope(&inv_rec.envelope),
+            nonce_digest: nonce_d,
+            actor: format!("participant:{participant_id}"),
+            action: "session.countersign".into(),
+            subject: invitation.session_ref.clone(),
+            session_id: Some(invitation.session_ref.clone()),
+            action_artifact_id: Some(participant_id.clone()),
+            receipt_digest: None,
+            use_number: 0,
+            max_uses: Some(invitation.max_uses),
+            idempotency_key: None,
+            created_at: now_rfc3339(),
+            expires_at: Some(invitation.expires_at.clone()),
+            previous_record_digest: String::new(),
+            record_digest: String::new(),
+            signature: None,
+            signature_alg: None,
+            signing_key_id: None,
+        },
+        Some(invitation.max_uses),
+    )
+    .map_err(|e| match e {
+        journal::JournalError::MaxUsesExceeded { .. } => format!(
+            "invitation {} has already been countersigned (max_uses {}), countersign refused: {e}",
+            stmt.invitation_ref, invitation.max_uses
+        ),
+        other => {
+            format!("the journal is busy or unreadable ({other}); nothing was countersigned, retry")
+        }
+    })?;
 
     let finalized =
         SessionParticipantStatement::attach_host_countersign(&rec.envelope, &*host_signer)
@@ -952,9 +1105,9 @@ pub fn countersign(
     if let Some(mut manifest) = crate::commands::session::load_session() {
         if let Some(ref mut room) = manifest.room {
             if stmt.session_ref == manifest.session_id
-                && !room.participants.contains(&args.participant_id)
+                && !room.participants.contains(&participant_id)
             {
-                room.participants.push(args.participant_id.clone());
+                room.participants.push(participant_id.clone());
                 if let Err(e) = crate::commands::session::save_session(&manifest) {
                     printer.warn(
                         &format!(
@@ -984,30 +1137,8 @@ pub fn countersign(
     // cannot answer "how long was the window" is the checkmark again with
     // extra steps.
     let mut liveness_interval: Option<i64> = None;
-    if let (Some(nonce), Some(answered_at), Some(issued_at)) = (
-        args.challenge.as_deref(),
-        challenge_answered_at.as_deref(),
-        args.challenge_issued_at.as_deref(),
-    ) {
-        let liveness = treeship_core::statements::SessionLivenessStatement::new(
-            &stmt.session_ref,
-            &args.participant_id,
-            &stmt.joining_agent,
-            nonce,
-            issued_at,
-            answered_at,
-        );
+    if let Some(liveness) = liveness {
         liveness_interval = liveness.interval_seconds();
-        if liveness_interval.is_none() {
-            // Refuse rather than sign a window that does not make sense: an
-            // answer predating its challenge means a wrong clock or a
-            // fabricated timestamp, and sealing it would launder that.
-            return Err(format!(
-                "refusing to attest liveness: --challenge-issued-at {issued_at:?} is not before \
-                 the response's signed_at {answered_at:?}"
-            )
-            .into());
-        }
         let signed = treeship_core::attestation::sign(
             &payload_type("session-liveness"),
             &liveness,
@@ -1021,7 +1152,7 @@ pub fn countersign(
             signed_at: now_rfc3339(),
             // Parented to the participant it attests, so a chain walk from
             // the participant reaches the evidence.
-            parent_id: Some(args.participant_id.clone()),
+            parent_id: Some(participant_id.clone()),
             envelope: signed.envelope.clone(),
             hub_url: None,
             anchors: Vec::new(),
@@ -1032,7 +1163,7 @@ pub fn countersign(
     if format == Format::Json {
         printer.json(&serde_json::json!({
             "status":             "finalized",
-            "participant_id":     args.participant_id,
+            "participant_id":     participant_id,
             "session_ref":        stmt.session_ref,
             "invitation_ref":     stmt.invitation_ref,
             "joining_agent":      stmt.joining_agent,
@@ -1041,13 +1172,14 @@ pub fn countersign(
             // The number a skeptical reader wants. `null` means no durable
             // evidence was written -- not the same as a fast join.
             "liveness_interval_seconds": liveness_interval,
+            "notice": liveness_notice,
         }));
         return Ok(());
     }
     printer.success(
         "participant countersigned and finalized",
         &[
-            ("participant_id", &args.participant_id),
+            ("participant_id", &participant_id),
             ("session_ref", &stmt.session_ref),
             ("invitation_ref", &stmt.invitation_ref),
             (
@@ -1185,6 +1317,111 @@ pub fn answer_challenge(
 // Small local helpers
 // ---------------------------------------------------------------------------
 
+/// Read a pending participant envelope a joiner sent (`session join --out`)
+/// and make it a store record. Exactly one envelope, carrying only the
+/// joining agent's signature, which must verify over the participant's
+/// canonical bytes under the key the statement names. Its id is re-derived
+/// from its bytes, never taken from the file. Whether the invitation it
+/// redeems is one this host issued is checked by the caller, against the
+/// host's own copy.
+fn read_pending_file(path: &str) -> Result<Record, Box<dyn std::error::Error>> {
+    let raw = std::fs::read(path).map_err(|e| format!("read --pending {path}: {e}"))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&raw).map_err(|e| format!("--pending {path} is not JSON: {e}"))?;
+    if !value.is_object() {
+        return Err(format!(
+            "--pending {path} must hold exactly one pending participant envelope (a JSON object)"
+        )
+        .into());
+    }
+    let env = Envelope::from_json(&raw).map_err(|e| format!("--pending {path}: {e}"))?;
+    if env.payload_type != payload_type("session-participant") {
+        return Err(format!(
+            "--pending {path} is a {} envelope, not a session participant",
+            env.payload_type
+        )
+        .into());
+    }
+    if env.signatures.len() != 1 {
+        return Err(format!(
+            "--pending {path} carries {} signatures; a pending participant carries exactly the joining agent's",
+            env.signatures.len()
+        )
+        .into());
+    }
+    let stmt: SessionParticipantStatement = env
+        .unmarshal_statement()
+        .map_err(|e| format!("--pending {path}: participant payload: {e}"))?;
+    let pk: [u8; 32] = URL_SAFE_NO_PAD
+        .decode(stmt.joining_agent.as_bytes())
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .ok_or("participant.joining_agent is not a 32-byte base64url Ed25519 pubkey")?;
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(&pk)
+        .map_err(|e| format!("participant.joining_agent pubkey invalid: {e}"))?;
+    let sig: [u8; 64] = URL_SAFE_NO_PAD
+        .decode(env.signatures[0].sig.as_bytes())
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .ok_or("the joining agent's signature is not 64 bytes of base64url")?;
+    vk.verify_strict(
+        stmt.canonical_for_signing().as_bytes(),
+        &ed25519_dalek::Signature::from_bytes(&sig),
+    )
+    .map_err(|_| {
+        "the joining agent's signature does not verify over the participant's canonical bytes"
+    })?;
+    let id = treeship_core::statements::session_participant::participant_artifact_id(&env)
+        .map_err(|e| format!("--pending {path}: {e}"))?;
+    Ok(Record {
+        artifact_id: id,
+        digest: digest_of_envelope(&env),
+        payload_type: env.payload_type.clone(),
+        key_id: env.signatures[0].keyid.clone(),
+        signed_at: now_rfc3339(),
+        parent_id: Some(stmt.invitation_ref.clone()),
+        envelope: env,
+        hub_url: None,
+        anchors: Vec::new(),
+    })
+}
+
+/// Write `bytes` to `path` without following a symlink at `path`: write a
+/// fresh, randomly named file beside it (`create_new`), then rename it over
+/// `path`. A rename replaces a symlink itself, never its target.
+fn write_new_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."));
+    let mut buf = [0u8; 8];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut buf);
+    let tmp = dir.join(format!(".treeship-pending-{}.tmp", hex::encode(buf)));
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
+/// Clock skew allowed between host and joiner when judging a challenge.
+const CHALLENGE_CLOCK_SKEW_SECS: u64 = 60;
+
+/// How old a join challenge may be at countersign time. Ten minutes unless
+/// `TREESHIP_JOIN_CHALLENGE_WINDOW_SECS` says otherwise.
+fn challenge_window_secs() -> u64 {
+    std::env::var("TREESHIP_JOIN_CHALLENGE_WINDOW_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(600)
+}
+
 fn digest_of_envelope(env: &Envelope) -> String {
     use sha2::{Digest, Sha256};
     let bytes = serde_json::to_vec(env).unwrap_or_default();
@@ -1263,6 +1500,30 @@ pub fn mint_challenge(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn join_out_replaces_a_symlink_and_never_writes_through_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("victim.txt");
+        std::fs::write(&target, b"do not touch").unwrap();
+        let out = dir.path().join("pending.json");
+        std::os::unix::fs::symlink(&target, &out).unwrap();
+        write_new_file(&out, b"{}").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"do not touch");
+        assert!(!std::fs::symlink_metadata(&out)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&out).unwrap(), b"{}");
+        // No temp file left behind.
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
+    }
 
     #[test]
     fn parse_duration_handles_suffixes() {
