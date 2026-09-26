@@ -12,7 +12,7 @@ The only dependency is `@treeship/core-wasm` (the compiled Rust core, under 170 
 
 ## API
 
-Three functions. Each accepts a parsed object, a JSON string, or a URL.
+`verifyReceipt`, `verifyCertificate` and `crossVerify` accept a parsed object, a JSON string, or a URL. `verifyPackage` takes the files of a `.treeship` package.
 
 ### `verifyReceipt(target)`
 
@@ -65,6 +65,35 @@ if (result.ok) {
   console.log('unauthorized:', result.unauthorized_tool_calls);
 }
 ```
+
+### `verifyPackage(files, { pinnedKeys? })`
+
+Verifies a whole `.treeship` package, not just its receipt:
+- every artifact envelope's Ed25519 signatures, in core-wasm (the same code as the CLI)
+- each envelope against the receipt's `artifact_id` and full `digest`
+- the signed close record (`record.json`) against the exact bytes of `receipt.json`
+
+`files` maps each path inside the package (`receipt.json`, `record.json`, `keys.json`, `artifacts/<id>.json`, ...) to its unmodified bytes.
+
+```typescript
+import { verifyPackage } from '@treeship/verify';
+
+const result = await verifyPackage(files, {
+  // Keys you got from a source you trust, not from the package.
+  pinnedKeys: { key_57e0c8ba2b2bc32c: 'ed25519:HwiNphKvOWVcuI_-kv8hNz6Ahtt8n1LzngHDJpl5WJI' },
+});
+```
+
+The verdict uses the CLI's vocabulary:
+
+| verdict | means |
+|---|---|
+| `verified` | Every signature holds under a key you pinned, every artifact matches the receipt, and the close record binds this receipt.json. |
+| `signatures-pass` | The same, but at least one signer is known only from the package's own `keys.json`, which comes from the same place as the signatures. |
+| `structural-pass` | Structure only. Either no envelopes were given (`scope: 'receipt-only'`, which includes passing `receipt.json` alone), or the package holds kinds whose rules this library doesn't evaluate: approvals, endorsements, room invitations and participants (`scope: 'partial'`). Run `treeship package verify` for those. |
+| `failed` | A checked signature, id, digest or binding does not hold; a listed envelope or the close record is missing; or `keys.json` contradicts a key you pinned. |
+
+`tests/vectors/packages` runs every honest and tampered package through it: the `verify_js` and `verify_js_pinned` columns of `expected.json`. A tampered package is never `signatures-pass` or `verified`.
 
 ## Runtime compatibility
 
