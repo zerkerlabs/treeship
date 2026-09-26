@@ -98,7 +98,20 @@ Hub verifies:
 | `GET` | `/v1/agents/history` | None | Agent receipt history |
 | `GET` | `/v1/agents/match` | None | Match agents in the registry |
 | `GET` | `/v1/stats` | None | Public adoption metrics (counts only, cached 5 min) |
+| `GET` | `/v1/version` | None | Which build is running: version, commit, build time, Go runtime (`/version` is an alias; `/health` and `/healthz` are the liveness probe, `/readyz` readiness) |
 | `GET` | `/.well-known/treeship/revoked.json` | None | Revoked key list |
+
+## Which build is running
+
+```
+GET /v1/version
+```
+
+```json
+{"service":"treeship-hub","version":"0.31.10","commit":"1a2b3c4","built_at":"2026-09-26T00:00:00Z","go":"go1.26.4"}
+```
+
+Values come from the build; unset ones read `dev` or `unknown` rather than a guess. Never cached. `/version` is an alias, `/health` and `/healthz` answer liveness, `/readyz` readiness.
 
 ## Error format
 

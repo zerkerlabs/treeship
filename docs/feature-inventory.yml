@@ -510,6 +510,7 @@
     - GET /v1/artifacts/{id}
     - POST /v1/session
     - GET /v1/stats
+    - GET /v1/version
     - GET /v1/workspace/{dockId}
   cli:
     - treeship hub attach

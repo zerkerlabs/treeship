@@ -126,6 +126,28 @@ pub fn checkpoint(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    checkpoint_with(config, false, printer)
+}
+
+/// `treeship checkpoint --publish`: seal, then push to the attached hub in
+/// the same command. A failed push is a failure (nonzero exit); the
+/// checkpoint itself is still on disk.
+pub fn checkpoint_with(
+    config: Option<&str>,
+    publish_after: bool,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seal_checkpoint(config, printer)?;
+    if publish_after {
+        publish(config, printer)?;
+    }
+    Ok(())
+}
+
+fn seal_checkpoint(
+    config: Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
     let (tree, _artifact_ids) = build_tree(&ctx)?;
 
