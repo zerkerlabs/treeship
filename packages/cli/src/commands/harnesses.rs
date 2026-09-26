@@ -48,6 +48,11 @@ pub enum InstallMethod {
     /// Skill file -- a Markdown blob written to a fixed path; idempotent
     /// if the file exists at all.
     SkillFile,
+    /// The Claude Code plugin, installed through the `claude` CLI (or the
+    /// two commands printed when it is not on PATH); idempotent if the
+    /// plugin's cache directory exists. Nothing is written to a config
+    /// file: the plugin carries the hooks and the MCP server.
+    ClaudePlugin,
 }
 
 impl InstallMethod {
@@ -56,6 +61,7 @@ impl InstallMethod {
             Self::JsonMcp => "json-mcp",
             Self::TomlMcp => "toml-mcp",
             Self::SkillFile => "skill-file",
+            Self::ClaudePlugin => "claude-plugin",
         }
     }
 }
@@ -222,9 +228,32 @@ fn skill_file_exists(path: &Path) -> bool {
 // config_path resolvers
 // ---------------------------------------------------------------------------
 
-fn claude_config_path(home: &Path) -> PathBuf {
+/// Where `claude plugin install treeship@treeship` lands.
+fn claude_plugin_path(home: &Path) -> PathBuf {
+    home.join(".claude")
+        .join("plugins")
+        .join("cache")
+        .join("treeship")
+        .join("treeship")
+}
+
+/// The file earlier versions of `treeship add claude-code` wrote. Claude
+/// Code never read it (its MCP servers live in `~/.claude.json` and a
+/// project's `.mcp.json`; hooks in `~/.claude/settings.json`). Kept only
+/// so `add` can remove the entry it once wrote.
+pub fn legacy_claude_mcp_path(home: &Path) -> PathBuf {
     home.join(".claude").join("mcp.json")
 }
+
+fn dir_exists(path: &Path) -> bool {
+    path.is_dir()
+}
+
+/// The two commands that install the Claude Code plugin.
+pub const CLAUDE_PLUGIN_COMMANDS: [&str; 2] = [
+    "claude plugin marketplace add zerkerlabs/treeship",
+    "claude plugin install treeship@treeship",
+];
 fn cursor_config_path(home: &Path) -> PathBuf {
     home.join(".cursor").join("mcp.json")
 }
@@ -297,10 +326,10 @@ pub const HARNESSES: &[HarnessManifest] = &[
         privacy_posture:       "Raw command stripped from receipts; tool inputs sanitized; only paths and tool name retained.",
         recommended_backstops: &[ConnectionMode::GitReconcile],
         install: Some(InstallProfile {
-            install_method: InstallMethod::JsonMcp,
-            snippet:        JSON_MCP_SNIPPET,
-            config_path:    claude_config_path,
-            idempotency:    json_has_treeship,
+            install_method: InstallMethod::ClaudePlugin,
+            snippet:        "claude plugin marketplace add zerkerlabs/treeship && claude plugin install treeship@treeship",
+            config_path:    claude_plugin_path,
+            idempotency:    dir_exists,
         }),
     },
     HarnessManifest {

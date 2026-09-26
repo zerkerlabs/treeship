@@ -84,6 +84,7 @@ pub fn install_via_manifest(
     manifest: &HarnessManifest,
     home: &Path,
     dry_run: bool,
+    assume_yes: bool,
     printer: &Printer,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let install = match manifest.install.as_ref() {
@@ -118,6 +119,20 @@ pub fn install_via_manifest(
         return Ok(false);
     }
 
+    if install.install_method == InstallMethod::ClaudePlugin {
+        if dry_run {
+            printer.info(&format!(
+                "  Would install the {} by running:",
+                manifest.display_name
+            ));
+            for c in harnesses::CLAUDE_PLUGIN_COMMANDS {
+                printer.info(&format!("    {c}"));
+            }
+            return Ok(true);
+        }
+        return install_claude_plugin(home, assume_yes, printer);
+    }
+
     if dry_run {
         printer.info(&format!(
             "  Would configure {} at {}",
@@ -135,6 +150,7 @@ pub fn install_via_manifest(
         InstallMethod::JsonMcp => install_json_mcp(manifest.harness_id, install.snippet, &path)?,
         InstallMethod::TomlMcp => install_toml_mcp(install.snippet, &path)?,
         InstallMethod::SkillFile => install_skill_file(install.snippet, &path)?,
+        InstallMethod::ClaudePlugin => unreachable!("handled above"),
     }
 
     printer.success(&format!("{} configured", manifest.display_name), &[]);
@@ -145,6 +161,192 @@ pub fn install_via_manifest(
         printer.dim_info("  Restart the agent so it reloads MCP settings.");
     }
     Ok(true)
+}
+
+/// The Claude Code plugin is the real harness (hooks plus the MCP server).
+/// Through 0.31.9 `add claude-code` wrote `~/.claude/mcp.json`, a file
+/// Claude Code never read, and called that "configured" (0.31.9 full
+/// test, CLI-16). Now: remove that stale entry if it is exactly ours,
+/// then run the two plugin commands through the `claude` CLI when it is
+/// on PATH and the person agrees (or `--all`), else print them.
+fn install_claude_plugin(
+    home: &Path,
+    assume_yes: bool,
+    printer: &Printer,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    // Looked up, not run: nothing executes before the person says yes.
+    let claude_on_path = on_path("claude");
+
+    let print_commands = |printer: &Printer| {
+        for c in harnesses::CLAUDE_PLUGIN_COMMANDS {
+            printer.info(&format!("    {c}"));
+        }
+    };
+
+    if !claude_on_path {
+        printer.warn(
+            "the `claude` CLI is not on PATH, so the plugin was not installed. Run these once it is:",
+            &[],
+        );
+        print_commands(printer);
+        printer.dim_info("  Nothing was changed.");
+        return Ok(false);
+    }
+
+    if !assume_yes {
+        if !crossterm::tty::IsTty::is_tty(&io::stdin()) {
+            printer.info("  To install the Claude Code plugin, run:");
+            print_commands(printer);
+            printer.dim_info("  (pass --all to run them from here) Nothing was changed.");
+            return Ok(false);
+        }
+        printer.info("  The Claude Code plugin is installed by:");
+        print_commands(printer);
+        let answer = prompt("  Run these two commands now? (y/N): ");
+        if !(answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")) {
+            printer.dim_info("  Skipped. Nothing was changed.");
+            return Ok(false);
+        }
+    }
+
+    // Consent given: the stale entry an earlier version wrote goes now,
+    // not before the question.
+    remove_stale_claude_mcp_entry(home, printer)?;
+
+    for c in harnesses::CLAUDE_PLUGIN_COMMANDS {
+        let mut parts = c.split_whitespace();
+        let program = parts.next().unwrap_or("claude");
+        let args: Vec<&str> = parts.collect();
+        printer.info(&format!("  $ {c}"));
+        let status = std::process::Command::new(program).args(&args).status()?;
+        if !status.success() {
+            return Err(format!(
+                "`{c}` exited {}; run it by hand and then `treeship add claude-code` again",
+                status
+                    .code()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "by signal".into())
+            )
+            .into());
+        }
+    }
+    printer.success("Claude Code plugin installed", &[]);
+    printer.dim_info(
+        "  The plugin carries the hooks and the MCP server; no config file of yours was edited.",
+    );
+    Ok(true)
+}
+
+/// Is `name` an executable on PATH? A lookup only; nothing runs.
+fn on_path(name: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        let candidate = dir.join(name);
+        std::fs::metadata(&candidate)
+            .map(|m| m.is_file() && is_executable(&m))
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(unix)]
+fn is_executable(m: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    m.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_m: &std::fs::Metadata) -> bool {
+    true
+}
+
+/// The exact `mcpServers.treeship` entry earlier versions wrote: `npx -y
+/// @treeship/mcp`, an `env` with nothing but TREESHIP_ACTOR and the default
+/// TREESHIP_HUB_ENDPOINT, and no other keys. Anything a person changed
+/// (another command, an extra env var, a different endpoint) is theirs.
+fn is_our_legacy_mcp_entry(entry: &serde_json::Value) -> bool {
+    let Some(obj) = entry.as_object() else {
+        return false;
+    };
+    if obj
+        .keys()
+        .any(|k| !matches!(k.as_str(), "command" | "args" | "env"))
+    {
+        return false;
+    }
+    let command_ok = obj.get("command").and_then(|v| v.as_str()) == Some("npx");
+    let args_ok = obj.get("args").and_then(|v| v.as_array()).is_some_and(|a| {
+        a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>() == ["-y", "@treeship/mcp"]
+    });
+    let env_ok = match obj.get("env") {
+        None => true,
+        Some(env) => env.as_object().is_some_and(|e| {
+            e.iter().all(|(k, v)| match k.as_str() {
+                "TREESHIP_ACTOR" => v.is_string(),
+                "TREESHIP_HUB_ENDPOINT" => v.as_str() == Some("https://api.treeship.dev"),
+                _ => false,
+            })
+        }),
+    };
+    command_ok && args_ok && env_ok
+}
+
+/// Remove the `mcpServers.treeship` entry an earlier `treeship add` wrote
+/// to `~/.claude/mcp.json`, only when it is exactly ours; anything else in
+/// the file is left alone, and the file goes when nothing else is in it.
+fn remove_stale_claude_mcp_entry(
+    home: &Path,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = harnesses::legacy_claude_mcp_path(home);
+    if !path.exists() || !is_safe_path(&path) {
+        return Ok(());
+    }
+    // A file that is not UTF-8 or not JSON is not ours to touch.
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Ok(());
+    };
+    let Ok(mut config) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Ok(());
+    };
+    let ours = config
+        .get("mcpServers")
+        .and_then(|m| m.get("treeship"))
+        .map(is_our_legacy_mcp_entry)
+        .unwrap_or(false);
+    if !ours {
+        return Ok(());
+    }
+    let servers = config["mcpServers"].as_object_mut().expect("checked above");
+    servers.remove("treeship");
+    let only_servers = config.as_object().is_some_and(|o| o.len() == 1);
+    let servers_empty = config["mcpServers"]
+        .as_object()
+        .is_none_or(|o| o.is_empty());
+    if only_servers && servers_empty {
+        std::fs::remove_file(&path)?;
+    } else {
+        // Same mode as the file had (a 0600 file holds other servers'
+        // tokens), written through an exclusive random-named temp file.
+        let mode = std::fs::metadata(&path)?.permissions();
+        let dir = path.parent().unwrap_or(Path::new("."));
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".mcp.json.")
+            .tempfile_in(dir)?;
+        {
+            use std::io::Write as _;
+            tmp.write_all(serde_json::to_string_pretty(&config)?.as_bytes())?;
+            tmp.flush()?;
+        }
+        std::fs::set_permissions(tmp.path(), mode)?;
+        tmp.persist(&path).map_err(|e| e.error)?;
+    }
+    printer.dim_info(&format!(
+        "  Removed the mcpServers.treeship entry an earlier `treeship add` wrote to {} (Claude Code never read that file).",
+        path.display()
+    ));
+    Ok(())
 }
 
 /// JSON merge: read `path` (or start with `{"mcpServers": {}}`), insert
@@ -429,7 +631,7 @@ pub fn run(
 
     let mut installed = 0usize;
     for c in &targets {
-        match install_via_manifest(c.manifest, &home, dry_run, printer) {
+        match install_via_manifest(c.manifest, &home, dry_run, all, printer) {
             Ok(true) => installed += 1,
             Ok(false) => {}
             Err(e) => printer.warn(
@@ -486,18 +688,18 @@ mod tests {
         // production), so canonicalize for tests.
         let home = home_dir.path().canonicalize().unwrap();
         let home = home.as_path();
-        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::create_dir_all(home.join(".cursor")).unwrap();
         let printer = Printer::new(
             Format::Text,
             true, /* quiet */
             true, /* no_color */
         );
-        let profile = harnesses::for_surface(AgentSurface::ClaudeCode).unwrap();
+        let profile = harnesses::for_surface(AgentSurface::CursorAgent).unwrap();
 
-        let did_install = install_via_manifest(profile, home, false, &printer).unwrap();
+        let did_install = install_via_manifest(profile, home, false, false, &printer).unwrap();
         assert!(did_install);
 
-        let written = home.join(".claude").join("mcp.json");
+        let written = home.join(".cursor").join("mcp.json");
         let json: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&written).unwrap()).unwrap();
         assert!(
@@ -509,7 +711,8 @@ mod tests {
         );
 
         // Second run -- idempotency check returns true; nothing happens.
-        let did_install_again = install_via_manifest(profile, home, false, &printer).unwrap();
+        let did_install_again =
+            install_via_manifest(profile, home, false, false, &printer).unwrap();
         assert!(!did_install_again);
     }
 
@@ -526,7 +729,7 @@ mod tests {
         std::fs::create_dir_all(home.join(".cursor")).unwrap();
         let printer = Printer::new(Format::Text, true, true);
         let profile = harnesses::for_surface(AgentSurface::CursorAgent).unwrap();
-        install_via_manifest(profile, home, false, &printer).unwrap();
+        install_via_manifest(profile, home, false, false, &printer).unwrap();
 
         let json: serde_json::Value =
             serde_json::from_slice(&std::fs::read(home.join(".cursor").join("mcp.json")).unwrap())
@@ -552,7 +755,7 @@ mod tests {
 
         let printer = Printer::new(Format::Text, true, true);
         let profile = harnesses::for_surface(AgentSurface::Codex).unwrap();
-        let did = install_via_manifest(profile, home, false, &printer).unwrap();
+        let did = install_via_manifest(profile, home, false, false, &printer).unwrap();
         assert!(did);
 
         let after = std::fs::read_to_string(&path).unwrap();
@@ -563,7 +766,7 @@ mod tests {
         );
 
         // Idempotency: second run is a no-op.
-        let again = install_via_manifest(profile, home, false, &printer).unwrap();
+        let again = install_via_manifest(profile, home, false, false, &printer).unwrap();
         assert!(!again);
     }
 
@@ -579,13 +782,13 @@ mod tests {
         let printer = Printer::new(Format::Text, true, true);
         let profile = harnesses::for_surface(AgentSurface::Hermes).unwrap();
 
-        let did = install_via_manifest(profile, home, false, &printer).unwrap();
+        let did = install_via_manifest(profile, home, false, false, &printer).unwrap();
         assert!(did);
         let skill = (profile.install.as_ref().unwrap().config_path)(home);
         assert!(skill.is_file(), "skill file should exist");
 
         // Idempotency: second run is a no-op.
-        let again = install_via_manifest(profile, home, false, &printer).unwrap();
+        let again = install_via_manifest(profile, home, false, false, &printer).unwrap();
         assert!(!again);
     }
 
@@ -597,13 +800,106 @@ mod tests {
         // production), so canonicalize for tests.
         let home = home_dir.path().canonicalize().unwrap();
         let home = home.as_path();
-        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::create_dir_all(home.join(".cursor")).unwrap();
         let printer = Printer::new(Format::Text, true, true);
-        let profile = harnesses::for_surface(AgentSurface::ClaudeCode).unwrap();
-        let did = install_via_manifest(profile, home, true /* dry_run */, &printer).unwrap();
+        let profile = harnesses::for_surface(AgentSurface::CursorAgent).unwrap();
+        let did = install_via_manifest(profile, home, true /* dry_run */, false, &printer).unwrap();
         // Reports as "would do work" but doesn't write.
         assert!(did);
+        assert!(!home.join(".cursor").join("mcp.json").exists());
+    }
+
+    /// `add claude-code` never writes a config file: the plugin is the
+    /// harness. A dry run says which commands would run and writes nothing.
+    #[test]
+    fn claude_code_dry_run_names_the_plugin_commands_and_writes_nothing() {
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().canonicalize().unwrap();
+        let printer = Printer::new(Format::Text, true, true);
+        let profile = harnesses::for_surface(AgentSurface::ClaudeCode).unwrap();
+        let did = install_via_manifest(profile, &home, true, false, &printer).unwrap();
+        assert!(did);
         assert!(!home.join(".claude").join("mcp.json").exists());
+        assert!(!home.join(".claude").join("plugins").exists());
+    }
+
+    /// The stale `~/.claude/mcp.json` entry earlier versions wrote is
+    /// removed only when it is exactly ours; a neighbour survives, and a
+    /// `treeship` entry someone customised is left alone.
+    #[test]
+    fn stale_claude_mcp_entry_is_removed_only_when_exactly_ours() {
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = home_dir.path().canonicalize().unwrap();
+        let dir = home.join(".claude");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mcp.json");
+        let printer = Printer::new(Format::Text, true, true);
+
+        // Ours plus a neighbour: ours goes, the neighbour stays.
+        std::fs::write(&path, serde_json::to_string_pretty(&serde_json::json!({
+            "mcpServers": {
+                "treeship": {"command": "npx", "args": ["-y", "@treeship/mcp"], "env": {"TREESHIP_ACTOR": "agent://claude-code"}},
+                "other": {"command": "other-server"}
+            }
+        })).unwrap()).unwrap();
+        remove_stale_claude_mcp_entry(&home, &printer).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(v["mcpServers"].get("treeship").is_none());
+        assert_eq!(v["mcpServers"]["other"]["command"], "other-server");
+
+        // Only ours: the file goes.
+        std::fs::write(
+            &path,
+            serde_json::to_string(&serde_json::json!({
+                "mcpServers": {"treeship": {"command": "npx", "args": ["-y", "@treeship/mcp"]}}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        remove_stale_claude_mcp_entry(&home, &printer).unwrap();
+        assert!(!path.exists());
+
+        // Ours plus a neighbour, on a 0600 file: the mode survives the rewrite.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::write(&path, serde_json::to_string(&serde_json::json!({
+                "mcpServers": {
+                    "treeship": {"command": "npx", "args": ["-y", "@treeship/mcp"], "env": {"TREESHIP_ACTOR": "agent://claude-code", "TREESHIP_HUB_ENDPOINT": "https://api.treeship.dev"}},
+                    "other": {"command": "other-server", "env": {"TOKEN": "secret"}}
+                }
+            })).unwrap()).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            remove_stale_claude_mcp_entry(&home, &printer).unwrap();
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "rewrite changed the file mode");
+        }
+
+        // Our command with an env var a person added: theirs, untouched.
+        let customised_env = serde_json::json!({
+            "mcpServers": {"treeship": {"command": "npx", "args": ["-y", "@treeship/mcp"], "env": {"TREESHIP_ACTOR": "agent://x", "OPENAI_API_KEY": "sk-keep"}}}
+        });
+        std::fs::write(&path, serde_json::to_string(&customised_env).unwrap()).unwrap();
+        remove_stale_claude_mcp_entry(&home, &printer).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v, customised_env, "an entry with extra env was deleted");
+
+        // Not UTF-8: left alone, no error.
+        std::fs::write(&path, [0xff, 0xfe, b'{']).unwrap();
+        remove_stale_claude_mcp_entry(&home, &printer).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), [0xff, 0xfe, b'{']);
+
+        // A customised treeship entry is not ours: untouched.
+        let custom = serde_json::json!({
+            "mcpServers": {"treeship": {"command": "/opt/treeship-mcp", "args": []}}
+        });
+        std::fs::write(&path, serde_json::to_string(&custom).unwrap()).unwrap();
+        remove_stale_claude_mcp_entry(&home, &printer).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v, custom);
     }
 
     #[test]
@@ -625,7 +921,7 @@ mod tests {
 
         let printer = Printer::new(Format::Text, true, true);
         let profile = harnesses::for_surface(AgentSurface::ClaudeCode).unwrap();
-        let did = install_via_manifest(profile, home, false, &printer).unwrap();
+        let did = install_via_manifest(profile, home, false, false, &printer).unwrap();
         assert!(!did, "symlinked path must be refused");
         // Nothing should have been written through the symlink.
         assert!(!target.path().join("mcp.json").exists());
@@ -663,7 +959,7 @@ mod tests {
     fn template_paths_match_expected_layout() {
         let home = PathBuf::from("/h");
         let cases = [
-            ("claude-code", "/h/.claude/mcp.json"),
+            ("claude-code", "/h/.claude/plugins/cache/treeship/treeship"),
             ("cursor", "/h/.cursor/mcp.json"),
             ("cline", "/h/.config/cline/mcp.json"),
             ("codex", "/h/.codex/config.toml"),
