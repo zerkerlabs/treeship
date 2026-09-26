@@ -536,13 +536,13 @@ export interface VerifyPackageResult {
    * - `signatures-pass`: the same, but at least one signer is known only
    *   from the package's own keys.json.
    * - `structural-pass`: structure only. Either no envelopes were given
-   *   (`scope: 'structural-only'`), or the package holds artifact kinds whose
+   *   (`scope: 'receipt-only'`), or the package holds artifact kinds whose
    *   rules this library doesn't evaluate (`scope: 'partial'`; run
    *   `treeship package verify` for those).
    * - `failed`: something checkable did not hold.
    */
   verdict: 'verified' | 'signatures-pass' | 'structural-pass' | 'failed';
-  scope: 'structural-only' | 'partial' | 'signatures';
+  scope: 'receipt-only' | 'partial' | 'signatures';
   checks: VerifyCheck[];
   artifacts: PackageArtifactResult[];
   /** Payload kinds present whose semantics are not checked here. */
@@ -625,7 +625,7 @@ function parseEnvelope(raw: string): Envelope | null {
  * Signature math runs in core-wasm, the same code as the CLI.
  *
  * Given only receipt.json, the result is `structural-pass` with
- * `scope: 'structural-only'`: no signature was checked.
+ * `scope: 'receipt-only'`: no signature was checked.
  */
 export async function verifyPackage(
   files: PackageFiles,
@@ -651,7 +651,7 @@ export async function verifyPackage(
   const receiptRaw = files['receipt.json'];
   if (receiptRaw === undefined) {
     checks.push({ step: 'receipt.json', status: 'fail', detail: 'missing' });
-    return done('failed', 'structural-only');
+    return done('failed', 'receipt-only');
   }
   let receipt: {
     session?: { id?: string };
@@ -661,7 +661,7 @@ export async function verifyPackage(
     receipt = JSON.parse(textOf(receiptRaw));
   } catch {
     checks.push({ step: 'receipt.json', status: 'fail', detail: 'not JSON' });
-    return done('failed', 'structural-only');
+    return done('failed', 'receipt-only');
   }
   const structural = JSON.parse(wasm.verify_receipt(textOf(receiptRaw))) as VerifyReceiptResult;
   if (structural.outcome === 'fail' || structural.outcome === 'error') {
@@ -683,7 +683,7 @@ export async function verifyPackage(
       status: 'warn',
       detail: 'no artifact envelopes given: structure only, no signature was checked',
     });
-    return done(failed() ? 'failed' : 'structural-pass', 'structural-only');
+    return done(failed() ? 'failed' : 'structural-pass', 'receipt-only');
   }
 
   // 3. Keys: pinned by the caller, or carried by the package.

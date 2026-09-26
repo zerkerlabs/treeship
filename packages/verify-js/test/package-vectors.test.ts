@@ -48,11 +48,11 @@ describe('T2 package vectors: verifyPackage', () => {
 });
 
 describe('verifyPackage', () => {
-  it('receipt.json alone is structural-only', async () => {
+  it('receipt.json alone is receipt-only', async () => {
     const files = readPackage(join(ROOT, 'honest/basic'));
     const r = await verifyPackage({ 'receipt.json': files['receipt.json'] });
     expect(r.verdict).toBe('structural-pass');
-    expect(r.scope).toBe('structural-only');
+    expect(r.scope).toBe('receipt-only');
   });
 
   it('a pinned key that keys.json contradicts fails', async () => {

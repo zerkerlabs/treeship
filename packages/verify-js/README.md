@@ -90,7 +90,7 @@ The verdict uses the CLI's vocabulary:
 |---|---|
 | `verified` | Every signature holds under a key you pinned, every artifact matches the receipt, and the close record binds this receipt.json. |
 | `signatures-pass` | The same, but at least one signer is known only from the package's own `keys.json`, which comes from the same place as the signatures. |
-| `structural-pass` | Structure only. Either no envelopes were given (`scope: 'structural-only'`, which includes passing `receipt.json` alone), or the package holds kinds whose rules this library doesn't evaluate: approvals, endorsements, room invitations and participants (`scope: 'partial'`). Run `treeship package verify` for those. |
+| `structural-pass` | Structure only. Either no envelopes were given (`scope: 'receipt-only'`, which includes passing `receipt.json` alone), or the package holds kinds whose rules this library doesn't evaluate: approvals, endorsements, room invitations and participants (`scope: 'partial'`). Run `treeship package verify` for those. |
 | `failed` | A checked signature, id, digest or binding does not hold; a listed envelope or the close record is missing; or `keys.json` contradicts a key you pinned. |
 
 `tests/vectors/packages` runs every honest and tampered package through it: the `verify_js` and `verify_js_pinned` columns of `expected.json`. A tampered package is never `signatures-pass` or `verified`.
