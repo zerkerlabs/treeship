@@ -4,15 +4,23 @@
 
 Cryptographic proof of what your agent did.
 
-Every other skill executes payments. Treeship proves they happened correctly -- signed receipts for every action, privacy-preserving ZK proofs for what you can't disclose.
+Every other skill executes payments. Treeship proves they happened correctly -- signed receipts for every action, a tamper-evident chain, and a URL anyone can verify offline.
 
 ## Includes
 
 - Signed receipt for every agent action (always on, zero config)
-- Tamper-evident chain of custody -- permanent, verifiable offline
-- ZK proof: policy compliance -- proved without revealing the policy
-- ZK proof: spend within limits -- proved without revealing the amount
+- Tamper-evident chain of custody -- editing a signed action breaks its signature; verifiable offline
+- Scoped, single-use human approvals (Ed25519, binding nonce)
 - One URL to verify everything: treeship.dev/verify/[session]
+
+<!-- Editor's note (2026-09-27): this card used to list "ZK proof: policy
+compliance" and "ZK proof: spend within limits". Neither ships: the
+Circom/Groth16 proving path is quarantined (its proving keys were never
+generated under a real ceremony, so the circuits are forgeable by
+construction; prove/verify-proof fail closed), and a RISC Zero full-chain
+proof requires the CLI built with --features zk, which release binaries
+don't have, and does not run automatically at session close. Removed
+rather than left as an unqualified claim about a payments skill. -->
 
 ## How it works with lobster.cash
 
@@ -22,9 +30,9 @@ Treeship doesn't execute payments. lobster.cash does that. Treeship wraps every 
 |------|-------------|---------------------|
 | Wallet check | Agent checks lobster.cash balance | Action attested (Ed25519) |
 | Human approval | User authorizes the payment | Scoped approval (binding nonce + actor/action/subject scope; replay package-local) |
-| Payment | lobster.cash executes the transfer | Policy compliance + spend limit (Circom ZK) |
+| Payment | lobster.cash executes the transfer | Action attested (Ed25519); the approval's nonce is bound to this action |
 | Confirmation | lobster.cash confirms status | Receipt attested |
-| Session close | Workflow complete | Full chain proof (RISC Zero) |
+| Session close | Workflow complete | Signed close record binds the sealed receipt (`package verify`'s `receipt_binding`) |
 
 The verification URL works in any browser via WebAssembly. No account, no install, no trust in Treeship's servers.
 
@@ -32,8 +40,10 @@ The verification URL works in any browser via WebAssembly. No account, no instal
 
 ```bash
 npm install -g treeship @crossmint/lobster-cli
-treeship init --template lobster-cash-commerce
+treeship init
 ```
+
+There is no `lobster-cash-commerce` template. `treeship templates` lists what's real; none of them is lobster-specific yet.
 
 ## Demo
 
@@ -45,7 +55,7 @@ Produces a verification URL showing all proof panels.
 
 ## Delegation boundary
 
-**Treeship owns:** attestation, ZK proofs, audit trail, scope enforcement
+**Treeship owns:** attestation, audit trail, scope enforcement
 
 **lobster.cash owns:** wallet provisioning, transaction signing, payment execution, settlement
 

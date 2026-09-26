@@ -18,13 +18,13 @@ npm install -g treeship @crossmint/lobster-cli
 
 <Steps>
 <Step>
-### Initialize the Lobster Cash commerce template
+### Initialize Treeship
 
 ```bash
-treeship init --template lobster-cash-commerce
+treeship init
 ```
 
-This scaffolds a project with preconfigured policies, spend limits, and the `lobster-cash` skill.
+There is no `lobster-cash-commerce` template (`treeship templates` lists what's real). Add the skill by hand: copy `packages/skills/lobster-cash/SKILL.md` into your agent's skills directory.
 </Step>
 <Step>
 ### Verify the installation
@@ -116,10 +116,12 @@ Each step in the workflow produces a distinct attestation with its own proof typ
 |------|-----------------|----------------|
 | Wallet check | Ed25519 signature | The agent had access to a funded wallet at the time of the check |
 | Approval | Nonce binding | The human approved a specific action, bound to a unique nonce |
-| Payment execution | Policy + spend-limit proof | The payment complied with the configured policy and did not exceed the spend limit |
-| Session | Chain proof | Every step in the session chains together with Merkle integrity |
+| Payment execution | Ed25519 signature + approval-nonce binding | The execution ran under this actor and is bound to the approval that authorized it (step 4 above) |
+| Session | Merkle root + inclusion proofs | Every sealed step in the session is recomputably part of the same tree |
 
-The spend-limit proof uses the `spend-limit-checker` ZK circuit. This proves the payment amount falls within the approved limit without revealing the exact policy threshold to third-party verifiers.
+<Callout type="warn">
+There is no ZK proving in this flow. A `spend-limit-checker` Circom circuit exists in the repo, but the whole Circom/Groth16 proving path is quarantined -- its proving keys were never generated under a real ceremony, so the circuits are forgeable by construction, and `prove`/`verify-proof` fail closed on any build. Nothing in the steps above calls it; the proof that actually runs is the plain Ed25519 signature chain shown there.
+</Callout>
 
 ## The delegation boundary
 

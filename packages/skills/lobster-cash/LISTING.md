@@ -5,15 +5,14 @@
 **Treeship**
 
 Cryptographic proof of what your agent did.
-Attestations for every payment. Privacy-preserving
-ZK proofs for what you can't disclose.
+Signed attestations for every payment, a tamper-evident
+chain, and a URL anyone can verify offline.
 
 **Includes**
 
 - Signed receipt for every lobster.cash payment
 - Tamper-evident chain of custody
-- ZK proof: policy complied with (policy stays private)
-- ZK proof: amount within limits (amount stays private)
+- Scoped, single-use human approvals (binding nonce)
 - Verify anything at treeship.dev/verify
 
 **Visit website**: https://treeship.dev
@@ -47,14 +46,13 @@ for agent workflows. We built a Lobster Cash compatible skill and
 want to get listed in the ecosystem directory.
 
 Every skill on your page executes payments. Treeship is what proves
-they happened correctly -- signed receipts for every action, ZK proofs
-for when you can't disclose the policy or the amount.
+they happened correctly -- signed receipts for every action, a
+tamper-evident chain, and a URL anyone can verify offline.
 
 What's live:
 - Signed receipt for every agent action (Ed25519, always on)
-- ZK proof of policy compliance (Circom Groth16, proves without revealing)
-- ZK proof of spend limits (proves amount within max without disclosing either)
-- Full chain integrity proof (RISC Zero, background)
+- Scoped, single-use human approvals (binding nonce, not just a policy check)
+- Tamper-evident chain -- editing a signed action breaks its signature
 - One URL to verify everything: treeship.dev/verify/[session]
 
 Integration docs: https://docs.treeship.dev/integrations/lobster-cash

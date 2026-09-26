@@ -38,8 +38,10 @@ If any preflight check fails, halt and report the missing dependency. Do not att
 Start a Treeship session before performing any wallet operation:
 
 ```
-treeship session start --skill lobster-cash
+treeship session start --name lobster-cash
 ```
+
+(`session start` takes `--name`, `--actor`, `--allow-dangerous-root` and `--workflow-ref` -- there is no `--skill` flag.)
 
 The session ID is used to group all attestations for this interaction.
 
