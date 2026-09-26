@@ -708,6 +708,32 @@ export async function verifyPackage(
     }
   }
   let allPinned = true;
+  let anyPinned = false;
+  // A signer is its key id AND the key that id resolved to, so a reused
+  // key id under a different key is a different signer.
+  const signerOf = (env: Envelope): string | null => {
+    if (env.signatures.length !== 1) return null;
+    const kid = env.signatures[0].keyid;
+    const key = pinned.get(kid) ?? packageKeys.get(kid);
+    return key ? `${kid}:${key}` : null;
+  };
+  type Stmt = Record<string, unknown> & {
+    action?: string;
+    meta?: Record<string, unknown>;
+    subject?: { artifactId?: unknown };
+  };
+  const decode = (env: Envelope): Stmt | null => {
+    try {
+      const v = JSON.parse(textOf(base64urlDecode(env.payload)));
+      return v && typeof v === 'object' ? (v as Stmt) : null;
+    } catch {
+      return null;
+    }
+  };
+  // Verified artifacts of the kinds evaluated here, for the session rules,
+  // and the signed statements of every verified envelope, for chain walks.
+  const verifiedStmts = new Map<string, { env: Envelope; stmt: Stmt; kind: string }>();
+  const chainStmts = new Map<string, Stmt>();
 
   // Verify one envelope: every signature must hold under a known key.
   const checkEnvelope = (env: Envelope) => {
@@ -729,10 +755,14 @@ export async function verifyPackage(
       error?: string | null;
     };
     const everySigner = new Set(r.verified_keys ?? []);
+    const distinct = new Set(env.signatures.map((s) => s.keyid)).size === env.signatures.length;
     const ok =
       r.valid === true &&
+      distinct &&
+      (r.verified_keys ?? []).length === env.signatures.length &&
       signers.every((s) => s.key !== 'unknown' && everySigner.has(s.keyid));
     if (ok && signers.some((s) => s.key !== 'pinned')) allPinned = false;
+    if (ok && signers.some((s) => s.key === 'pinned')) anyPinned = true;
     return { ok, signers, r };
   };
 
@@ -791,6 +821,14 @@ export async function verifyPackage(
       detail,
     });
     if (detail) checks.push({ step: 'artifacts', status: 'fail', detail: `${id}: ${detail}` });
+    else {
+      const stmt = decode(env);
+      if (!stmt) checks.push({ step: 'artifacts', status: 'fail', detail: `${id}: payload is not a JSON statement` });
+      else {
+        chainStmts.set(id, stmt);
+        if (EVALUATED_KINDS.has(kind)) verifiedStmts.set(id, { env, stmt, kind });
+      }
+    }
   }
   if (!failed() && listed.length > 0) {
     const passed = artifacts.filter((a) => a.status === 'pass').length;
@@ -804,7 +842,70 @@ export async function verifyPackage(
     });
   }
 
-  // 5. The close record: signed, names this session, and binds the exact
+  // 5. The session: exactly one chain-root session.start and exactly one
+  //    session.close for this session, the close chained back to the start
+  //    by signed parent ids, and both signed by the same signer. Every
+  //    evaluated artifact's signed parent must be in the package.
+  const sid = receipt.session?.id;
+  const metaSid = (st: Stmt) => (st.meta && typeof st.meta === 'object' ? st.meta.session_id : undefined);
+  const parentOf = (st: Stmt): string | null | undefined => {
+    // Mirrors treeship_core::verify::signed_parent for the kinds evaluated
+    // here: a present parentId decides (non-string = broken); a receipt.v1
+    // names its subject; otherwise no parent (a chain root).
+    if ('parentId' in st || 'parent_id' in st) {
+      const v = st.parentId ?? st.parent_id;
+      return typeof v === 'string' ? v : undefined;
+    }
+    const subj = st.subject?.artifactId;
+    if (typeof subj === 'string' && subj.startsWith('art_')) return subj;
+    return null;
+  };
+  let closeId: string | null = null;
+  let closeSigner: string | null = null;
+  let closeStmt: Stmt | null = null;
+  if (verifiedStmts.size > 0) {
+    const starts = [...verifiedStmts].filter(([, v]) => v.stmt.action === 'session.start' && metaSid(v.stmt) === sid);
+    const closes = [...verifiedStmts].filter(([, v]) => v.stmt.action === 'session.close' && metaSid(v.stmt) === sid);
+    if (starts.length !== 1 || parentOf(starts[0][1].stmt) !== null) {
+      checks.push({ step: 'session', status: 'fail', detail: `expected one chain-root session.start for ${sid}, found ${starts.length}` });
+    } else if (closes.length !== 1) {
+      checks.push({ step: 'session', status: 'fail', detail: `expected one session.close for ${sid}, found ${closes.length}` });
+    } else {
+      const [startId, start] = starts[0];
+      const [cId, close] = closes[0];
+      const startSigner = signerOf(start.env);
+      const cSigner = signerOf(close.env);
+      // Walk the close back to the start through signed parents.
+      let cur: string | null | undefined = cId;
+      const visited = new Set<string>();
+      while (cur && cur !== startId && !visited.has(cur)) {
+        visited.add(cur);
+        const st = chainStmts.get(cur);
+        cur = st ? parentOf(st) : undefined;
+      }
+      if (cur !== startId) {
+        checks.push({ step: 'session', status: 'fail', detail: `session.close ${cId} does not chain back to session.start ${startId}` });
+      } else if (!startSigner || startSigner !== cSigner) {
+        checks.push({ step: 'session', status: 'fail', detail: 'session.close is not signed by the signer of session.start' });
+      } else {
+        closeId = cId;
+        closeSigner = cSigner;
+        closeStmt = close.stmt;
+      }
+    }
+    for (const [id, v] of verifiedStmts) {
+      const par = parentOf(v.stmt);
+      if (par === undefined || (par !== null && !seen.has(par))) {
+        checks.push({ step: 'linkage', status: 'fail', detail: `${id}: signed parent ${String(par)} is not in the package` });
+      } else if (par === null && !(v.stmt.action === 'session.start' && metaSid(v.stmt) === sid)) {
+        checks.push({ step: 'linkage', status: 'fail', detail: `${id}: signs no parent but is not this session's session.start` });
+      }
+    }
+  } else if (envelopePaths.length > 0 || files['record.json'] !== undefined) {
+    checks.push({ step: 'session', status: 'fail', detail: 'no verified session artifacts to bind the close record to' });
+  }
+
+  // 6. The close record: signed, names this session, and binds the exact
   //    bytes of receipt.json. Without it, nothing binds the receipt body
   //    (timeline, narrative, side effects) to a signature.
   const recordRaw = files['record.json'];
@@ -819,16 +920,54 @@ export async function verifyPackage(
     if (!env) {
       checks.push({ step: 'receipt_binding', status: 'fail', detail: 'record.json is not a DSSE envelope' });
     } else {
-      const { ok } = checkEnvelope(env);
-      let stmt: { payload?: { receipt_digest?: string; session_id?: string } } = {};
-      try {
-        stmt = JSON.parse(textOf(base64urlDecode(env.payload)));
-      } catch {
-        // leaves stmt empty, which fails below
+      // The record may be signed by the close's signer, or by the record key
+      // the close names in its own signed statement, at meta.record_key, in
+      // the CLI's encoding (ed25519:<base64url>). A record under that key is
+      // checked against the key the close vouches for, never keys.json, and
+      // is as trusted as the close's signer, so it adds no signer of its own.
+      const rk = closeStmt?.meta?.record_key as
+        | { key_id?: unknown; public_key?: unknown }
+        | undefined;
+      const rkKey =
+        rk && typeof rk.key_id === 'string' && typeof rk.public_key === 'string' &&
+        /^ed25519:[A-Za-z0-9_-]{43}$/.test(rk.public_key)
+          ? { kid: rk.key_id, key: rk.public_key.slice('ed25519:'.length) }
+          : null;
+      const byRecordKey =
+        rkKey !== null && env.signatures.length === 1 && env.signatures[0].keyid === rkKey.kid;
+      let ok: boolean;
+      if (byRecordKey) {
+        const conflict =
+          (pinned.has(rkKey!.kid) && pinned.get(rkKey!.kid) !== rkKey!.key) ||
+          (packageKeys.has(rkKey!.kid) && packageKeys.get(rkKey!.kid) !== rkKey!.key);
+        const r = JSON.parse(
+          wasm.verify_envelope(JSON.stringify(env), JSON.stringify({ [rkKey!.kid]: rkKey!.key })),
+        ) as { valid?: boolean; verified_keys?: string[] };
+        ok = !conflict && r.valid === true && (r.verified_keys ?? []).length === 1;
+      } else {
+        ok = checkEnvelope(env).ok;
       }
+      const stmt = (decode(env) ?? {}) as Stmt & {
+        type?: unknown;
+        kind?: unknown;
+        payload?: { receipt_digest?: string; session_id?: string };
+      };
       const actual = `sha256:${await sha256Hex(bytesOf(receiptRaw))}`;
+      const recSigner = byRecordKey ? 'record_key' : signerOf(env);
       if (!ok) {
         checks.push({ step: 'receipt_binding', status: 'fail', detail: 'the close record signature does not verify under a known key' });
+      } else if (
+        env.payloadType !== 'application/vnd.treeship.receipt.v1+json' ||
+        stmt.type !== 'treeship/receipt/v1' ||
+        stmt.kind !== 'session.v1' ||
+        typeof stmt.payload?.receipt_digest !== 'string' ||
+        typeof stmt.payload?.session_id !== 'string'
+      ) {
+        checks.push({ step: 'receipt_binding', status: 'fail', detail: 'record.json is not a session.v1 close record' });
+      } else if (!closeId || stmt.subject?.artifactId !== closeId) {
+        checks.push({ step: 'receipt_binding', status: 'fail', detail: "the close record does not seal this session's close" });
+      } else if (!recSigner || (recSigner !== closeSigner && !byRecordKey)) {
+        checks.push({ step: 'receipt_binding', status: 'fail', detail: "the close record is not signed by the session's signer" });
       } else if (stmt.payload?.session_id !== receipt.session?.id) {
         checks.push({
           step: 'receipt_binding',
@@ -845,6 +984,12 @@ export async function verifyPackage(
         checks.push({ step: 'receipt_binding', status: 'pass', detail: `the close record binds receipt.json (${actual})` });
       }
     }
+  }
+
+  // Some signers pinned and others only package-known: a pin covers part
+  // of the package, so the package as a whole is not what was pinned.
+  if (anyPinned && !allPinned) {
+    checks.push({ step: 'keys', status: 'fail', detail: 'some signers are pinned and others are known only from keys.json' });
   }
 
   if (failed()) return done('failed', 'signatures');
