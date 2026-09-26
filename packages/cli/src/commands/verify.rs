@@ -525,7 +525,7 @@ pub fn run(
 
     // Nonce binding: for each action with approval_nonce, find the matching
     // approval and verify the binding is valid.
-    let nonce_checks = verify_nonce_bindings(&chain_envelopes, &ctx.storage, &ctx.journal_dir());
+    let nonce_checks = verify_nonce_bindings(&chain_envelopes, &ctx.storage, &ctx.journal_dir()?);
     checks.extend(nonce_checks);
 
     // Signed chain-linkage: the walk followed unsigned storage metadata, so

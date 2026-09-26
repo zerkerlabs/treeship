@@ -25,12 +25,16 @@ use treeship_core::journal::{self, Journal};
 use crate::ctx;
 use crate::printer::{Format, Printer};
 
-fn journal_dir_for(config_path: &Path) -> PathBuf {
-    config_path
+/// The journal beside the config, judged from the `.treeship` anchor down
+/// so `.treeship/journals -> elsewhere` is refused rather than followed.
+fn journal_dir_for(config_path: &Path) -> std::io::Result<PathBuf> {
+    let dir = config_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("journals")
-        .join("approval-use")
+        .join("approval-use");
+    crate::safe_fs::refuse_symlinks_under_treeship(&dir)?;
+    Ok(dir)
 }
 
 /// A grant id nobody has heard of is an error, not "unbounded, within
@@ -69,7 +73,7 @@ pub fn uses(
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
-    let j = Journal::new(journal_dir_for(&ctx.config_path));
+    let j = Journal::new(journal_dir_for(&ctx.config_path)?);
     let uses = journal::list_uses_for_grant(&j, grant_id)?;
     require_known_grant(&ctx, grant_id, uses.len())?;
 
@@ -137,7 +141,7 @@ pub fn status(
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
-    let j = Journal::new(journal_dir_for(&ctx.config_path));
+    let j = Journal::new(journal_dir_for(&ctx.config_path)?);
     let uses = journal::list_uses_for_grant(&j, grant_id)?;
     require_known_grant(&ctx, grant_id, uses.len())?;
 
@@ -201,7 +205,7 @@ pub fn journal_verify(
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
-    let j = Journal::new(journal_dir_for(&ctx.config_path));
+    let j = Journal::new(journal_dir_for(&ctx.config_path)?);
 
     if !j.exists() {
         match format {

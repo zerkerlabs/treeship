@@ -1135,7 +1135,7 @@ pub fn verify(
     // than failing -- offline / inbox verification of a bare package
     // must keep working.
     if let Some(ctx_opened) = ctx_opened {
-        let journal = treeship_core::journal::Journal::new(ctx_opened.journal_dir());
+        let journal = treeship_core::journal::Journal::new(ctx_opened.journal_dir()?);
         let bundle = treeship_core::session::read_approvals_bundle(&path).unwrap_or_default();
         if !bundle.uses.is_empty() {
             if !journal.exists() {

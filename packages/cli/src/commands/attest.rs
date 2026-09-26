@@ -2135,7 +2135,7 @@ fn resolve_parent(ctx: &ctx::Ctx, explicit: Option<String>) -> Option<String> {
 
 /// Resolve the journal directory for the active workspace -- pairs with
 /// the same config_path the cards / harnesses stores use.
-fn journal_dir_for(ctx: &ctx::Ctx) -> std::path::PathBuf {
+fn journal_dir_for(ctx: &ctx::Ctx) -> std::io::Result<std::path::PathBuf> {
     ctx.journal_dir()
 }
 
@@ -2242,7 +2242,7 @@ fn reserve_in_journal(
     idempotency_key: Option<&str>,
     printer: &Printer,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let dir = journal_dir_for(ctx);
+    let dir = journal_dir_for(ctx)?;
     let j = Journal::new(&dir);
 
     // Idempotency-key short-circuit. Read existing uses for the grant
@@ -2366,7 +2366,7 @@ fn backfill_action_artifact_id(
     use_id: &str,
     action_artifact_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let dir = journal_dir_for(ctx);
+    let dir = journal_dir_for(ctx)?;
     let backfill_dir = dir.join("indexes").join("backfill");
     crate::safe_fs::create_dir_all_nofollow(&backfill_dir)?;
     let path = backfill_dir.join(format!("{use_id}.txt"));

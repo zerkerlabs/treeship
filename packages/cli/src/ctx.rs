@@ -51,7 +51,7 @@ impl Ctx {
     /// Where the Approval Use Journal lives for this workspace: beside the
     /// keystore, not beside the config file that was resolved. See
     /// [`journal_dir_for`].
-    pub fn journal_dir(&self) -> PathBuf {
+    pub fn journal_dir(&self) -> std::io::Result<PathBuf> {
         journal_dir_for(&self.config, &self.config_path)
     }
 }
@@ -67,7 +67,11 @@ impl Ctx {
 ///
 /// A journal written at the old location beside a stub is moved once, so
 /// uses recorded before this rule keep counting against the grant.
-pub fn journal_dir_for(cfg: &Config, config_path: &std::path::Path) -> PathBuf {
+///
+/// Nothing from `.treeship` down to the journal may be a link
+/// (`.treeship/journals -> elsewhere` would put every record, index and
+/// lock there), so the directory is judged before it is handed out.
+pub fn journal_dir_for(cfg: &Config, config_path: &std::path::Path) -> std::io::Result<PathBuf> {
     let beside_config = config_path
         .parent()
         .map(|p| p.to_path_buf())
@@ -76,7 +80,10 @@ pub fn journal_dir_for(cfg: &Config, config_path: &std::path::Path) -> PathBuf {
         .join("approval-use");
     let owner = match std::path::Path::new(&cfg.keys_dir).parent() {
         Some(p) => p.to_path_buf(),
-        None => return beside_config,
+        None => {
+            crate::safe_fs::refuse_symlinks_under_treeship(&beside_config)?;
+            return Ok(beside_config);
+        }
     };
     let primary = owner.join("journals").join("approval-use");
     if primary != beside_config && beside_config.is_dir() && !primary.is_dir() {
@@ -87,7 +94,8 @@ pub fn journal_dir_for(cfg: &Config, config_path: &std::path::Path) -> PathBuf {
             let _ = std::fs::rename(&beside_config, &primary);
         }
     }
-    primary
+    crate::safe_fs::refuse_symlinks_under_treeship(&primary)?;
+    Ok(primary)
 }
 
 /// The keystore and the artifact store are judged from the `.treeship`

@@ -414,3 +414,109 @@ fn trust_roots_follow_a_dotfiles_link_under_the_home() {
     let roots = std::fs::read_to_string(dotfiles.join("trust_roots.json")).unwrap();
     assert!(roots.contains(&key_id), "{roots}");
 }
+
+#[test]
+fn a_stub_extending_an_in_repo_config_is_judged_on_the_inherited_stores() {
+    // `{"extends": "../evil/config.json"}` is no different from checking in
+    // evil/config.json itself: the stores it inherits must stay inside the
+    // project's .treeship. Only a stub extending the user's own global
+    // config keeps that config's stores.
+    let repo = Repo::new();
+    let evil = repo.work.path().join("evil").join("config.json");
+    let out = repo.run(&["init", "--name", "e", "--config", &evil.to_string_lossy()]);
+    assert!(out.status.success(), "{}", text(&out));
+    let steal = repo.home.path().join("steal");
+    let mut cfg: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&evil).unwrap()).unwrap();
+    cfg["keys_dir"] = serde_json::Value::String(steal.join("keys").to_string_lossy().into());
+    cfg["storage_dir"] = serde_json::Value::String(steal.join("art").to_string_lossy().into());
+    std::fs::write(&evil, serde_json::to_vec_pretty(&cfg).unwrap()).unwrap();
+    let ts = repo.work.path().join(".treeship");
+    std::fs::create_dir_all(&ts).unwrap();
+    std::fs::write(
+        ts.join("config.json"),
+        b"{\"extends\": \"../evil/config.json\", \"project\": true}",
+    )
+    .unwrap();
+    let out = repo.run(&["attest", "action", "--actor", "agent://a", "--action", "x"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    assert!(text(&out).contains("outside"), "{}", text(&out));
+    assert!(
+        !steal.exists(),
+        "the stub's parent created stores outside the project"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_journals_directory_is_refused() {
+    let repo = initialised();
+    let outside = repo.home.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(
+        &outside,
+        repo.work.path().join(".treeship").join("journals"),
+    )
+    .unwrap();
+    let out = repo.run(&[
+        "attest",
+        "approval",
+        "--approver",
+        "human://a",
+        "--description",
+        "d",
+        "--max-uses",
+        "3",
+        "--format",
+        "json",
+    ]);
+    assert!(out.status.success(), "{}", text(&out));
+    let approval: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let nonce = approval["nonce"]
+        .as_str()
+        .or_else(|| approval["approval_nonce"].as_str())
+        .unwrap_or_else(|| panic!("no nonce in {approval}"))
+        .to_string();
+    let out = repo.run(&[
+        "attest",
+        "action",
+        "--actor",
+        "agent://a",
+        "--action",
+        "x",
+        "--approval-nonce",
+        &nonce,
+    ]);
+    assert!(
+        !out.status.success(),
+        "the journal was written through the link:\n{}",
+        text(&out)
+    );
+    assert!(
+        names_in(&outside).is_empty(),
+        "journal written outside: {:?}",
+        names_in(&outside)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_discovered_treeship_that_is_itself_a_link_is_refused() {
+    // The whole .treeship moved outside and linked back: an absolute
+    // keys_dir inside the link target would pass a canonical comparison,
+    // so the link itself is what gets refused.
+    let repo = initialised();
+    let outside = repo.home.path().join("ts");
+    let ts = repo.work.path().join(".treeship");
+    std::fs::rename(&ts, &outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &ts).unwrap();
+    let path = outside.join("config.json");
+    let mut cfg: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    cfg["keys_dir"] = serde_json::Value::String(outside.join("keys2").to_string_lossy().into());
+    cfg["storage_dir"] = serde_json::Value::String(outside.join("art2").to_string_lossy().into());
+    std::fs::write(&path, serde_json::to_vec_pretty(&cfg).unwrap()).unwrap();
+    let out = repo.run(&["attest", "action", "--actor", "agent://a", "--action", "x"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    assert!(!outside.join("keys2").exists() && !outside.join("art2").exists());
+}

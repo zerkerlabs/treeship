@@ -112,8 +112,8 @@ fn parse_items(items: &[String]) -> Result<Vec<LineItem>, Box<dyn std::error::Er
     Ok(out)
 }
 
-fn journal_for(ctx: &crate::ctx::Ctx) -> Journal {
-    Journal::new(ctx.journal_dir())
+fn journal_for(ctx: &crate::ctx::Ctx) -> std::io::Result<Journal> {
+    Ok(Journal::new(ctx.journal_dir()?))
 }
 
 fn read_last(storage_dir: &str) -> Option<String> {
@@ -175,7 +175,7 @@ fn merkle_root(ids: &[String]) -> String {
 
 /// The most recent approval use the chain consumed, as its record digest.
 fn latest_approval_use(ctx: &ctx::Ctx, chain: &[Record]) -> Option<(String, String)> {
-    let j = journal_for(ctx);
+    let j = journal_for(ctx).ok()?;
     for rec in chain.iter().rev() {
         let Some(payload) = envelope_payload(&rec.envelope) else {
             continue;

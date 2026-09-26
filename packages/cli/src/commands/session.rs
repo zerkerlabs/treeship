@@ -1961,7 +1961,7 @@ pub fn close(
     // journal, and any covering checkpoint. Quiet on missing journal
     // -- a session without consumed approvals produces an empty bundle
     // and the resulting package omits the `approvals/` dir entirely.
-    let mut approvals = collect_approval_evidence(&ctx, &receipt);
+    let mut approvals = collect_approval_evidence(&ctx, &receipt)?;
     let (sealed_envelopes, signer_keys) = collect_sealed_envelopes(&ctx, &receipt, printer);
     approvals.sealed_envelopes = sealed_envelopes;
     approvals.signer_keys = signer_keys;
@@ -3374,12 +3374,14 @@ fn emit_report_output(
 fn collect_approval_evidence(
     ctx: &ctx::Ctx,
     receipt: &treeship_core::session::SessionReceipt,
-) -> ApprovalsBundle {
+) -> std::io::Result<ApprovalsBundle> {
     let mut bundle = ApprovalsBundle::default();
 
     // Resolve the workspace journal directory; same precedence rule as
-    // attest.rs uses (config_path.parent / journals / approval-use).
-    let journal = Journal::new(ctx.journal_dir());
+    // attest.rs uses (config_path.parent / journals / approval-use). A
+    // linked journal directory is refused here rather than read from
+    // wherever it points.
+    let journal = Journal::new(ctx.journal_dir()?);
 
     // Walk the chain: every action artifact may carry an
     // approval_nonce, and PR 3 stamps approval_use_id into the
@@ -3508,7 +3510,7 @@ fn collect_approval_evidence(
         }
     }
 
-    bundle
+    Ok(bundle)
 }
 
 #[cfg(test)]

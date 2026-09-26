@@ -219,7 +219,8 @@ mod imp {
 
     /// `chmod` that never follows a link: the path is opened read-only with
     /// O_NOFOLLOW (a directory opens fine that way) and the mode is set on
-    /// the handle. No-op off Unix.
+    /// the handle. A regular file with more than one name is refused, since
+    /// the mode would change under the other name too. No-op off Unix.
     pub fn set_mode_nofollow(path: &Path, mode: u32) -> io::Result<()> {
         #[cfg(unix)]
         {
@@ -229,6 +230,9 @@ mod imp {
                 .custom_flags(libc::O_NOFOLLOW)
                 .open(path)
                 .map_err(|e| if is_symlink(path) { refused(path) } else { e })?;
+            if file.metadata()?.is_file() {
+                refuse_hardlinked(&file, path)?;
+            }
             file.set_permissions(fs::Permissions::from_mode(mode))
         }
         #[cfg(not(unix))]
@@ -339,6 +343,10 @@ mod tests {
         assert_eq!(fs::read(&victim).unwrap(), b"keep");
         use std::os::unix::fs::MetadataExt;
         assert_eq!(fs::metadata(&victim).unwrap().nlink(), 1);
+        // chmod on the hard link would reach the victim: refused.
+        let hard2 = d.path().join("hard2");
+        fs::hard_link(&victim, &hard2).unwrap();
+        assert!(set_mode_nofollow(&hard2, 0o600).is_err());
         // A fresh log with one name appends fine.
         let log = d.path().join("log");
         open_append_nofollow(&log, 0o600).unwrap();

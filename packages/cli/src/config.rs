@@ -44,6 +44,9 @@ pub struct Config {
     /// so its stores belong to the parent config, not to this directory.
     #[serde(skip)]
     pub(crate) extends_stub: bool,
+    /// The canonical path of the config a stub extends, when it is one.
+    #[serde(skip)]
+    pub(crate) extends_target: Option<PathBuf>,
 }
 
 /// Verbatim relative path strings from a config file, kept so `save`
@@ -433,6 +436,8 @@ fn load_with_depth(
         let mut cfg = load_with_depth(&parent_path, depth + 1, visited)?;
         apply_overrides(&mut cfg, &raw);
         cfg.extends_stub = true;
+        cfg.extends_target =
+            Some(fs::canonicalize(&parent_path).unwrap_or_else(|_| parent_path.clone()));
 
         if migrate_legacy_hub(&mut cfg) {
             // Don't write back into the project stub; only the parent.
@@ -443,6 +448,7 @@ fn load_with_depth(
 
     let mut cfg: Config = serde_json::from_slice(&bytes)?;
     cfg.extends_stub = false;
+    cfg.extends_target = None;
     resolve_store_paths(&mut cfg, path);
     if migrate_legacy_hub(&mut cfg) {
         let _ = save(&cfg, path);
@@ -549,18 +555,41 @@ pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
 /// keystore and artifact store inside its own `.treeship` directory: a
 /// checked-in `{"keys_dir": "/home/me/.ssh"}` or `"../../.treeship/keys"`
 /// would otherwise make the first command in a cloned repository create,
-/// chmod and write there. A stub inherits its stores from the parent
-/// config and is not judged here; neither is a config the user named
-/// with `--config` or `TREESHIP_CONFIG`, nor the global one.
+/// chmod and write there. The discovered `.treeship` directory and the
+/// config file must be real, not links, or the check would judge against
+/// wherever the link points. A stub that extends the user's own global
+/// config inherits that config's stores and is exempt; a stub extending
+/// anything else is judged like a full config, on the stores it inherits
+/// (a checked-in `{"extends": "../evil/config.json"}` is no different from
+/// checking in `evil/config.json` itself). A config the user named with
+/// `--config` or `TREESHIP_CONFIG`, and the global one, are not judged.
 pub fn refuse_store_dirs_outside_project(
     cfg: &Config,
     config_path: &Path,
     source: ConfigSource,
 ) -> Result<(), ConfigError> {
-    if source != ConfigSource::ProjectLocal || cfg.extends_stub {
+    if source != ConfigSource::ProjectLocal {
         return Ok(());
     }
     let project = config_path.parent().unwrap_or(config_path);
+    for linked in [project, config_path] {
+        crate::safe_fs::refuse_symlink(linked).map_err(|e| {
+            ConfigError::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "{e}. A project config is only used from a real .treeship directory; pass --config to use one that lives elsewhere"
+                ),
+            ))
+        })?;
+    }
+    if cfg.extends_stub {
+        let global = home::home_dir()
+            .map(|h| h.join(".treeship").join("config.json"))
+            .and_then(|g| fs::canonicalize(g).ok());
+        if global.is_some() && cfg.extends_target == global {
+            return Ok(());
+        }
+    }
     for (field, dir) in [
         ("keys_dir", &cfg.keys_dir),
         ("storage_dir", &cfg.storage_dir),
@@ -704,6 +733,7 @@ pub fn new_config(
         active_hub: None,
         hub: None,
         extends_stub: false,
+        extends_target: None,
         // On disk: relative, so the keystore directory is movable. These
         // resolve back to exactly the absolute paths above, because
         // `resolve_store_paths` joins against this same directory --
