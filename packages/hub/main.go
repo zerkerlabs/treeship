@@ -71,6 +71,7 @@ func main() {
 	r := chi.NewRouter()
 
 	// CORS — allow treeship.dev frontend to call the API.
+	r.Use(securityHeaders)
 	r.Use(corsMiddleware)
 
 	// Two different limits, because they stop two different things.
@@ -288,6 +289,35 @@ func rateLimited(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests)
 	_, _ = w.Write([]byte(`{"error":"rate limit exceeded, retry shortly"}`))
+}
+
+// securityHeaders sets Strict-Transport-Security on every response that
+// arrived over TLS (directly, or through a proxy that says so with
+// X-Forwarded-Proto), so a browser pins HTTPS for two years, and
+// X-Content-Type-Options: nosniff on every response. Plain-HTTP local
+// development is left alone: an HSTS header over http:// is ignored by
+// browsers and would only confuse.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if requestOverTLS(r) {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requestOverTLS is true for a direct TLS connection or a proxied request
+// whose X-Forwarded-Proto (first value) is https.
+func requestOverTLS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if i := strings.IndexByte(proto, ','); i >= 0 {
+		proto = proto[:i]
+	}
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }
 
 // corsMiddleware allows the treeship.dev frontend to call the API.
