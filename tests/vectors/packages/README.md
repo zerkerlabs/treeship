@@ -14,6 +14,7 @@ Run:
 ```bash
 bash tests/vectors/packages/run.sh target/debug/treeship     # cli, cli_strict, cli_structural
 cargo test -p treeship-core --test package_vectors            # receipt_only (core-wasm / verify-js)
+(cd packages/verify-js && npx vitest run test/package-vectors.test.ts)  # verify_js, verify_js_pinned
 ```
 
 ## Rules
@@ -55,5 +56,9 @@ the committed vectors alone. Pass vector names to rebuild only those.
 `preview.html` is removed from every vector (optional, ~150 KB, unread by any
 verifier).
 
-The site verifier (Lane C, W0-1/W2-5) and verify-js package mode (W2-6) add
-their own columns to `expected.json` when they land.
+`verify_js` and `verify_js_pinned` are `@treeship/verify`'s `verifyPackage`
+(W2-6), with no key pinned and with the package's own keys pinned:
+`cd packages/verify-js && npx vitest run test/package-vectors.test.ts`. It
+caps a package holding kinds whose rules it does not evaluate (approvals,
+endorsements, rooms) at `structural-pass`, so the room vectors the CLI fails
+read `structural-pass` there, never `signatures-pass`.

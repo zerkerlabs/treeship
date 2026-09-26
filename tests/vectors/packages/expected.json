@@ -1,11 +1,13 @@
 {
-  "_about": "T2 package vectors. Each entry is a frozen .treeship package under this directory and the verdict each verifier must give it. cli* columns are the `verdict` field of `treeship package verify --format json` (run.sh); receipt_only is the core-wasm verify_receipt outcome, which @treeship/verify's verifyReceipt returns (packages/core/tests/package_vectors.rs). xfail maps a column to {task, got}: the fix-plan task that makes it right and the exact wrong verdict main gives today; remove the entry in that task's PR. Every new advisory adds a vector.",
+  "_about": "T2 package vectors. Each entry is a frozen .treeship package under this directory and the verdict each verifier must give it. cli* columns are the `verdict` field of `treeship package verify --format json` (run.sh); receipt_only is the core-wasm verify_receipt outcome, which @treeship/verify's verifyReceipt returns (packages/core/tests/package_vectors.rs). verify_js and verify_js_pinned are @treeship/verify's verifyPackage on the whole package, with no key pinned and with the package's own keys pinned (packages/verify-js/test/package-vectors.test.ts); it caps a package holding kinds whose rules it does not evaluate (approvals, endorsements, rooms) at structural-pass. xfail maps a column to {task, got}: the fix-plan task that makes it right and the exact wrong verdict main gives today; remove the entry in that task's PR. Every new advisory adds a vector.",
   "vectors": {
     "honest/approval": {
       "cli": "signatures-pass",
       "cli_strict": "verified",
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass",
       "_note": "CLI-18: under --strict on a second ship two rows fail: chain_completeness (approval statements carry no parent, so the approval is never chained) and replay-local-journal (a stranger has no Approval Use Journal, and --strict promotes that)",
       "xfail": {
         "cli_strict": {
@@ -18,28 +20,36 @@
       "cli": "signatures-pass",
       "cli_strict": "verified",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "signatures-pass",
+      "verify_js_pinned": "verified"
     },
     "honest/endorse-non-latest": {
       "_note": "CLI-1: an endorsement of an older artifact, with an action chained onto it; the endorsement signs its parentId (0.31.10+)",
       "cli": "signatures-pass",
       "cli_strict": "verified",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass"
     },
     "honest/legacy-0.24": {
       "_note": "built by 0.24.0, before packages carried envelopes (0.31.2): default and strict fail by design, --structural is the documented path",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass"
     },
     "honest/legacy-endorsement-0.31.9": {
       "_note": "the same flow written by treeship 0.31.9, whose endorsements sign no parent: chain_linkage warns (compatibility path), --strict promotes it to a failure",
       "cli": "signatures-pass",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass"
     },
     "honest/room-countersigned": {
       "_note": "CLI-3: invite, join, host-minted challenge, countersign, close on one ship. Under --strict chain_completeness fails: the invitation and the participant are sealed unchained, the same shape as W1-13's approval",
@@ -47,6 +57,8 @@
       "cli_strict": "verified",
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass",
       "xfail": {
         "cli_strict": {
           "task": "W1-13",
@@ -58,13 +70,17 @@
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/drop-artifact-envelope": {
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/drop-record-json": {
       "_note": "CLI-4: the signed close record is deleted; the package still carries envelopes and a coverage receipt, so it cannot be pre-0.31.4",
@@ -72,6 +88,8 @@
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed",
       "xfail": {
         "cli": {
           "task": "W1-4",
@@ -85,6 +103,8 @@
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
       "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed",
       "xfail": {
         "cli": {
           "task": "W1-4",
@@ -97,53 +117,69 @@
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/narrative-edit": {
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/rename-session": {
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "structural-pass",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/room-countersign-stripped": {
       "_note": "honest/room-countersigned with the host countersign removed from the sealed participant",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass"
     },
     "tampered/room-double-redemption": {
       "_note": "#483 review: one single-use invitation, two participants, both countersigned by the host through the CLI (the second joiner's pending envelope copied into the host store). The second participant row fails: redeemed 2 times, max_uses 1",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "structural-pass",
+      "verify_js_pinned": "structural-pass"
     },
     "tampered/room-invitation-dropped": {
       "_note": "honest/room-countersigned with the invitation envelope removed: the participant fails, it never falls back to the generic signature check",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/room-participant-sealed-twice": {
       "_note": "#483 review: honest/room-countersigned with its participant listed twice and the tree recomputed; the duplicate row fails (and receipt_binding, since the record no longer binds the receipt)",
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     },
     "tampered/swap-package-key": {
       "cli": "failed",
       "cli_strict": "failed",
       "cli_structural": "failed",
-      "receipt_only": "structural-pass"
+      "receipt_only": "structural-pass",
+      "verify_js": "failed",
+      "verify_js_pinned": "failed"
     }
   }
 }

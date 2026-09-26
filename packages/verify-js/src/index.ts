@@ -39,6 +39,7 @@ type WasmBindings = {
     expectedNonce: string,
     now: string,
   ) => string;
+  verify_envelope: (envelope: string, trustedKeys: string) => string;
 };
 
 /**
@@ -489,4 +490,377 @@ export async function verifyPresentation(
       nowStr,
     ),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Package verification
+// ---------------------------------------------------------------------------
+
+/**
+ * The files of a `.treeship` package directory, keyed by their path inside
+ * it (`receipt.json`, `record.json`, `keys.json`, `artifacts/<id>.json`, ...).
+ * Values are the exact bytes; `receipt.json` is hashed as given, so pass file
+ * contents unmodified. A map containing only `receipt.json` is valid input and
+ * verifies structure only.
+ */
+export type PackageFiles = Record<string, string | Uint8Array>;
+
+export interface VerifyPackageOptions {
+  /**
+   * Keys you trust, by key id: `{ key_...: 'ed25519:<base64url>' }` (the bare
+   * base64url also works). A signature counts toward `verified` only under a
+   * key pinned here. Keys the package carries in keys.json are checked too,
+   * but they come from the same place as the signatures, so they can at most
+   * give `signatures-pass`.
+   */
+  pinnedKeys?: Record<string, string>;
+}
+
+export interface PackageArtifactResult {
+  artifact_id: string;
+  payload_type?: string;
+  /** `pass`: every signature verifies and the envelope matches the receipt's
+   *  id and full digest. `skipped`: a kind signed over its own canonical
+   *  bytes (a countersigned room participant) that only the CLI checks. */
+  status: 'pass' | 'fail' | 'missing' | 'skipped';
+  signers: { keyid: string; key: 'pinned' | 'package' | 'unknown' }[];
+  detail?: string;
+}
+
+export interface VerifyPackageResult {
+  /**
+   * Same vocabulary as `treeship package verify`:
+   * - `verified`: every envelope and the close record verify under keys you
+   *   pinned, every artifact matches the receipt, and the receipt is the one
+   *   the close record signed.
+   * - `signatures-pass`: the same, but at least one signer is known only
+   *   from the package's own keys.json.
+   * - `structural-pass`: structure only. Either no envelopes were given
+   *   (`scope: 'structural-only'`), or the package holds artifact kinds whose
+   *   rules this library doesn't evaluate (`scope: 'partial'`; run
+   *   `treeship package verify` for those).
+   * - `failed`: something checkable did not hold.
+   */
+  verdict: 'verified' | 'signatures-pass' | 'structural-pass' | 'failed';
+  scope: 'structural-only' | 'partial' | 'signatures';
+  checks: VerifyCheck[];
+  artifacts: PackageArtifactResult[];
+  /** Payload kinds present whose semantics are not checked here. */
+  unevaluated_kinds: string[];
+}
+
+// Kinds whose rules (single-use approvals, endorsement linkage, room
+// invitations and countersigns) live in the Rust package verifier and are not
+// re-implemented here. A package carrying any of them is capped at
+// structural-pass: its signatures can all hold while the set breaks a rule
+// (a single-use invitation redeemed twice, for example).
+const UNEVALUATED_KINDS = new Set([
+  'approval.v1',
+  'endorsement.v1',
+  'invitation.v1',
+  'session-participant.v1',
+  'session-liveness.v1',
+]);
+// Kinds this library evaluates fully: signature, id and digest binding.
+const EVALUATED_KINDS = new Set(['action.v1', 'receipt.v1']);
+// Kinds not signed as plain DSSE: a room participant carries the joiner's
+// signature and the host's countersign over the participant's canonical
+// bytes, and its id comes from the pending envelope. Only the CLI checks
+// them; here they are skipped, which also caps the verdict.
+const SIGNED_ELSEWHERE = new Set(['session-participant.v1']);
+
+interface Envelope {
+  payload: string;
+  payloadType: string;
+  signatures: { keyid: string; sig: string }[];
+}
+
+function kindOf(payloadType: string): string {
+  return payloadType.replace(/^application\/vnd\.treeship\./, '').replace(/\+json$/, '');
+}
+
+function bytesOf(v: string | Uint8Array): Uint8Array {
+  return typeof v === 'string' ? new TextEncoder().encode(v) : v;
+}
+
+function textOf(v: string | Uint8Array): string {
+  return typeof v === 'string' ? v : new TextDecoder().decode(v);
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const d = await crypto.subtle.digest('SHA-256', bytes as BufferSource);
+  return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function stripKeyPrefix(k: string): string {
+  return k.startsWith('ed25519:') ? k.slice('ed25519:'.length) : k;
+}
+
+function parseEnvelope(raw: string): Envelope | null {
+  try {
+    const e = JSON.parse(raw);
+    if (
+      typeof e?.payload === 'string' &&
+      typeof e?.payloadType === 'string' &&
+      Array.isArray(e?.signatures) &&
+      e.signatures.length > 0 &&
+      e.signatures.every(
+        (s: unknown) =>
+          typeof (s as { keyid?: unknown })?.keyid === 'string' &&
+          typeof (s as { sig?: unknown })?.sig === 'string',
+      )
+    ) {
+      return e as Envelope;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
+/**
+ * Verify a `.treeship` package: every artifact envelope's Ed25519
+ * signatures, each envelope's id and full digest against the receipt, and the
+ * signed close record (record.json) against the exact bytes of receipt.json.
+ * Signature math runs in core-wasm, the same code as the CLI.
+ *
+ * Given only receipt.json, the result is `structural-pass` with
+ * `scope: 'structural-only'`: no signature was checked.
+ */
+export async function verifyPackage(
+  files: PackageFiles,
+  opts: VerifyPackageOptions = {},
+): Promise<VerifyPackageResult> {
+  const wasm = await loadWasm();
+  const checks: VerifyCheck[] = [];
+  const artifacts: PackageArtifactResult[] = [];
+  const unevaluated = new Set<string>();
+  const done = (
+    verdict: VerifyPackageResult['verdict'],
+    scope: VerifyPackageResult['scope'],
+  ): VerifyPackageResult => ({
+    verdict,
+    scope,
+    checks,
+    artifacts,
+    unevaluated_kinds: [...unevaluated].sort(),
+  });
+  const failed = () => checks.some((c) => c.status === 'fail');
+
+  // 1. receipt.json and its structure (Merkle root, inclusion proofs).
+  const receiptRaw = files['receipt.json'];
+  if (receiptRaw === undefined) {
+    checks.push({ step: 'receipt.json', status: 'fail', detail: 'missing' });
+    return done('failed', 'structural-only');
+  }
+  let receipt: {
+    session?: { id?: string };
+    artifacts?: { artifact_id?: string; digest?: string; payload_type?: string }[];
+  };
+  try {
+    receipt = JSON.parse(textOf(receiptRaw));
+  } catch {
+    checks.push({ step: 'receipt.json', status: 'fail', detail: 'not JSON' });
+    return done('failed', 'structural-only');
+  }
+  const structural = JSON.parse(wasm.verify_receipt(textOf(receiptRaw))) as VerifyReceiptResult;
+  if (structural.outcome === 'fail' || structural.outcome === 'error') {
+    checks.push({
+      step: 'structure',
+      status: 'fail',
+      detail: structural.message ?? 'receipt structure does not verify',
+    });
+  } else {
+    checks.push({ step: 'structure', status: 'pass', detail: 'Merkle root and inclusion proofs hold' });
+  }
+
+  // 2. Which envelopes were given. None at all is a receipt-only read (or a
+  //    package from before 0.31.2): structure is all there is to check.
+  const envelopePaths = Object.keys(files).filter((p) => /^artifacts\/[^/]+\.json$/.test(p));
+  if (envelopePaths.length === 0 && files['record.json'] === undefined) {
+    checks.push({
+      step: 'signatures',
+      status: 'warn',
+      detail: 'no artifact envelopes given: structure only, no signature was checked',
+    });
+    return done(failed() ? 'failed' : 'structural-pass', 'structural-only');
+  }
+
+  // 3. Keys: pinned by the caller, or carried by the package.
+  const pinned = new Map<string, string>();
+  for (const [kid, key] of Object.entries(opts.pinnedKeys ?? {})) pinned.set(kid, stripKeyPrefix(key));
+  const packageKeys = new Map<string, string>();
+  if (files['keys.json'] !== undefined) {
+    try {
+      const k = JSON.parse(textOf(files['keys.json'])) as { keys?: Record<string, string> };
+      for (const [kid, key] of Object.entries(k.keys ?? {})) packageKeys.set(kid, stripKeyPrefix(key));
+    } catch {
+      checks.push({ step: 'keys.json', status: 'fail', detail: 'not JSON' });
+    }
+  }
+  for (const [kid, key] of packageKeys) {
+    if (pinned.has(kid) && pinned.get(kid) !== key) {
+      checks.push({
+        step: 'keys.json',
+        status: 'fail',
+        detail: `keys.json names a different key for ${kid} than the one you pinned`,
+      });
+    }
+  }
+  let allPinned = true;
+
+  // Verify one envelope: every signature must hold under a known key.
+  const checkEnvelope = (env: Envelope) => {
+    const trusted: Record<string, string> = {};
+    const signers: PackageArtifactResult['signers'] = [];
+    for (const s of env.signatures) {
+      const key = pinned.get(s.keyid) ?? packageKeys.get(s.keyid);
+      signers.push({
+        keyid: s.keyid,
+        key: pinned.has(s.keyid) ? 'pinned' : packageKeys.has(s.keyid) ? 'package' : 'unknown',
+      });
+      if (key) trusted[s.keyid] = key;
+    }
+    const r = JSON.parse(wasm.verify_envelope(JSON.stringify(env), JSON.stringify(trusted))) as {
+      valid?: boolean;
+      artifact_id?: string;
+      digest?: string;
+      verified_keys?: string[];
+      error?: string | null;
+    };
+    const everySigner = new Set(r.verified_keys ?? []);
+    const ok =
+      r.valid === true &&
+      signers.every((s) => s.key !== 'unknown' && everySigner.has(s.keyid));
+    if (ok && signers.some((s) => s.key !== 'pinned')) allPinned = false;
+    return { ok, signers, r };
+  };
+
+  // 4. Every artifact the receipt lists: present, signed, and the envelope
+  //    that hashes to exactly the listed id and digest.
+  const listed = receipt.artifacts ?? [];
+  const seen = new Set<string>();
+  for (const a of listed) {
+    const id = a.artifact_id ?? '';
+    if (!/^art_[0-9a-f]{32}$/.test(id)) {
+      checks.push({ step: 'artifacts', status: 'fail', detail: `malformed artifact id ${JSON.stringify(id)}` });
+      continue;
+    }
+    if (seen.has(id)) {
+      checks.push({ step: 'artifacts', status: 'fail', detail: `${id} is listed more than once` });
+      continue;
+    }
+    seen.add(id);
+    const raw = files[`artifacts/${id}.json`];
+    if (raw === undefined) {
+      artifacts.push({ artifact_id: id, status: 'missing', signers: [], detail: 'envelope not in the package' });
+      checks.push({ step: 'artifacts', status: 'fail', detail: `${id}: envelope missing from the package` });
+      continue;
+    }
+    const env = parseEnvelope(textOf(raw));
+    if (!env) {
+      artifacts.push({ artifact_id: id, status: 'fail', signers: [], detail: 'not a DSSE envelope' });
+      checks.push({ step: 'artifacts', status: 'fail', detail: `${id}: not a DSSE envelope` });
+      continue;
+    }
+    const kind = kindOf(env.payloadType);
+    if (!EVALUATED_KINDS.has(kind)) unevaluated.add(kind);
+    if (SIGNED_ELSEWHERE.has(kind)) {
+      artifacts.push({
+        artifact_id: id,
+        payload_type: env.payloadType,
+        status: 'skipped',
+        signers: env.signatures.map((s) => ({
+          keyid: s.keyid,
+          key: pinned.has(s.keyid) ? ('pinned' as const) : packageKeys.has(s.keyid) ? ('package' as const) : ('unknown' as const),
+        })),
+        detail: 'countersigned over canonical bytes; checked by `treeship package verify`',
+      });
+      continue;
+    }
+    const { ok, signers, r } = checkEnvelope(env);
+    let detail: string | undefined;
+    if (!ok) detail = r.error ?? 'a signature does not verify under a known key';
+    else if (r.artifact_id !== id) detail = `envelope hashes to ${r.artifact_id}, not ${id}`;
+    else if (r.digest !== a.digest) detail = `envelope digest ${r.digest} does not match the receipt's ${a.digest}`;
+    artifacts.push({
+      artifact_id: id,
+      payload_type: env.payloadType,
+      status: detail ? 'fail' : 'pass',
+      signers,
+      detail,
+    });
+    if (detail) checks.push({ step: 'artifacts', status: 'fail', detail: `${id}: ${detail}` });
+  }
+  if (!failed() && listed.length > 0) {
+    const passed = artifacts.filter((a) => a.status === 'pass').length;
+    const skipped = artifacts.length - passed;
+    checks.push({
+      step: 'artifacts',
+      status: 'pass',
+      detail:
+        `${passed} envelope(s) verify and match the receipt's ids and digests` +
+        (skipped ? `; ${skipped} skipped (checked by the CLI only)` : ''),
+    });
+  }
+
+  // 5. The close record: signed, names this session, and binds the exact
+  //    bytes of receipt.json. Without it, nothing binds the receipt body
+  //    (timeline, narrative, side effects) to a signature.
+  const recordRaw = files['record.json'];
+  if (recordRaw === undefined) {
+    checks.push({
+      step: 'receipt_binding',
+      status: 'fail',
+      detail: 'record.json (the signed close record) is missing, so nothing binds receipt.json',
+    });
+  } else {
+    const env = parseEnvelope(textOf(recordRaw));
+    if (!env) {
+      checks.push({ step: 'receipt_binding', status: 'fail', detail: 'record.json is not a DSSE envelope' });
+    } else {
+      const { ok } = checkEnvelope(env);
+      let stmt: { payload?: { receipt_digest?: string; session_id?: string } } = {};
+      try {
+        stmt = JSON.parse(textOf(base64urlDecode(env.payload)));
+      } catch {
+        // leaves stmt empty, which fails below
+      }
+      const actual = `sha256:${await sha256Hex(bytesOf(receiptRaw))}`;
+      if (!ok) {
+        checks.push({ step: 'receipt_binding', status: 'fail', detail: 'the close record signature does not verify under a known key' });
+      } else if (stmt.payload?.session_id !== receipt.session?.id) {
+        checks.push({
+          step: 'receipt_binding',
+          status: 'fail',
+          detail: `the close record names session ${stmt.payload?.session_id} but this receipt is ${receipt.session?.id}`,
+        });
+      } else if (stmt.payload?.receipt_digest !== actual) {
+        checks.push({
+          step: 'receipt_binding',
+          status: 'fail',
+          detail: `the close record signed receipt digest ${stmt.payload?.receipt_digest} but receipt.json digests to ${actual}`,
+        });
+      } else {
+        checks.push({ step: 'receipt_binding', status: 'pass', detail: `the close record binds receipt.json (${actual})` });
+      }
+    }
+  }
+
+  if (failed()) return done('failed', 'signatures');
+  if (unevaluated.size > 0) {
+    checks.push({
+      step: 'semantics',
+      status: 'warn',
+      detail: `not evaluated here: ${[...unevaluated].sort().join(', ')}. Run \`treeship package verify\` for their rules.`,
+    });
+    return done('structural-pass', 'partial');
+  }
+  return done(allPinned ? 'verified' : 'signatures-pass', 'signatures');
+}
+
+function base64urlDecode(s: string): Uint8Array {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 }
