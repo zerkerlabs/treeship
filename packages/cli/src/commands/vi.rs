@@ -124,7 +124,7 @@ fn read_last(storage_dir: &str) -> Option<String> {
 
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
-    let _ = crate::safe_fs::write_nofollow(&last_path, artifact_id.as_bytes(), 0o600);
+    let _ = crate::safe_fs::write_under_treeship(&last_path, artifact_id.as_bytes(), 0o600);
 }
 
 fn envelope_payload(env: &Envelope) -> Option<Value> {
@@ -532,17 +532,17 @@ pub fn attest(a: &AttestArgs<'_>, config: Option<&str>, printer: &Printer) -> Cm
     // file in it may be a link elsewhere.
     crate::safe_fs::refuse_symlink(&out)?;
     std::fs::create_dir_all(&out)?;
-    crate::safe_fs::write_in_cwd(&out.join("l3a.sdjwt"), bundle.l3a.serialize().as_bytes())?;
-    crate::safe_fs::write_in_cwd(&out.join("l3b.sdjwt"), bundle.l3b.serialize().as_bytes())?;
-    crate::safe_fs::write_in_cwd(
+    crate::safe_fs::write_user_path(&out.join("l3a.sdjwt"), bundle.l3a.serialize().as_bytes())?;
+    crate::safe_fs::write_user_path(&out.join("l3b.sdjwt"), bundle.l3b.serialize().as_bytes())?;
+    crate::safe_fs::write_user_path(
         &out.join("l2-payment.sdjwt"),
         bundle.l2_payment_presentation.as_bytes(),
     )?;
-    crate::safe_fs::write_in_cwd(
+    crate::safe_fs::write_user_path(
         &out.join("l2-checkout.sdjwt"),
         bundle.l2_checkout_presentation.as_bytes(),
     )?;
-    crate::safe_fs::write_in_cwd(
+    crate::safe_fs::write_user_path(
         &out.join("attestation.json"),
         serde_json::to_string_pretty(&claim_v)?.as_bytes(),
     )?;
@@ -567,9 +567,9 @@ pub fn attest(a: &AttestArgs<'_>, config: Option<&str>, printer: &Printer) -> Cm
         "constraints": {"checked": cr.checked, "skipped": cr.skipped},
         "files": ["l3a.sdjwt", "l3b.sdjwt", "l2-payment.sdjwt", "l2-checkout.sdjwt", "attestation.json"],
     });
-    std::fs::write(
-        out.join("summary.json"),
-        serde_json::to_string_pretty(&summary)?,
+    crate::safe_fs::write_user_path(
+        &out.join("summary.json"),
+        serde_json::to_string_pretty(&summary)?.as_bytes(),
     )?;
 
     if printer.format == Format::Json {

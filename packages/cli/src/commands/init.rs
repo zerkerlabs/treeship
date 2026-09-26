@@ -125,12 +125,8 @@ pub fn run(
     let key_store = KeyStore::open(&keys_dir)?;
 
     // Set restrictive permissions on keys directory (0700 -- owner only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if keys_dir.exists() {
-            let _ = std::fs::set_permissions(&keys_dir, std::fs::Permissions::from_mode(0o700));
-        }
+    if keys_dir.exists() {
+        let _ = crate::safe_fs::set_mode_nofollow(&keys_dir, 0o700);
     }
 
     let key_info = key_store.generate(true)?;
@@ -337,15 +333,11 @@ fn write_project_config(project_config: &ProjectConfig) -> Result<(), Box<dyn st
     crate::safe_fs::create_dir_all_nofollow(&ts_dir)?;
 
     // Set restrictive permissions on .treeship directory (0700 -- owner only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&ts_dir, std::fs::Permissions::from_mode(0o700));
-    }
+    let _ = crate::safe_fs::set_mode_nofollow(&ts_dir, 0o700);
 
     let yaml = serde_yaml::to_string(project_config)?;
     let config_path = ts_dir.join("config.yaml");
-    crate::safe_fs::write_nofollow(&config_path, yaml.as_bytes(), 0o600)?;
+    crate::safe_fs::write_under_treeship(&config_path, yaml.as_bytes(), 0o600)?;
 
     // Set restrictive permissions on config.yaml
 
@@ -390,7 +382,11 @@ fn write_project_config(project_config: &ProjectConfig) -> Result<(), Box<dyn st
         "extends": global_config,
         "project": true,
     });
-    crate::safe_fs::write_nofollow(&marker_path, &serde_json::to_vec_pretty(&marker)?, 0o600)?;
+    crate::safe_fs::write_under_treeship(
+        &marker_path,
+        &serde_json::to_vec_pretty(&marker)?,
+        0o600,
+    )?;
 
     Ok(())
 }

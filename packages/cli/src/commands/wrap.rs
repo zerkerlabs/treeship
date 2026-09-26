@@ -9,7 +9,7 @@ use treeship_core::{
     attestation::sign,
     session::{
         event::{generate_event_id, generate_span_id, generate_trace_id},
-        EventLog, EventType, SessionEvent,
+        EventType, SessionEvent,
     },
     statements::{payload_type, ActionStatement},
     storage::Record,
@@ -576,7 +576,7 @@ fn resolve_parent(ctx: &ctx::Ctx, explicit: Option<String>) -> Option<String> {
 /// Write the artifact_id to {storage_dir}/.last for auto-chaining.
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = std::path::Path::new(storage_dir).join(".last");
-    let _ = crate::safe_fs::write_nofollow(&last_path, artifact_id.as_bytes(), 0o600);
+    let _ = crate::safe_fs::write_under_treeship(&last_path, artifact_id.as_bytes(), 0o600);
 }
 
 /// Get the current git HEAD sha (short), if in a git repo.
@@ -692,7 +692,7 @@ fn emit_wrap_events(
         None => return,
     };
     let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
-    let log = match EventLog::open(&evt_dir) {
+    let log = match crate::safe_fs::open_event_log(&evt_dir) {
         Ok(l) => l,
         Err(_) => return,
     };
@@ -788,7 +788,7 @@ fn emit_decision_from_env() {
         None => return,
     };
     let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
-    let log = match EventLog::open(&evt_dir) {
+    let log = match crate::safe_fs::open_event_log(&evt_dir) {
         Ok(l) => l,
         Err(_) => return,
     };

@@ -12,7 +12,7 @@ use treeship_core::{
     session::{
         self, build_package_with_approvals,
         event::{generate_event_id, generate_span_id, generate_trace_id},
-        ApprovalsBundle, EventLog, EventType, ReceiptComposer, SessionEvent,
+        ApprovalsBundle, EventType, ReceiptComposer, SessionEvent,
     },
     statements::{payload_type, ActionStatement, ApprovalStatement, ReceiptStatement, SubjectRef},
     storage::Record,
@@ -80,14 +80,9 @@ struct CloseLock {
 impl CloseLock {
     fn acquire(ts_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let lock_path = ts_dir.join("session.close.lock");
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            // Lock file: contents are never read, so never truncate it out
-            // from under a concurrent holder.
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_path)?;
+        // Lock file: contents are never read, so never truncated out from
+        // under a concurrent holder; never opened through a link either.
+        let file = crate::safe_fs::open_lock_under_treeship(&lock_path)?;
         file.try_lock_exclusive().map_err(|_| {
             "another `treeship session close` is already running\n\n  \
              Wait for it to finish, then run `treeship session status` or `treeship session report`."
@@ -173,13 +168,13 @@ pub fn load_session() -> Option<SessionManifest> {
 pub(crate) fn save_session(manifest: &SessionManifest) -> Result<(), Box<dyn std::error::Error>> {
     let path = session_path().ok_or("no .treeship directory found -- run treeship init first")?;
     let json = serde_json::to_string_pretty(manifest)?;
-    crate::safe_fs::write_nofollow(&path, json.as_bytes(), 0o600)?;
+    crate::safe_fs::write_under_treeship(&path, json.as_bytes(), 0o600)?;
     Ok(())
 }
 
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = Path::new(storage_dir).join(".last");
-    let _ = crate::safe_fs::write_nofollow(&last_path, artifact_id.as_bytes(), 0o600);
+    let _ = crate::safe_fs::write_under_treeship(&last_path, artifact_id.as_bytes(), 0o600);
 }
 
 fn read_manifest_at(path: &Path) -> Option<SessionManifest> {
@@ -595,11 +590,11 @@ pub fn start(
 
     let session_path = ts_dir.join("session.json");
     let json = serde_json::to_string_pretty(&manifest)?;
-    crate::safe_fs::write_nofollow(&session_path, json.as_bytes(), 0o600)?;
+    crate::safe_fs::write_under_treeship(&session_path, json.as_bytes(), 0o600)?;
 
     // Initialize event log and write session.started event
     let evt_dir = ts_dir.join("sessions").join(&session_id);
-    let event_log = EventLog::open(&evt_dir)?;
+    let event_log = crate::safe_fs::open_event_log(&evt_dir)?;
     let mut evt = base_event(
         &session_id,
         &actor_uri,
@@ -686,7 +681,7 @@ pub fn abandon(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         now_rfc3339().replace(':', ""),
         session_id
     ));
-    std::fs::create_dir_all(&quarantine)?;
+    crate::safe_fs::create_dir_all_nofollow(&quarantine)?;
 
     let target = quarantine.join(manifest_path.file_name().unwrap_or_default());
     std::fs::rename(&manifest_path, target)?;
@@ -759,7 +754,7 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
         let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
         let evt_dir = session_dir().map(|d| d.join("sessions").join(&manifest.session_id));
         let event_count = evt_dir
-            .and_then(|d| EventLog::open(&d).ok())
+            .and_then(|d| crate::safe_fs::open_event_log(&d).ok())
             .map(|log| log.event_count())
             .unwrap_or(0);
 
@@ -827,7 +822,7 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
     // Check event log
     let evt_dir = session_dir().map(|d| d.join("sessions").join(&manifest.session_id));
     let event_count = evt_dir
-        .and_then(|d| EventLog::open(&d).ok())
+        .and_then(|d| crate::safe_fs::open_event_log(&d).ok())
         .map(|log| log.event_count())
         .unwrap_or(0);
 
@@ -912,7 +907,7 @@ pub fn watch(_config: Option<&str>, _printer: &Printer) -> Result<(), Box<dyn st
 
     loop {
         // Read events
-        let log = match EventLog::open(&evt_dir) {
+        let log = match crate::safe_fs::open_event_log(&evt_dir) {
             Ok(l) => l,
             Err(_) => {
                 std::thread::sleep(std::time::Duration::from_secs(2));
@@ -1563,7 +1558,7 @@ fn ensure_package_key(
             keys["keys"] = serde_json::json!({ key_id: encoded });
         }
     }
-    crate::safe_fs::write_nofollow(
+    crate::safe_fs::write_under_treeship(
         &path,
         &serde_json::to_vec_pretty(&keys).map_err(|e| e.to_string())?,
         0o600,
@@ -1575,6 +1570,7 @@ fn ensure_package_key(
 /// are copied byte for byte so the receipt digest is unchanged; nothing
 /// is followed through symlinks.
 fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    crate::safe_fs::refuse_symlink(to)?;
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
@@ -1583,7 +1579,7 @@ fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result
         if ty.is_dir() {
             copy_dir_all(&entry.path(), &dest)?;
         } else if ty.is_file() {
-            std::fs::copy(entry.path(), &dest)?;
+            crate::safe_fs::copy_nofollow(&entry.path(), &dest, 0o644)?;
         }
     }
     Ok(())
@@ -1636,7 +1632,7 @@ pub fn close(
 
     // Write session.closed event to the event log
     let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
-    let event_log = EventLog::open(&evt_dir)?;
+    let event_log = crate::safe_fs::open_event_log(&evt_dir)?;
 
     let mut close_evt = base_event(
         &manifest.session_id,
@@ -1954,7 +1950,7 @@ pub fn close(
     // composition failed; the hint logic below skips local-verify in
     // that case rather than printing a path that doesn't exist.
     let pkg_dir = ts_dir.join("sessions");
-    std::fs::create_dir_all(&pkg_dir)?;
+    crate::safe_fs::create_dir_all_nofollow(&pkg_dir)?;
     let mut sealed_pkg_path: Option<std::path::PathBuf> = None;
     let mut sealed_receipt_digest: Option<String> = None;
 
@@ -2047,8 +2043,12 @@ pub fn close(
                         .map_err(|e| e.to_string())
                         .and_then(|r| {
                             let bytes = r.envelope.to_json().map_err(|e| e.to_string())?;
-                            std::fs::write(pkg_output.path.join(session::RECORD_FILE), bytes)
-                                .map_err(|e| e.to_string())?;
+                            crate::safe_fs::write_under_treeship(
+                                &pkg_output.path.join(session::RECORD_FILE),
+                                &bytes,
+                                0o644,
+                            )
+                            .map_err(|e| e.to_string())?;
                             // The record is signed with the actor's own key
                             // when it has one, and keys.json was written
                             // before the record existed. A package that
@@ -2263,7 +2263,7 @@ pub fn append_active_session_event(
         None => return Ok(false),
     };
     let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
-    let event_log = EventLog::open(&evt_dir)?;
+    let event_log = crate::safe_fs::open_event_log(&evt_dir)?;
 
     let actor_uri = actor.unwrap_or(&manifest.actor);
     let a_name = agent_name.unwrap_or("external");
@@ -2328,7 +2328,7 @@ pub fn event(
 
     let ts_dir = session_dir().ok_or("no .treeship directory found")?;
     let evt_dir = ts_dir.join("sessions").join(&manifest.session_id);
-    let event_log = EventLog::open(&evt_dir)?;
+    let event_log = crate::safe_fs::open_event_log(&evt_dir)?;
 
     let actor_uri = actor.unwrap_or(&manifest.actor);
     let host_id = local_host_id();

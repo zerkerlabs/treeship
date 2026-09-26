@@ -331,18 +331,18 @@ pub fn register(
 
         // identity.json
         let identity_json = serde_json::to_string_pretty(&identity)?;
-        crate::safe_fs::write_in_cwd(&pkg_dir.join("identity.json"), identity_json.as_bytes())?;
+        crate::safe_fs::write_user_path(&pkg_dir.join("identity.json"), identity_json.as_bytes())?;
 
         // capabilities.json
         let capabilities_json = serde_json::to_string_pretty(&capabilities)?;
-        crate::safe_fs::write_in_cwd(
+        crate::safe_fs::write_user_path(
             &pkg_dir.join("capabilities.json"),
             capabilities_json.as_bytes(),
         )?;
 
         // declaration.json
         let declaration_json = serde_json::to_string_pretty(&declaration)?;
-        crate::safe_fs::write_in_cwd(
+        crate::safe_fs::write_user_path(
             &pkg_dir.join("declaration.json"),
             declaration_json.as_bytes(),
         )?;
@@ -353,10 +353,10 @@ pub fn register(
         let html = CERTIFICATE_TEMPLATE
             .replace("__CERTIFICATE_JSON__", &safe_json)
             .replace("__FONT_FRAUNCES__", &fraunces_data_uri());
-        crate::safe_fs::write_in_cwd(&pkg_dir.join("certificate.html"), html.as_bytes())?;
+        crate::safe_fs::write_user_path(&pkg_dir.join("certificate.html"), html.as_bytes())?;
 
         // Also write the full certificate.json
-        crate::safe_fs::write_in_cwd(&pkg_dir.join("certificate.json"), full_json.as_bytes())?;
+        crate::safe_fs::write_user_path(&pkg_dir.join("certificate.json"), full_json.as_bytes())?;
     }
 
     // v0.9.8: also write an Agent Card into the workspace card store.

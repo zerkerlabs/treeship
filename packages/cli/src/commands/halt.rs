@@ -246,7 +246,7 @@ pub fn halt(
         reason: reason.map(str::to_string),
         key_id,
     };
-    crate::safe_fs::write_nofollow(
+    crate::safe_fs::write_under_treeship(
         &dir.join(marker_name(actor)),
         serde_json::to_string_pretty(&marker)?.as_bytes(),
         0o600,

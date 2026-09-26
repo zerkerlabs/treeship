@@ -81,11 +81,31 @@ pub fn journal_dir_for(cfg: &Config, config_path: &std::path::Path) -> PathBuf {
     let primary = owner.join("journals").join("approval-use");
     if primary != beside_config && beside_config.is_dir() && !primary.is_dir() {
         if let Some(parent) = primary.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            let _ = crate::safe_fs::create_dir_all_nofollow(parent);
         }
-        let _ = std::fs::rename(&beside_config, &primary);
+        if crate::safe_fs::refuse_symlinks_under_treeship(&primary).is_ok() {
+            let _ = std::fs::rename(&beside_config, &primary);
+        }
     }
     primary
+}
+
+/// The keystore and the artifact store are judged from the `.treeship`
+/// anchor down, not only at their own directory: `keys_dir = sub/keys`
+/// with `.treeship/sub -> elsewhere` would otherwise create both stores
+/// wherever the link points.
+fn refuse_linked_store_dirs(cfg: &Config) -> Result<(), CtxError> {
+    for dir in [&cfg.keys_dir, &cfg.storage_dir] {
+        crate::safe_fs::refuse_symlinks_under_treeship(std::path::Path::new(dir)).map_err(|e| {
+            CtxError::Config(ConfigError::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "{e}. If this link is deliberate (dotfiles), point --config at a config whose keys_dir and storage_dir are the real directories"
+                ),
+            )))
+        })?;
+    }
+    Ok(())
 }
 
 pub fn open(config_path_override: Option<&str>) -> Result<Ctx, CtxError> {
@@ -95,6 +115,8 @@ pub fn open(config_path_override: Option<&str>) -> Result<Ctx, CtxError> {
     };
 
     let cfg = config::load(&config_path)?;
+    config::refuse_store_dirs_outside_project(&cfg, &config_path, config_source)?;
+    refuse_linked_store_dirs(&cfg)?;
     let keys = KeyStore::open(&cfg.keys_dir)?;
     let storage = ArtifactStore::open(&cfg.storage_dir)?;
 

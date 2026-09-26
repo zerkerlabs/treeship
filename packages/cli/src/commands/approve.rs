@@ -158,7 +158,7 @@ pub fn write_pending(
     };
 
     let json = serde_json::to_string_pretty(&pending)?;
-    crate::safe_fs::write_nofollow(&path, json.as_bytes(), 0o600)?;
+    crate::safe_fs::write_under_treeship(&path, json.as_bytes(), 0o600)?;
     Ok(path)
 }
 
@@ -358,7 +358,7 @@ pub fn approve(
     pa.approved = true;
     pa.nonce = Some(nonce.clone());
     let json = serde_json::to_string_pretty(&pa)?;
-    crate::safe_fs::write_nofollow(&path, json.as_bytes(), 0o600)?;
+    crate::safe_fs::write_under_treeship(&path, json.as_bytes(), 0o600)?;
 
     // Print
     printer.blank();

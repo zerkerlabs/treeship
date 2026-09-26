@@ -300,7 +300,11 @@ pub fn issue(args: IssueArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     // write itself never follows one.
     let already_existed = path.exists();
     if !already_existed {
-        crate::safe_fs::write_nofollow(&path, serde_json::to_string_pretty(&g)?.as_bytes(), 0o600)?;
+        crate::safe_fs::write_under_treeship(
+            &path,
+            serde_json::to_string_pretty(&g)?.as_bytes(),
+            0o600,
+        )?;
     }
 
     if printer.format == Format::Json {

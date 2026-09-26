@@ -59,7 +59,7 @@ pub fn create(
     });
 
     let json = serde_json::to_string_pretty(&decl)?;
-    crate::safe_fs::write_nofollow(&path, json.as_bytes(), 0o600)?;
+    crate::safe_fs::write_under_treeship(&path, json.as_bytes(), 0o600)?;
 
     printer.blank();
     printer.success("declaration created", &[]);

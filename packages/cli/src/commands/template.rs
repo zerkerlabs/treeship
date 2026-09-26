@@ -360,7 +360,7 @@ pub fn save(name: Option<String>, printer: &Printer) -> Result<(), Box<dyn std::
     // Build output path: ~/.treeship/templates/<slug>.yaml
     let home = home::home_dir().ok_or("cannot determine home directory")?;
     let templates_dir = home.join(".treeship").join("templates");
-    std::fs::create_dir_all(&templates_dir)?;
+    crate::safe_fs::create_dir_all_nofollow(&templates_dir)?;
 
     let out_path = templates_dir.join(format!("{slug}.yaml"));
 
@@ -387,7 +387,7 @@ pub fn save(name: Option<String>, printer: &Printer) -> Result<(), Box<dyn std::
         .join("\n");
 
     let output = format!("{header}{cleaned}\n");
-    crate::safe_fs::write_in_cwd(std::path::Path::new(&out_path), output.as_bytes())?;
+    crate::safe_fs::write_user_path(std::path::Path::new(&out_path), output.as_bytes())?;
 
     printer.blank();
     printer.success(
@@ -669,16 +669,11 @@ fn write_project_config(
     // Never through a link: a repository's .treeship, or its config.yaml,
     // may point anywhere.
     crate::safe_fs::create_dir_all_nofollow(&ts_dir)?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&ts_dir, std::fs::Permissions::from_mode(0o700));
-    }
+    let _ = crate::safe_fs::set_mode_nofollow(&ts_dir, 0o700);
 
     let yaml = serde_yaml::to_string(project_config)?;
     let config_path = ts_dir.join("config.yaml");
-    crate::safe_fs::write_nofollow(&config_path, yaml.as_bytes(), 0o600)?;
+    crate::safe_fs::write_under_treeship(&config_path, yaml.as_bytes(), 0o600)?;
 
     Ok(())
 }

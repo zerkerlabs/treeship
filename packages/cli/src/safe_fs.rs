@@ -1,27 +1,44 @@
-//! Writes under a workspace that never follow a symlink. The primitives live
-//! in `treeship_core::fs_safe` (one implementation for the CLI and core);
-//! this module adds the `.treeship` anchor the CLI works from: a repository
-//! controls what is inside its `.treeship/` directory, so every component
-//! from there down is judged, while the user's own path above it is not.
+//! Writes under a workspace that never follow a symlink and never land in
+//! a hard link. The primitives live in `treeship_core::fs_safe` (one
+//! implementation for the CLI and core); this module adds the `.treeship`
+//! anchor the CLI works from: a repository controls what is inside its
+//! `.treeship/` directory, so every component from there down is judged,
+//! while the user's own path above it is not.
+//!
+//! Three kinds of destination:
+//! * under `.treeship` (config, keys, sessions, queues, `.last`):
+//!   [`write_under_treeship`], [`create_dir_all_nofollow`],
+//!   [`open_lock_under_treeship`], [`open_event_log`];
+//! * a path the user chose (`--out`, a package directory, a shell rc file,
+//!   a home-directory dotfile): [`write_user_path`], which refuses only an
+//!   existing link at the file itself;
+//! * a mode change: [`set_mode_nofollow`], through a handle, never chmod on
+//!   a path that might be a link.
 
 use std::io;
 use std::path::Path;
 
+use treeship_core::session::event_log::{EventLog, EventLogError};
+
 pub use treeship_core::fs_safe::{
-    open_append_nofollow, open_rw_nofollow, refuse_symlink, write_atomic,
+    copy_nofollow, open_append_nofollow, open_rw_nofollow, refuse_symlink, set_mode_nofollow,
+    write_atomic,
 };
 
 /// Refuse when the `.treeship` directory, or anything beneath it on the
-/// way to `path`, is a symlink.
+/// way to `path`, is a symlink. Every component from the anchor down is
+/// judged, so `.treeship/sessions -> elsewhere` or `.treeship/sub -> ~`
+/// with `keys_dir = sub/keys` is caught, not only a link at the file.
 pub fn refuse_symlinks_under_treeship(path: &Path) -> io::Result<()> {
     treeship_core::fs_safe::refuse_symlinks_from(path, ".treeship")
 }
 
-/// Create or replace `path` with `bytes` at `mode`, never through a link at
-/// the file or under `.treeship` on the way to it.
-pub fn write_nofollow(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
+/// Create or replace `path` with `bytes` at `mode`: never through a link at
+/// the file or under `.treeship` on the way to it, and never into a hard
+/// link (the file is written fresh and renamed into place).
+pub fn write_under_treeship(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     refuse_symlinks_under_treeship(path)?;
-    treeship_core::fs_safe::write_nofollow(path, bytes, mode)
+    write_atomic(path, bytes, mode)
 }
 
 /// `create_dir_all`, refusing when any component from `.treeship` down is a
@@ -31,11 +48,42 @@ pub fn create_dir_all_nofollow(dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(dir)
 }
 
-/// A file written into the working directory (a proof, a package, a
-/// credential): created or replaced in place, refusing a link at the path.
-pub fn write_in_cwd(path: &Path, bytes: &[u8]) -> io::Result<()> {
+/// A lock file under `.treeship`: opened read-write without truncation and
+/// without following a link anywhere from the anchor down.
+pub fn open_lock_under_treeship(path: &Path) -> io::Result<std::fs::File> {
+    refuse_symlinks_under_treeship(path)?;
+    open_rw_nofollow(path, 0o600)
+}
+
+/// Open a session's event log only when nothing from `.treeship` down to
+/// its directory is a link (`.treeship/sessions -> elsewhere` would put
+/// every event, lock and counter there).
+pub fn open_event_log(dir: &Path) -> Result<EventLog, EventLogError> {
+    refuse_symlinks_under_treeship(dir).map_err(EventLogError::from)?;
+    EventLog::open(dir)
+}
+
+/// A file written where the user asked (a proof, a package, a credential,
+/// a shell rc file): created fresh and renamed into place, refusing a link
+/// at the path. An existing file keeps its mode; a new one is 0644.
+pub fn write_user_path(path: &Path, bytes: &[u8]) -> io::Result<()> {
     refuse_symlink(path)?;
-    treeship_core::fs_safe::write_nofollow(path, bytes, 0o644)
+    let mode = existing_mode(path).unwrap_or(0o644);
+    write_atomic(path, bytes, mode)
+}
+
+#[cfg(unix)]
+fn existing_mode(path: &Path) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::symlink_metadata(path)
+        .ok()
+        .filter(|m| m.file_type().is_file())
+        .map(|m| m.permissions().mode() & 0o777)
+}
+
+#[cfg(not(unix))]
+fn existing_mode(_path: &Path) -> Option<u32> {
+    None
 }
 
 #[cfg(all(test, unix))]
@@ -53,13 +101,32 @@ mod tests {
         std::os::unix::fs::symlink(&elsewhere, ws.join(".treeship")).unwrap();
         let target = ws.join(".treeship").join("config.json");
         assert!(refuse_symlinks_under_treeship(&target).is_err());
-        assert!(write_nofollow(&target, b"{}", 0o600).is_err());
+        assert!(write_under_treeship(&target, b"{}", 0o600).is_err());
         assert!(create_dir_all_nofollow(&ws.join(".treeship").join("keys")).is_err());
+        assert!(open_lock_under_treeship(&ws.join(".treeship").join("x.lock")).is_err());
+        assert!(open_event_log(&ws.join(".treeship").join("sessions").join("s")).is_err());
         assert_eq!(
             std::fs::read(elsewhere.join("config.json")).unwrap(),
             b"{\"auths\":{}}"
         );
         assert!(!elsewhere.join("keys").exists());
+        assert!(!elsewhere.join("x.lock").exists());
+        assert!(!elsewhere.join("sessions").exists());
+    }
+
+    #[test]
+    fn a_linked_directory_below_treeship_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let elsewhere = root.path().join("outside");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let ts = root.path().join("repo").join(".treeship");
+        std::fs::create_dir_all(&ts).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, ts.join("sessions")).unwrap();
+        let evt = ts.join("sessions").join("ssn_1");
+        assert!(open_event_log(&evt).is_err());
+        assert!(create_dir_all_nofollow(&ts.join("sessions").join("ssn_1.treeship")).is_err());
+        assert!(write_under_treeship(&ts.join("sessions").join("x"), b"x", 0o600).is_err());
+        assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
     }
 
     #[test]
@@ -71,18 +138,34 @@ mod tests {
         std::os::unix::fs::symlink(&real_home, &linked_home).unwrap();
         let target = linked_home.join(".treeship").join("config.json");
         assert!(refuse_symlinks_under_treeship(&target).is_ok());
-        write_nofollow(&target, b"{}", 0o600).unwrap();
+        write_under_treeship(&target, b"{}", 0o600).unwrap();
     }
 
     #[test]
-    fn a_cwd_file_is_never_a_link_target() {
+    fn a_user_path_is_never_a_link_target_and_keeps_its_mode() {
         let root = tempfile::tempdir().unwrap();
         let victim = root.path().join("victim");
         std::fs::write(&victim, b"keep").unwrap();
         let link = root.path().join("out.json");
         std::os::unix::fs::symlink(&victim, &link).unwrap();
-        assert!(write_in_cwd(&link, b"x").is_err());
+        assert!(write_user_path(&link, b"x").is_err());
         assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
-        write_in_cwd(&root.path().join("fresh.json"), b"x").unwrap();
+        // A hard link to the victim is replaced, not written through.
+        let hard = root.path().join("hard.json");
+        std::fs::hard_link(&victim, &hard).unwrap();
+        write_user_path(&hard, b"x").unwrap();
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        assert_eq!(std::fs::read(&hard).unwrap(), b"x");
+        // An existing file keeps its mode.
+        use std::os::unix::fs::PermissionsExt;
+        let rc = root.path().join(".zshrc");
+        std::fs::write(&rc, b"old").unwrap();
+        std::fs::set_permissions(&rc, std::fs::Permissions::from_mode(0o600)).unwrap();
+        write_user_path(&rc, b"new").unwrap();
+        assert_eq!(
+            std::fs::metadata(&rc).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        write_user_path(&root.path().join("fresh.json"), b"x").unwrap();
     }
 }

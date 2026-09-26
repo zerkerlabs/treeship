@@ -369,7 +369,7 @@ fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
         if path == "-" {
             println!("{}", String::from_utf8_lossy(&json));
         } else {
-            std::fs::write(path, &json)?;
+            crate::safe_fs::write_user_path(std::path::Path::new(path), &json)?;
         }
     }
 
@@ -550,7 +550,7 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
         if path == "-" {
             println!("{}", String::from_utf8_lossy(&json));
         } else {
-            std::fs::write(path, &json)?;
+            crate::safe_fs::write_user_path(std::path::Path::new(path), &json)?;
         }
     }
 
@@ -2090,7 +2090,7 @@ pub fn endorsement(
         if path == "-" {
             println!("{}", String::from_utf8_lossy(&json));
         } else {
-            std::fs::write(path, &json)?;
+            crate::safe_fs::write_user_path(std::path::Path::new(path), &json)?;
         }
     }
 
@@ -2368,21 +2368,16 @@ fn backfill_action_artifact_id(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let dir = journal_dir_for(ctx);
     let backfill_dir = dir.join("indexes").join("backfill");
-    std::fs::create_dir_all(&backfill_dir)?;
+    crate::safe_fs::create_dir_all_nofollow(&backfill_dir)?;
     let path = backfill_dir.join(format!("{use_id}.txt"));
-    std::fs::write(&path, action_artifact_id)?;
+    crate::safe_fs::write_under_treeship(&path, action_artifact_id.as_bytes(), 0o600)?;
     Ok(())
 }
 
 /// Write the artifact_id to {storage_dir}/.last for auto-chaining.
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = std::path::Path::new(storage_dir).join(".last");
-    let _ = std::fs::write(&last_path, artifact_id);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&last_path, std::fs::Permissions::from_mode(0o600));
-    }
+    let _ = crate::safe_fs::write_under_treeship(&last_path, artifact_id.as_bytes(), 0o600);
 }
 
 #[cfg(test)]

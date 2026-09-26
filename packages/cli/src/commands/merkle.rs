@@ -142,10 +142,10 @@ pub fn checkpoint(
     let cp_dir = checkpoints_dir()?;
     let filename = format!("{:04}.json", index);
     let cp_json = serde_json::to_vec_pretty(&cp)?;
-    crate::safe_fs::write_nofollow(&cp_dir.join(&filename), &cp_json, 0o600)?;
+    crate::safe_fs::write_under_treeship(&cp_dir.join(&filename), &cp_json, 0o600)?;
 
     // Save latest.json (copy, not symlink, for portability)
-    crate::safe_fs::write_nofollow(&cp_dir.join("latest.json"), &cp_json, 0o600)?;
+    crate::safe_fs::write_under_treeship(&cp_dir.join("latest.json"), &cp_json, 0o600)?;
 
     if printer.format == crate::printer::Format::Json {
         // Full-length root and real numbers: the text view shortens the
@@ -291,7 +291,7 @@ pub fn proof(
     // Save proof file
     let proof_json = serde_json::to_vec_pretty(&proof_file)?;
     let out_path = format!("{}.proof.json", artifact_id);
-    crate::safe_fs::write_in_cwd(std::path::Path::new(&out_path), &proof_json)?;
+    crate::safe_fs::write_user_path(std::path::Path::new(&out_path), &proof_json)?;
 
     if printer.format == crate::printer::Format::Json {
         printer.json(&serde_json::json!({

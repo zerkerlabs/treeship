@@ -40,6 +40,10 @@ pub struct Config {
     /// absolute one. `None` for configs that already use absolute paths.
     #[serde(skip)]
     pub(crate) on_disk_paths: Option<OnDiskPaths>,
+    /// True when the file that was loaded is a project stub (`extends`),
+    /// so its stores belong to the parent config, not to this directory.
+    #[serde(skip)]
+    pub(crate) extends_stub: bool,
 }
 
 /// Verbatim relative path strings from a config file, kept so `save`
@@ -167,6 +171,17 @@ pub enum ConfigError {
         stub: PathBuf,
         target: PathBuf,
     },
+    /// A discovered project config names a keystore or artifact store
+    /// outside its own `.treeship`. Discovery is implicit (whatever
+    /// repository the user is standing in), so a checked-in config must not
+    /// be able to point the stores at the user's files; an explicit
+    /// `--config` or `TREESHIP_CONFIG` may.
+    StoreDirOutsideProject {
+        field: &'static str,
+        dir: PathBuf,
+        project: PathBuf,
+        config: PathBuf,
+    },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -188,6 +203,19 @@ impl std::fmt::Display for ConfigError {
                 stub.display()
             ),
             Self::NoHome => write!(f, "cannot determine home directory"),
+            Self::StoreDirOutsideProject {
+                field,
+                dir,
+                project,
+                config,
+            } => write!(
+                f,
+                "{} sets {field} = {}, which is outside {}. A project config found by walking up from the current directory may only keep its stores inside its own .treeship; pass --config {} to use it as written",
+                config.display(),
+                dir.display(),
+                project.display(),
+                config.display()
+            ),
         }
     }
 }
@@ -404,6 +432,7 @@ fn load_with_depth(
         }
         let mut cfg = load_with_depth(&parent_path, depth + 1, visited)?;
         apply_overrides(&mut cfg, &raw);
+        cfg.extends_stub = true;
 
         if migrate_legacy_hub(&mut cfg) {
             // Don't write back into the project stub; only the parent.
@@ -413,6 +442,7 @@ fn load_with_depth(
     }
 
     let mut cfg: Config = serde_json::from_slice(&bytes)?;
+    cfg.extends_stub = false;
     resolve_store_paths(&mut cfg, path);
     if migrate_legacy_hub(&mut cfg) {
         let _ = save(&cfg, path);
@@ -491,26 +521,12 @@ pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
     // Never through a symlink, at the file or on the way to it:
     // `.treeship -> ~/.docker` would put config.json, keys/ and artifacts/
     // in ~/.docker, and a linked config.json would be replaced elsewhere.
+    // The file is written fresh and renamed into place, so a hard-linked
+    // config.json is replaced rather than written through.
     crate::safe_fs::refuse_symlinks_under_treeship(path)?;
-    if fs::symlink_metadata(path)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
-    {
-        return Err(ConfigError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "refusing to write the config through a symlink at {}",
-                path.display()
-            ),
-        )));
-    }
     let dir = path.parent().unwrap_or(path);
-    fs::create_dir_all(dir)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
-    }
+    crate::safe_fs::create_dir_all_nofollow(dir)?;
+    let _ = crate::safe_fs::set_mode_nofollow(dir, 0o700);
     // Write back the paths exactly as they were read. Without this, the
     // first save after any load (hub attach, legacy migration, key
     // rotation) would replace a relative, portable path with the
@@ -525,13 +541,96 @@ pub fn save(cfg: &Config, path: &Path) -> Result<(), ConfigError> {
         }
         None => serde_json::to_vec_pretty(cfg)?,
     };
-    fs::write(path, &json)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    crate::safe_fs::write_under_treeship(path, &json, 0o600)?;
+    Ok(())
+}
+
+/// A config found by discovery (walking up from the cwd) may only keep its
+/// keystore and artifact store inside its own `.treeship` directory: a
+/// checked-in `{"keys_dir": "/home/me/.ssh"}` or `"../../.treeship/keys"`
+/// would otherwise make the first command in a cloned repository create,
+/// chmod and write there. A stub inherits its stores from the parent
+/// config and is not judged here; neither is a config the user named
+/// with `--config` or `TREESHIP_CONFIG`, nor the global one.
+pub fn refuse_store_dirs_outside_project(
+    cfg: &Config,
+    config_path: &Path,
+    source: ConfigSource,
+) -> Result<(), ConfigError> {
+    if source != ConfigSource::ProjectLocal || cfg.extends_stub {
+        return Ok(());
+    }
+    let project = config_path.parent().unwrap_or(config_path);
+    for (field, dir) in [
+        ("keys_dir", &cfg.keys_dir),
+        ("storage_dir", &cfg.storage_dir),
+    ] {
+        let dir = Path::new(dir);
+        if !dir_is_within(project, dir) {
+            return Err(ConfigError::StoreDirOutsideProject {
+                field,
+                dir: dir.to_path_buf(),
+                project: project.to_path_buf(),
+                config: config_path.to_path_buf(),
+            });
+        }
     }
     Ok(())
+}
+
+/// Is `dir` inside `root`? Judged lexically first (`..` and `.` folded, no
+/// filesystem access, so `keys/../../..` cannot escape), then, for two
+/// spellings of the same place (`/var` and `/private/var`), by the
+/// canonical form of the longest existing prefix.
+fn dir_is_within(root: &Path, dir: &Path) -> bool {
+    let root_l = lexical_normalize(root);
+    let dir_l = lexical_normalize(dir);
+    if dir_l.starts_with(&root_l) {
+        return true;
+    }
+    match (root.canonicalize(), canonicalize_existing_prefix(&dir_l)) {
+        (Ok(r), Some(d)) => d.starts_with(&r),
+        _ => false,
+    }
+}
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Canonicalize the longest prefix of `path` that exists and append the
+/// rest unchanged, so a store directory that `init` has not created yet
+/// can still be compared with its project.
+fn canonicalize_existing_prefix(path: &Path) -> Option<PathBuf> {
+    let mut prefix = path.to_path_buf();
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(c) = prefix.canonicalize() {
+            let mut out = c;
+            for r in rest.iter().rev() {
+                out.push(r);
+            }
+            return Some(out);
+        }
+        let name = prefix.file_name()?.to_os_string();
+        rest.push(name);
+        if !prefix.pop() {
+            return None;
+        }
+    }
 }
 
 /// Migrate v0.1/v0.2 flat `hub` config to v0.4 `hub_connections` map.
@@ -604,6 +703,7 @@ pub fn new_config(
         hub_connections: HashMap::new(),
         active_hub: None,
         hub: None,
+        extends_stub: false,
         // On disk: relative, so the keystore directory is movable. These
         // resolve back to exactly the absolute paths above, because
         // `resolve_store_paths` joins against this same directory --

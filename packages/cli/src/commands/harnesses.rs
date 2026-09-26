@@ -687,12 +687,10 @@ pub fn load_state(harnesses_dir: &Path, harness_id: &str) -> Result<HarnessState
 }
 
 pub fn save_state(harnesses_dir: &Path, state: &HarnessState) -> Result<(), StateError> {
-    std::fs::create_dir_all(harnesses_dir)?;
+    crate::safe_fs::create_dir_all_nofollow(harnesses_dir)?;
     let path = state_path(harnesses_dir, &state.harness_id);
-    let tmp = path.with_extension("json.tmp");
     let json = serde_json::to_vec_pretty(state)?;
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(&tmp, &path)?;
+    crate::safe_fs::write_under_treeship(&path, &json, 0o600)?;
     Ok(())
 }
 

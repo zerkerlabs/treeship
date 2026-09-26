@@ -741,7 +741,7 @@ fn fix_dir_perm(
     }
     let cur = std::fs::metadata(path)?.permissions().mode() & 0o777;
     if cur != target_mode {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(target_mode))?;
+        crate::safe_fs::set_mode_nofollow(path, target_mode)?;
         changes.push((path.to_path_buf(), cur, target_mode));
     }
     Ok(())
