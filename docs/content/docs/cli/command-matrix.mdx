@@ -490,7 +490,7 @@ treeship verify [OPTIONS] <TARGET>
 | `--no-chain` | Verify only this artifact, do not walk the parent chain. Only applies to the artifact-ID form |
 | `--max-depth <N>` | Maximum chain depth to walk (default: 20). Only applies to the artifact-ID form [default: 20] |
 | `--full` | Show full chain timeline with box-drawn cards. Only applies to the artifact-ID form |
-| `--max-unwitnessed <DURATION>` | Fail unless every stretch of claimed work was externally witnessed within this long (e.g. 15m, 1h, 3600) {/* claims:rekor-artifact-anchoring */} |
+| `--max-unwitnessed <DURATION>` | Fail unless every stretch of claimed work was externally confirmed within this long (e.g. 15m, 1h, 3600) |
 | `--require-authority` | Exit non-zero unless authority was actually checked and passed |
 
 ## `treeship hub`
@@ -745,7 +745,7 @@ treeship publish [OPTIONS] <AGENT>
 
 ## `treeship audit`
 
-Audit an agent's transparency log from a Hub: re-verify each anchored entry's inclusion offline and check completeness against its anchor {/* claims:transparency-log-client-reverified */}
+Audit an agent's transparency log from a Hub: re-verify each logged entry's inclusion offline and check completeness against its anchor
 
 ```
 treeship audit [OPTIONS] <AGENT>
@@ -1092,7 +1092,7 @@ treeship present [OPTIONS] <AGENT>
 |---|---|
 | `--out <PATH>` | Output path (default: &lt;name&gt;.presentation.json) |
 | `--challenge <NONCE>` | Sign the verifier's nonce with the agent's own key (the handshake: proves live key control, not just the record). Requires --own-key |
-| `--disclose <CAPS>` | Reveal only these capabilities, hiding the rest (selective disclosure). Comma-separated tool names that must appear in the agent's card. The presentation carries a re-signed, digests-only card plus openings for only the named capabilities; the others stay opaque. A disclosed presentation is not transparency-anchored (an ephemeral, privacy- preserving re-sign), so it omits the Merkle staple {/* claims:transparency-log-client-reverified */} |
+| `--disclose <CAPS>` | Reveal only these capabilities, hiding the rest (selective disclosure). Comma-separated tool names that must appear in the agent's card. The presentation carries a re-signed, digests-only card plus openings for only the named capabilities; the others stay opaque. A disclosed presentation carries no transparency-log inclusion of its own (an ephemeral, privacy-preserving re-sign), so it omits the Merkle staple |
 
 ## `treeship verify-presentation`
 
@@ -1113,7 +1113,7 @@ treeship verify-presentation [OPTIONS] <PATH>
 
 ## `treeship history`
 
-An agent's work history: its transparency log filtered to signed session.v1 records, sortable and filterable. Each record's envelope is re-verified on this machine; anchored entries' Merkle inclusion is re-proved offline. History proves what was recorded, never everything that happened {/* claims:transparency-log-client-reverified */}
+An agent's work history: its transparency log filtered to signed session.v1 records, sortable and filterable. Each record's envelope is re-verified on this machine; logged entries' Merkle inclusion is re-proved offline. History proves what was recorded, never everything that happened
 
 ```
 treeship history [OPTIONS] <AGENT>

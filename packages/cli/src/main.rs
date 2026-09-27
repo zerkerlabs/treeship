@@ -182,7 +182,7 @@ enum Command {
     ///   treeship publish agent://deployer
     Publish(PublishArgs),
 
-    /// Audit an agent's transparency log from a Hub: re-verify each anchored
+    /// Audit an agent's transparency log from a Hub: re-verify each logged
     /// entry's inclusion offline and check completeness against its anchor
     ///
     /// Example:
@@ -398,7 +398,7 @@ enum Command {
 
     /// An agent's work history: its transparency log filtered to signed
     /// session.v1 records, sortable and filterable. Each record's envelope
-    /// is re-verified on this machine; anchored entries' Merkle inclusion
+    /// is re-verified on this machine; logged entries' Merkle inclusion
     /// is re-proved offline. History proves what was recorded, never
     /// everything that happened.
     ///
@@ -2423,7 +2423,7 @@ struct VerifyArgs {
     #[arg(long, default_value_t = false)]
     full: bool,
 
-    /// Fail unless every stretch of claimed work was externally witnessed
+    /// Fail unless every stretch of claimed work was externally confirmed
     /// within this long (e.g. 15m, 1h, 3600).
     ///
     /// A receipt's timestamp is the signer's own clock, signed with the
@@ -2634,8 +2634,9 @@ struct PresentCliArgs {
     /// Comma-separated tool names that must appear in the agent's card. The
     /// presentation carries a re-signed, digests-only card plus openings for
     /// only the named capabilities; the others stay opaque. A disclosed
-    /// presentation is not transparency-anchored (an ephemeral, privacy-
-    /// preserving re-sign), so it omits the Merkle staple.
+    /// presentation carries no transparency-log inclusion of its own
+    /// (an ephemeral, privacy-preserving re-sign), so it omits the Merkle
+    /// staple.
     #[arg(long, value_name = "CAPS", value_delimiter = ',')]
     disclose: Vec<String>,
 }
