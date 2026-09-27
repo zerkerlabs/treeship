@@ -24,10 +24,10 @@ This produces the first artifact in the chain.
 ### Continue the chain
 
 ```bash
-treeship wrap --parent $TREESHIP_LAST -- npm test
+treeship wrap -- npm test
 ```
 
-Each step chains to the previous via `--parent` or the `TREESHIP_PARENT` env var. `TREESHIP_LAST` is set automatically after every operation.
+No `--parent` needed for the common case: `wrap` auto-chains onto the previous artifact by reading the local `.last` file. `--parent <id>` overrides it explicitly, and `TREESHIP_PARENT` overrides `.last` but loses to an explicit `--parent`. There is no `TREESHIP_LAST` env var.
 </Step>
 <Step>
 ### Approve a sensitive step
@@ -39,9 +39,16 @@ treeship attest approval \
   --allowed-actor agent://deployer \
   --allowed-action deploy.production \
   --max-uses 1
+# -> prints the approval's nonce
 
-# Pass the nonce to the agent
-treeship wrap --parent $TREESHIP_LAST -- ./deploy.sh
+# Run the step, then bind it to the approval. wrap itself has no
+# --approval-nonce flag; attest action is what consumes the nonce.
+treeship wrap -- ./deploy.sh
+treeship attest action \
+  --actor agent://deployer \
+  --action deploy.production \
+  --approval-nonce <nonce-from-above> \
+  --parent <artifact-id-wrap-just-printed>
 ```
 </Step>
 <Step>
