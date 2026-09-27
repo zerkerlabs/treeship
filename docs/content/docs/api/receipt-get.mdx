@@ -50,7 +50,15 @@ Content-Type: application/json
 Cache-Control: public, max-age=86400, immutable
 ```
 
-The `immutable` cache directive reflects the fact that a receipt for a given `session_id` never changes. PUT is idempotent for the owning dock, and cross-dock overwrites are rejected with 403, so byte equality is guaranteed for the lifetime of the session id.
+The `immutable` cache directive reflects [write-once storage](/docs/api/receipt-put#write-once-not-overwrite): the owning dock's PUT is idempotent only for a byte-identical replay (anything else is a `409`), and a different dock's PUT is rejected with `403`, so a session id's bytes never change while the receipt is live -- except by the one deliberate exception, its publisher's own [takedown](/docs/api/receipt-delete), which clears the body for good and answers `410` from then on.
+
+### 400 Bad Request
+
+```json
+{ "error": "missing session_id in path" }
+```
+
+Also returned, with `"session_id too long"`, for a path parameter over 128 characters.
 
 ### 403 Forbidden
 
@@ -97,7 +105,8 @@ mv receipt.json verify-work/ssn.treeship/
 treeship package verify verify-work/ssn.treeship
 ```
 
-If `receipt.json` has been tampered with, the `determinism` and `merkle_root` checks will FAIL. A serving hub cannot forge a passing result.
+{/* claims:hub-cannot-forge-signed-verification */}
+The `determinism` and `merkle_root` checks here are self-consistency only, not a signature check, and cover only the artifact ids in `merkle`: they confirm the JSON round-trips and the stated root matches, not that the receipt is genuine. The timeline, side_effects, tool_usage and narrative are unsigned and untouched by either check -- a party who can write the stored bytes (a compromised hub, a MITM before TLS) can fabricate a receipt.json from scratch with correct internal hashes and pass both. The check that reaches a real, actor-signed anchor is the session's `record.json` (via `package verify`'s `receipt_binding` row), present only in a full `.treeship` package, never in a bare fetched `receipt.json`.
 
 ## Example
 

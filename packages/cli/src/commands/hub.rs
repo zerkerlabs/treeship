@@ -677,13 +677,25 @@ pub fn open(
         )));
     }
     if !is_hosted_endpoint(&entry.endpoint) {
-        printer.blank();
-        printer.info("this hub has no workspace UI; its workspace is JSON:");
-        printer.info(&format!(
-            "  {}/v1/workspace/{}",
+        let workspace = format!(
+            "{}/v1/workspace/{}",
             entry.endpoint.trim_end_matches('/'),
             entry.hub_id
-        ));
+        );
+        if printer.format == crate::printer::Format::Json {
+            printer.json(&serde_json::json!({
+                "status": "ok",
+                "hub": entry.hub_id,
+                "workspace_ui": serde_json::Value::Null,
+                "workspace_json": workspace,
+                "opened": false,
+                "message": "this hub has no workspace UI; its workspace is JSON",
+            }));
+            return Ok(());
+        }
+        printer.blank();
+        printer.info("this hub has no workspace UI; its workspace is JSON:");
+        printer.info(&format!("  {workspace}"));
         printer
             .hint("authenticate with your dock's DPoP key, or a share token from POST /v1/session");
         printer.blank();
@@ -713,10 +725,20 @@ pub fn open(
     //    hosted hub, the same origin family, so it travels nowhere else.
     let url = hosted_workspace_url(&entry.hub_id, token);
 
-    printer.blank();
-    printer.info(&url);
-    printer.hint("link is valid for 15 minutes");
-    printer.blank();
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "hub": entry.hub_id,
+            "workspace_ui": url,
+            "valid_for_s": 900,
+            "opened": !no_open,
+        }));
+    } else {
+        printer.blank();
+        printer.info(&url);
+        printer.hint("link is valid for 15 minutes");
+        printer.blank();
+    }
 
     if !no_open {
         #[cfg(target_os = "macos")]

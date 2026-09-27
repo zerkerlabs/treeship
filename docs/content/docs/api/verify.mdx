@@ -60,7 +60,8 @@ import { verifyReceipt } from '@treeship/verify';
 const result = await verifyReceipt('https://treeship.dev/receipt/ssn_abc');
 ```
 
-The browser verification page at `treeship.dev/verify/:id` still works — it runs the WASM verifier entirely client-side, so the Hub cannot forge a passing result.
+{/* claims:hub-cannot-forge-signed-verification */}
+`verifyReceipt()` is structural only -- the same self-consistency check `GET /v1/receipt/{session_id}` describes, not a signature check. For a real, actor-signed anchor, verify the full `.treeship` package's `record.json` with `package verify`, or verify a specific signed artifact by id instead: the browser verification page at `treeship.dev/verify/:id` runs the WASM verifier entirely client-side against your own trust roots, so the Hub cannot forge a passing result *for a named artifact* -- that guarantee doesn't extend to the receipt's own narrative fields.
 
 <Callout type="info">
 Note the verdict semantics: a fetched receipt can only earn `structural-pass` (Merkle structure is consistent; signatures and issuer are **not** verified). A full `pass` requires the original envelope bytes and your pinned trust roots — the local CLI path. See [CLI verify](/docs/cli/verify).
