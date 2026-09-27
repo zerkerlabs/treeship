@@ -23,15 +23,16 @@ Treeship ships an SDK for the languages most agent stacks are built in. **Every 
 
 ## Common shape
 
-The TypeScript SDK exposes three modules on the `Ship` client:
+The TypeScript SDK exposes four modules on the `Ship` client:
 
 | Module | Methods | What it does |
 |---|---|---|
 | `attest` | `action`, `decision`, `approval`, `handoff` | Sign an attestation (`endorsement` and typed `receipt` attestations are CLI-only for now: `treeship attest endorsement` / `treeship attest receipt`) |
 | `verify` | `verify`, `verifyReceipt`, `verifyCertificate`, `crossVerify` | Verify a local artifact via the CLI; verify receipts/certificates in-process via `@treeship/verify` |
 | `hub` | `push`, `pull`, `status` | Upload an artifact to the Hub, pull a remote one, check connection status |
+| `session` | `event` | Append a structured event to the active session's event log |
 
-The Python SDK maps the same operations to flat snake_case methods: `attest_action`, `attest_approval`, `attest_handoff`, `attest_decision`, `verify`, `hub_push`, `wrap`, `session_report`.
+The Python SDK maps the same operations to flat snake_case methods: `attest_action`, `attest_approval`, `attest_handoff`, `attest_decision`, `verify`, `hub_push`, `wrap`, `session_event`, `session_report`.
 
 The TypeScript SDK is the reference implementation; new methods land there first and propagate to Python and the bridges. Anything the SDKs don't wrap yet is still reachable by shelling out to the CLI directly.
 

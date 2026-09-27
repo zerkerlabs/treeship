@@ -9,7 +9,8 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 | Primitive | Usage |
 |-----------|-------|
-| Ed25519 | All artifact signatures |
+| Ed25519 | All artifact signatures, except Verifiable Intent |
+| ES256 (P-256) | Verifiable Intent (`vi`) statements -- JWS-compatible, see [Verifiable Intent](/docs/integrations/verifiable-intent) |
 | SHA-256 | Content-addressed artifact IDs, subject digests |
 | DSSE | Envelope format for all signed statements |
 | PAE | Pre-Authentication Encoding for deterministic signing |

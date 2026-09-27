@@ -75,7 +75,8 @@ pub fn attach(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
     let hub_name = name.unwrap_or("default");
-    let endpoint = endpoint.unwrap_or("https://api.treeship.dev").to_string();
+    // A trailing slash used to reach `//v1/dock/challenge`, a 404.
+    let endpoint = normalize_endpoint(endpoint.unwrap_or("https://api.treeship.dev"));
 
     // If a connection with stored keys exists, PROBE the hub before claiming
     // "reconnected". Cached keys can outlive the server's dock registration
@@ -663,6 +664,32 @@ pub fn open(
         .resolve_hub(hub)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
+    // Only the hosted hub has a workspace UI to open. A self-hosted hub
+    // answers JSON at /v1/workspace/{dock}; there is no page to send a
+    // browser to, so no share token is minted for it either (CLI-12: a
+    // local hub's token used to be pasted into a treeship.dev URL).
+    // The hosted hub speaks https only: a share token minted over plain
+    // http would travel in the clear, so such an endpoint is refused here.
+    if is_treeship_host(&host_of(&entry.endpoint)) && !entry.endpoint.starts_with("https://") {
+        return Err(crate::exit::usage(format!(
+            "hub endpoint {} names the hosted hub over plain http; use https://api.treeship.dev",
+            entry.endpoint
+        )));
+    }
+    if !is_hosted_endpoint(&entry.endpoint) {
+        printer.blank();
+        printer.info("this hub has no workspace UI; its workspace is JSON:");
+        printer.info(&format!(
+            "  {}/v1/workspace/{}",
+            entry.endpoint.trim_end_matches('/'),
+            entry.hub_id
+        ));
+        printer
+            .hint("authenticate with your dock's DPoP key, or a share token from POST /v1/session");
+        printer.blank();
+        return Ok(());
+    }
+
     // We need the dock's private key to DPoP-sign the session mint request.
     let hub_secret_hex = resolve_dpop_secret_hex(entry, &ctx.keys)?;
 
@@ -682,12 +709,9 @@ pub fn open(
         .as_str()
         .ok_or("hub did not return a session token")?;
 
-    // 2. Build the browser URL. The workspace UI lives on treeship.dev
-    //    regardless of which Hub endpoint minted the token.
-    let url = format!(
-        "https://treeship.dev/workspace/{}?session={}",
-        entry.hub_id, token,
-    );
+    // 2. The workspace UI on treeship.dev; the token was minted by the
+    //    hosted hub, the same origin family, so it travels nowhere else.
+    let url = hosted_workspace_url(&entry.hub_id, token);
 
     printer.blank();
     printer.info(&url);
@@ -794,17 +818,41 @@ pub(crate) fn share_url(endpoint: &str, returned: Option<&str>, api_path: &str) 
     let Some(returned) = returned.filter(|u| !u.is_empty()) else {
         return own;
     };
-    if is_treeship_host(host_of(returned)) && !is_treeship_host(host_of(endpoint)) {
+    if is_treeship_host(&host_of(returned)) && !is_treeship_host(&host_of(endpoint)) {
         return own;
     }
     returned.to_string()
 }
 
-fn host_of(url: &str) -> &str {
-    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    let rest = rest.split('/').next().unwrap_or("");
-    let rest = rest.rsplit('@').next().unwrap_or(rest);
-    rest.split(':').next().unwrap_or("")
+/// The hosted hub's workspace page for a dock, with a share token minted
+/// by that hub. Only ever built for a treeship.dev endpoint.
+pub(crate) fn hosted_workspace_url(hub_id: &str, token: &str) -> String {
+    format!("https://treeship.dev/workspace/{hub_id}?session={token}")
+}
+
+/// Is `endpoint` the hosted hub (a treeship.dev host)? Anything else, a
+/// local hub, another company's, or a URL smuggling credentials in front
+/// of a treeship.dev host, is self-hosted for every decision here.
+pub(crate) fn is_hosted_endpoint(endpoint: &str) -> bool {
+    endpoint.starts_with("https://") && is_treeship_host(&host_of(endpoint))
+}
+
+/// An endpoint as stored: scheme and authority as given, no trailing slash
+/// (paths are appended with their own `/`).
+pub(crate) fn normalize_endpoint(raw: &str) -> String {
+    raw.trim().trim_end_matches('/').to_string()
+}
+
+/// The host of `url` by a real parser, or "" when it does not parse or
+/// carries userinfo (`http://a@b`): a hand-rolled split once read the part
+/// after `@` as the host, which is not what every client connects to.
+fn host_of(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(u) if u.username().is_empty() && u.password().is_none() => {
+            u.host_str().unwrap_or("").to_string()
+        }
+        _ => String::new(),
+    }
 }
 
 fn is_treeship_host(host: &str) -> bool {
@@ -1304,5 +1352,30 @@ mod tests {
         let secret_hex = "ef".repeat(32);
         let entry = conn("hub_legacy", Some(secret_hex.clone()));
         assert_eq!(resolve_dpop_secret_hex(&entry, &keys).unwrap(), secret_hex);
+    }
+
+    #[test]
+    fn only_a_treeship_dev_endpoint_is_the_hosted_hub() {
+        assert!(is_hosted_endpoint("https://api.treeship.dev"));
+        assert!(is_hosted_endpoint("https://api.treeship.dev/"));
+        // The hosted hub over plain http is not "hosted": no token over http.
+        assert!(!is_hosted_endpoint("http://api.treeship.dev"));
+        assert!(!is_hosted_endpoint("http://127.0.0.1:8080/"));
+        assert!(!is_hosted_endpoint("https://hub.example.internal"));
+        // Credentials in front of a treeship.dev host: a parser disagrees
+        // with a split on `@` about the host, so it is never hosted.
+        assert!(!is_hosted_endpoint(
+            "http://127.0.0.1:18527@api.treeship.dev"
+        ));
+        assert!(!is_hosted_endpoint("not a url"));
+        assert_eq!(
+            hosted_workspace_url("dck_1", "tok"),
+            "https://treeship.dev/workspace/dck_1?session=tok"
+        );
+        assert_eq!(normalize_endpoint("http://host:8080/"), "http://host:8080");
+        assert_eq!(
+            normalize_endpoint(" http://host:8080// "),
+            "http://host:8080"
+        );
     }
 }

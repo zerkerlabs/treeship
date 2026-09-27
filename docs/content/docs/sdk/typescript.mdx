@@ -262,7 +262,7 @@ Check the current hub connection status.
 
 ```ts
 const status = await s.hub.status();
-if (status.attached) {
+if (status.connected) {
   console.log(`Connected to ${status.endpoint}`);
 }
 ```
@@ -271,11 +271,11 @@ if (status.attached) {
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `attached` | `boolean` | Whether the hub connection is currently active |
+| `connected` | `boolean` | Whether the hub connection is currently active |
 | `endpoint` | `string \| undefined` | Hub endpoint URL, if connected |
 | `hubId` | `string \| undefined` | Hub connection identifier, if connected |
 
-If the status check fails for any reason (CLI not installed, no config), returns `{ attached: false }` instead of throwing.
+If the status check fails for any reason (CLI not installed, no config), returns `{ connected: false }` instead of throwing.
 
 ## Exported types
 

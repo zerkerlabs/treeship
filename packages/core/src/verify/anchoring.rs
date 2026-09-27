@@ -8,8 +8,11 @@
 //! controlling its own clock can emit a chain claiming any timeline it likes.
 //!
 //! What constrains a timeline is an **anchor**: a record, held by someone
-//! other than the actor, that a given digest existed at a given time. A Hub
-//! checkpoint, a Rekor entry, an OpenTimestamps attestation. Anchors cannot be
+//! other than the actor, that a given digest existed at a given time. Today
+//! that means a per-artifact Rekor entry, verified offline against a pinned
+//! transparency-log key -- a Hub checkpoint alone is not one (it is signed
+//! only by the publisher, never countersigned by the hub), and OpenTimestamps
+//! / checkpoint-root anchoring are design, not implemented. Anchors cannot be
 //! obtained retroactively, so work that happened between two anchors is
 //! bracketed by them.
 //!

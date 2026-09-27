@@ -29,7 +29,7 @@ Treeship produces evidence: every **captured** action becomes a signed, timestam
 
 ## The 60-second local demo
 
-No account, no server — and after the install, no network. Every output block below is real, captured from v0.24.
+No account, no server — and after the install, no network. Every output block below is real CLI output, captured against a real release; exact artifact ids and digests will differ on yours.
 
 ```bash
 npm install -g treeship
@@ -289,7 +289,7 @@ The CLI is distributed via npm + [GitHub Releases](https://github.com/zerkerlabs
 
 ## SDK examples
 
-Both SDKs shell out to the `treeship` binary for signing — install the CLI and run `treeship init` first. These examples run as written against v0.24.
+Both SDKs shell out to the `treeship` binary for signing — install the CLI and run `treeship init` first.
 
 ### TypeScript (`@treeship/sdk`)
 
@@ -336,7 +336,7 @@ print(f"Outcome: {verified.outcome}, chain: {verified.chain} artifacts")
 Treeship builds on existing primitives rather than inventing cryptography:
 
 - **DSSE** (Dead Simple Signing Envelope) with PAE — compatible with the Sigstore / in-toto ecosystem
-- **Ed25519** (RFC 8032) for all signatures
+- **Ed25519** (RFC 8032) for all signatures except Verifiable Intent, which uses ES256 (P-256) for JWS compatibility
 - **SHA-256** for content addressing and the Merkle tree
 - Signing serializes statements as compact JSON with deterministic (declaration-order) fields — a fixed canonical form, though not full RFC 8785/JCS
 
@@ -357,12 +357,13 @@ The current release is the latest tag on [GitHub Releases](https://github.com/ze
 - Sealed session packages verified signature-first (`package verify`, v0.31.2+), with the close record bound into the package (v0.31.4)
 - Workload packet and recomputation receipts, evaluation receipts, the agent graph written from spawn events, a Claude Code gate and a kill switch (v0.31.5+)
 - Linux ARM64 binary (aarch64 musl), built and smoke-tested in the release workflow
+- Per-artifact Rekor anchoring (v0.31.9): a pushed artifact's dsse entry in Sigstore's transparency log, verified offline against the entry's signed timestamp, inclusion proof and checkpoint
 
 **Experimental, explicitly non-authoritative**
 - Zero-knowledge proofs: the prior Groth16 path was found unsound and is **quarantined**; a statement-first private-verification design supersedes it. Nothing in the default trust path depends on ZK. [Honest status](https://docs.treeship.dev/docs/concepts/zero-knowledge).
 
 **Open**
-- Transparent MCP forwarder mode · Anthropic plugin-directory listing · external time anchors (Rekor, OpenTimestamps) · an independent third-party security audit
+- Transparent MCP forwarder mode · Anthropic plugin-directory listing · anchoring a room or checkpoint root itself (RFC 3161, OpenTimestamps) -- per-artifact Rekor anchoring already shipped, see above · an independent third-party security audit
 - Not planned: native Windows (use WSL) — [open an issue](https://github.com/zerkerlabs/treeship/issues) with a strong use case
 
 ## Security history

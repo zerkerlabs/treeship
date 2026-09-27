@@ -228,7 +228,14 @@ pub fn remove(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
     let agents_dir = cards::agents_dir_for(&ctx.config_path);
+    // "removed" for a card that was never there read as success (exit 0).
+    if !cards::card_path(&agents_dir, agent_id).is_file() {
+        return Err(format!(
+            "no agent card {agent_id} in this workspace (see `treeship agents list`)"
+        )
+        .into());
+    }
     cards::remove(&agents_dir, agent_id)?;
-    printer.dim_info(&format!("  removed agent card {agent_id}"));
+    printer.success(&format!("removed agent card {agent_id}"), &[]);
     Ok(())
 }
