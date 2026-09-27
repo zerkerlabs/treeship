@@ -24,7 +24,7 @@ Other additions across the two versions:
 
 - Schemas `treeship/approval-use/v1`, `treeship/approval-revocation/v1`, and `treeship/journal-checkpoint/v1`, each with a `previous_record_digest` chain link and a `record_digest`.
 - The journal at `<config>/journals/approval-use/`, where records are truth and the `by_grant` and `by_nonce` indexes are cache rebuilt on startup.
-- `treeship journal list` and `treeship journal inspect`, both read-only.
+- `treeship journal list` and `treeship journal inspect`, both read-only. (Editor's note, 2026-09-27: there is no top-level `journal` command today; the read-only surface is `treeship approval` -- `uses`, `status`, and `journal verify`.)
 - `approvals/uses/` and `approvals/checkpoints/` exported into the `.treeship` package.
 - An Approval Authority panel and Decision Cards v0 in `treeship package inspect`.
 - In 0.9.10, three new verify rows: `approval-use-action-binding`, `approval-use-nonce-binding`, and `approval-use-chain-continuity`; the old `approval-use-integrity` row is renamed `approval-use-record-digest`.

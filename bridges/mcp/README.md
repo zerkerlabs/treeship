@@ -31,7 +31,7 @@ npm install -g treeship
 treeship package verify <path-to-receipt.treeship>
 ```
 
-The verify command is pure WASM — it does not phone home and does not require the hub. So once you have a receipt (your own or someone else's), you can confirm exactly what was captured, by whom, and that the signatures hold, entirely offline.
+`package verify` is the native CLI verifier -- it does not phone home and does not require the hub. (A separate WASM build, `@treeship/core-wasm` / `@treeship/verify`, does the same signature and Merkle checks in a browser; that's what runs the receipt page, not this command.) So once you have a receipt (your own or someone else's), you can confirm exactly what was captured, by whom, and that the signatures hold, entirely offline.
 
 ## Two ways to use it
 
@@ -49,7 +49,7 @@ The verify command is pure WASM — it does not phone home and does not require 
 }
 ```
 
-The server exposes 5 tools your agent can call: `treeship_session_status`, `treeship_session_event`, `treeship_attest_action`, `treeship_verify`, `treeship_session_report`. Use these to read or write the active Treeship session from any MCP-compatible client.
+The server exposes 9 tools your agent can call: `treeship_session_status`, `treeship_session_event`, `treeship_attest_action`, `treeship_verify`, `treeship_session_report`, `treeship_mint_challenge`, `treeship_present`, `treeship_verify_presentation`, `treeship_attest_handoff`. Use these to read or write the active Treeship session, or to run the A2A liveness handshake, from any MCP-compatible client.
 
 **As a library** — wrap your existing MCP client. Every `callTool()` gets signed automatically.
 
@@ -122,7 +122,6 @@ All three are automatic. The signed artifacts are Merkle-proven. The session eve
 | `TREESHIP_DISABLE=1` | Full passthrough, zero attestation |
 | `TREESHIP_ACTOR` | Override default actor URI. Start the session with the same `--actor`: a receipt by the session's actor chains onto the session, one by another actor is sealed loose and `package verify` warns under `chain_completeness` |
 | `TREESHIP_APPROVAL_NONCE` | Bind all calls to an approval |
-| `TREESHIP_DEBUG=1` | Log attestation failures to stderr |
 | `TREESHIP_STRICT=1` | A signing failure fails the tool call; a halt check that cannot run refuses it |
 | `TREESHIP_MODEL` | Model name for cost tracking (via `treeship wrap`) |
 | `TREESHIP_TOKENS_IN` | Input token count (via `treeship wrap`) |
@@ -148,7 +147,7 @@ For read-only consumers (dashboards, third-party MCP audit tools) that only need
 
 ## Design rules
 
-- Treeship errors **never** fail the underlying tool call
+- A signing/attestation error fails open by default: the tool call still completes. `TREESHIP_STRICT=1` fails closed instead. A standing halt (`treeship halt <actor>`) always refuses the call, regardless of `TREESHIP_STRICT`
 - Only hashes are stored, **never** raw content
 - Intent attestation is **awaited** (proof of what was about to happen)
 - Receipt attestation is **fire-and-forget** (never blocks response)

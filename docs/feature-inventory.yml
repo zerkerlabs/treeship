@@ -540,7 +540,7 @@
     - docs/content/docs/concepts/trust-model.mdx
   tests:
     - packages/core/src/trust/mod.rs
-  notes: "Pinned issuer keys, one power per pin since the v0.19 split: agent_cert / cert_issuer / hub_checkpoint / hub_org / revoker / session_host. The old `ship` kind is inert."
+  notes: "Pinned issuer keys, one power per pin since the v0.19 split: agent_cert / cert_issuer / hub_checkpoint / hub_org / revoker / session_host / transparency_log. The old `ship` kind is inert."
 
 - id: approval-use-journal
   name: Approval Use Journal
@@ -1046,7 +1046,7 @@
   name: ZK -- Circom native pure-Rust (ark-circom)
   section: zk
   status: roadmap
-  notes: "Scaffolded at packages/zk-circom/src/native.rs. ark-bn254/ark-groth16/ark-circom version alignment unresolved; native feature is commented out in Cargo.toml."
+  notes: "No native.rs exists (packages/zk-circom/src has only lib.rs and prover.rs). The native feature and its ark-bn254/ark-groth16/ark-circom deps are entirely commented out in Cargo.toml, not just feature-gated -- there is no scaffolding to build against yet, only the commented-out dependency lines."
 
 - id: zk-risc0-bonsai
   name: ZK -- RISC Zero Bonsai (hosted proving)

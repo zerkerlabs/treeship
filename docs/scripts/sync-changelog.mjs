@@ -104,7 +104,22 @@ const archive = `
 
 Read the [complete release history](https://github.com/zerkerlabs/treeship/blob/main/CHANGELOG.md) in the repository.
 `;
+const rendered = FRONTMATTER + "\n" + body + archive;
+
+if (process.argv.includes("--check")) {
+  const current = await readFile(OUT, "utf8").catch(() => "");
+  if (current !== rendered) {
+    console.error(
+      "about/changelog.mdx is out of date with CHANGELOG.md.\n" +
+        "Run: cd docs && npm run sync:changelog",
+    );
+    process.exit(1);
+  }
+  console.log(`sync-changelog: about/changelog.mdx current with ${SRC}`);
+  process.exit(0);
+}
+
 await mkdir(dirname(OUT), { recursive: true });
-await writeFile(OUT, FRONTMATTER + "\n" + body + archive);
+await writeFile(OUT, rendered);
 console.log(`sync-changelog: wrote ${OUT}`);
 console.log(`  source: ${SRC}`);

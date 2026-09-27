@@ -1,7 +1,7 @@
 ---
 name: treeship
-description: Signed session receipts for every OpenClaw task (v0.9.4)
-version: 0.9.4
+description: Signed session receipts for every OpenClaw task
+version: 1.0.0
 author: Zerker Labs
 homepage: https://treeship.dev
 openclaw:
@@ -18,7 +18,7 @@ requires:
 
 Generate signed, verifiable session receipts for every OpenClaw task. Each receipt captures what happened, who did it, what changed, and provides cryptographic proof that the record is trustworthy.
 
-**Current version: 0.9.4** — Rust core, 161 tests passing, Ed25519 DSSE envelopes, offline verification.
+Rust core, Ed25519 DSSE envelopes, offline verification. Run `treeship --version` to see what's installed.
 
 ## Quick Setup
 

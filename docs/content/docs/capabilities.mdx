@@ -310,12 +310,13 @@ treeship session invite <session-id> --invitee-pubkey ed25519:…
 
 ## Layer 5: Transparency log
 
-An append-only, monitorable history of an agent's receipts, with tampering detectable. This is Certificate Transparency, for agents.
+An append-only, monitorable history of an agent's receipts, with tampering detectable -- modeled on the Certificate Transparency idea (a public, auditable log), though without CT's independent monitors or gossip protocol: today there is one hub-controlled log per hub, not a federated set of logs cross-checking each other.
 
 ### Publish and anchor
 `Since 0.14.0`  ·  network
 
-**What:** `publish` pushes an agent's resolvable set to a hub. `merkle checkpoint` + `merkle publish` seal a signed Merkle root over your artifacts and push per-artifact inclusion proofs. The hub stores; it never generates or verifies. Checkpoints are computed publisher-side.
+{/* claims:checkpoint-not-witnessed */}
+**What:** `publish` pushes an agent's resolvable set to a hub. `merkle checkpoint` + `merkle publish` seal a signed Merkle root over your artifacts and push per-artifact inclusion proofs. Checkpoints are computed and signed publisher-side; the hub verifies the checkpoint's signature before storing it, and rejects one that doesn't verify, but never signs or countersigns a checkpoint itself.
 
 **Use:**
 ```bash
@@ -518,7 +519,8 @@ echo "exit: $?"   # non-zero if a hostile verdict was detected
 ### Self-healing keystore
 `Since 0.16.0`
 
-**What:** The machine key wrapping your private keys derives from a hardware identifier, so a hostname or username change no longer bricks the keystore. Older keystores are recovered automatically and re-wrapped.
+{/* claims:keystore-at-rest */}
+**What:** The key wrapping your private keys derives primarily from a secret seed file stored beside the keystore, not from a hardware identifier -- a non-secret machine identifier is mixed in only as a binding salt, kept for decrypt-only migration of pre-AUD-19 keystores. A hostname or username change no longer bricks the keystore. Older keystores are recovered automatically and re-wrapped.
 
 ### Store visibility
 `Since 0.18.0`

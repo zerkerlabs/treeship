@@ -1394,7 +1394,7 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
     // attest sign-on-submit, exactly as before (backward compatible). This
     // runs before signing and does not touch the signature path.
     treeship_core::predicates::validate(&args.kind, payload_val.as_ref())
-        .map_err(|e| format!("predicate validation failed: {e}"))?;
+        .map_err(|e| crate::exit::usage(format!("predicate validation failed: {e}")))?;
 
     let mut stmt = ReceiptStatement::new(&args.system, &args.kind);
     stmt.payload = payload_val;

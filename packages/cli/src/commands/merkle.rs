@@ -137,17 +137,81 @@ pub fn checkpoint_with(
     publish_after: bool,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    seal_checkpoint(config, printer)?;
-    if publish_after {
-        publish(config, printer)?;
+    let sealed = seal_checkpoint(config, printer)?;
+    let json = printer.format == crate::printer::Format::Json;
+    if !json {
+        print_sealed(&sealed, printer);
+    }
+    let published = if publish_after {
+        Some(publish_report(config, printer)?)
+    } else {
+        None
+    };
+    if json {
+        // One document, whatever was asked for: the checkpoint, and the
+        // publish result under `publish` when --publish ran. In 0.31.10 the
+        // JSON was identical with or without --publish, so a caller could
+        // not tell from the document that anything reached the hub.
+        let mut doc = sealed.to_json();
+        if let Some(report) = &published {
+            doc["publish"] = report.to_json();
+        }
+        printer.json(&doc);
+    } else if let Some(report) = &published {
+        print_published(report, printer);
     }
     Ok(())
+}
+
+/// What `checkpoint` sealed, for the text and JSON views.
+struct Sealed {
+    cp: Checkpoint,
+    file: PathBuf,
+}
+
+impl Sealed {
+    fn to_json(&self) -> serde_json::Value {
+        // Full-length root and real numbers: the text view shortens the
+        // root for the eye, but a script needs the whole hash.
+        serde_json::json!({
+            "status": "ok",
+            "index": self.cp.index,
+            "root": self.cp.root,
+            "tree_size": self.cp.tree_size,
+            "height": self.cp.height,
+            "signer": self.cp.signer,
+            "signed_at": self.cp.signed_at,
+            "file": self.file,
+        })
+    }
+}
+
+fn print_sealed(sealed: &Sealed, printer: &Printer) {
+    let cp = &sealed.cp;
+    let root_short = short_hash(&cp.root);
+    printer.success(
+        "checkpoint sealed",
+        &[
+            ("index", &format!("#{:04}", cp.index)),
+            ("root", &format!("sha256:{}", root_short)),
+            ("artifacts", &cp.tree_size.to_string()),
+            ("height", &cp.height.to_string()),
+            ("signed", &format!("{}  (ed25519)", cp.signer)),
+            ("time", &cp.signed_at),
+        ],
+    );
+    printer.blank();
+    printer.hint("treeship merkle proof <artifact_id>");
+    // The whole root: a hint that truncates it hands the reader an argument
+    // `merkle verify` rejects.
+    printer.hint(&format!("treeship merkle verify {} <proof.json>", cp.root));
 }
 
 fn seal_checkpoint(
     config: Option<&str>,
     printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Sealed, Box<dyn std::error::Error>> {
+    let _ = printer;
     let ctx = ctx::open(config)?;
     let (tree, _artifact_ids) = build_tree(&ctx)?;
 
@@ -169,43 +233,10 @@ fn seal_checkpoint(
     // Save latest.json (copy, not symlink, for portability)
     crate::safe_fs::write_under_treeship(&cp_dir.join("latest.json"), &cp_json, 0o600)?;
 
-    if printer.format == crate::printer::Format::Json {
-        // Full-length root and real numbers: the text view shortens the
-        // root for the eye, but a script needs the whole hash.
-        printer.json(&serde_json::json!({
-            "status": "ok",
-            "index": cp.index,
-            "root": cp.root,
-            "tree_size": cp.tree_size,
-            "height": cp.height,
-            "signer": cp.signer,
-            "signed_at": cp.signed_at,
-            "file": cp_dir.join(&filename),
-        }));
-        return Ok(());
-    }
-
-    let root_short = short_hash(&cp.root);
-
-    printer.success(
-        "checkpoint sealed",
-        &[
-            ("index", &format!("#{:04}", cp.index)),
-            ("root", &format!("sha256:{}", root_short)),
-            ("artifacts", &cp.tree_size.to_string()),
-            ("height", &cp.height.to_string()),
-            ("signed", &format!("{}  (ed25519)", cp.signer)),
-            ("time", &cp.signed_at),
-        ],
-    );
-    printer.blank();
-    printer.hint("treeship merkle proof <artifact_id>");
-    printer.hint(&format!(
-        "treeship merkle verify sha256:{}... <proof.json>",
-        root_short
-    ));
-
-    Ok(())
+    Ok(Sealed {
+        cp,
+        file: cp_dir.join(&filename),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -682,7 +713,114 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
 // treeship merkle publish
 // ---------------------------------------------------------------------------
 
+/// What `merkle publish` did, for the text and JSON views.
+pub(crate) struct PublishReport {
+    index: u64,
+    root: String,
+    hub_checkpoint_id: i64,
+    proofs_published: u64,
+    local_only: u64,
+    consistency: Consistency,
+    share_url: Option<String>,
+}
+
+/// The consistency proof from the previous checkpoint: published, or why
+/// not. Never a failure of the publish itself.
+enum Consistency {
+    Published {
+        from_index: u64,
+        from_size: usize,
+        to_size: usize,
+    },
+    NotApplicable(&'static str),
+    Failed(String),
+}
+
+impl PublishReport {
+    fn to_json(&self) -> serde_json::Value {
+        let consistency = match &self.consistency {
+            Consistency::Published {
+                from_index,
+                from_size,
+                to_size,
+            } => serde_json::json!({
+                "status": "published",
+                "from_index": from_index,
+                "from_size": from_size,
+                "to_size": to_size,
+            }),
+            Consistency::NotApplicable(why) => {
+                serde_json::json!({"status": "not_applicable", "reason": why})
+            }
+            Consistency::Failed(e) => serde_json::json!({"status": "failed", "error": e}),
+        };
+        serde_json::json!({
+            "status": "ok",
+            "index": self.index,
+            "root": self.root,
+            "hub_checkpoint_id": self.hub_checkpoint_id,
+            "proofs_published": self.proofs_published,
+            "local_only": self.local_only,
+            "consistency": consistency,
+            "share_url": self.share_url,
+        })
+    }
+}
+
+fn print_published(report: &PublishReport, printer: &Printer) {
+    printer.info(&format!(
+        "  {} {} proofs published",
+        printer.green("ok"),
+        report.proofs_published
+    ));
+    if report.local_only > 0 {
+        printer.hint(&format!(
+            "{} local-only artifacts skipped (push them first if their proofs should be public)",
+            report.local_only
+        ));
+    }
+    match &report.consistency {
+        Consistency::Published {
+            from_index,
+            from_size,
+            to_size,
+        } => printer.info(&format!(
+            "  {} consistency proof published (#{:04} → #{:04}, tree_size {} → {})",
+            printer.green("ok"),
+            from_index,
+            report.index,
+            from_size,
+            to_size
+        )),
+        Consistency::NotApplicable(why) => {
+            if *why != "first checkpoint" {
+                printer.hint(&format!("consistency proof skipped: {why}"));
+            }
+        }
+        Consistency::Failed(e) => printer.hint(&format!("consistency proof not published: {e}")),
+    }
+    printer.blank();
+    if let Some(url) = &report.share_url {
+        printer.hint(&format!("{url}  (any artifact is now verifiable via Hub)"));
+    }
+    printer.blank();
+}
+
 pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    let report = publish_report(config, printer)?;
+    if printer.format == crate::printer::Format::Json {
+        // 0.31.10 wrote nothing at all here on success.
+        printer.json(&report.to_json());
+    } else {
+        print_published(&report, printer);
+    }
+    Ok(())
+}
+
+fn publish_report(
+    config: Option<&str>,
+    printer: &Printer,
+) -> Result<PublishReport, Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
 
     let (_hub_name, hub_entry) = ctx
@@ -824,42 +962,29 @@ pub fn publish(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn st
         }
     }
 
-    printer.info(&format!(
-        "  {} {} proofs published",
-        printer.green("ok"),
-        published_count
-    ));
-    if local_only_count > 0 {
-        printer.hint(&format!(
-            "{} local-only artifacts skipped (push them first if their proofs should be public)",
-            local_only_count
-        ));
-    }
-
     // 4. Publish a consistency proof from the previous checkpoint (3b): proves
     //    this checkpoint's tree EXTENDS the previous one (append-only, no
     //    rewrite). Best-effort: a failure here never blocks proof publishing.
-    if let Err(e) = publish_consistency(
+    let consistency = match publish_consistency(
         &checkpoint,
         &artifact_ids,
         endpoint,
         hub_id,
         &hub_secret_hex,
-        printer,
     ) {
-        printer.hint(&format!("consistency proof not published: {e}"));
-    }
-    printer.blank();
-
-    if let Some(first_id) = first_published_id {
-        printer.hint(&format!(
-            "{}  (any artifact is now verifiable via Hub)",
-            proof_share_url(endpoint, first_id)
-        ));
-    }
-    printer.blank();
-
-    Ok(())
+        Ok(c) => c,
+        Err(e) => Consistency::Failed(e.to_string()),
+    };
+    let share_url = first_published_id.map(|id| proof_share_url(endpoint, id));
+    Ok(PublishReport {
+        index: checkpoint.index,
+        root: checkpoint.root.clone(),
+        hub_checkpoint_id,
+        proofs_published: published_count,
+        local_only: local_only_count,
+        consistency,
+        share_url,
+    })
 }
 
 /// What to tell a reader whose checkpoint signer is not pinned. Both values
@@ -934,17 +1059,18 @@ fn publish_consistency(
     endpoint: &str,
     hub_id: &str,
     hub_secret_hex: &str,
-    printer: &Printer,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Consistency, Box<dyn std::error::Error>> {
     let Some(prev) = load_prev_checkpoint(checkpoint.index)? else {
-        return Ok(()); // first checkpoint: nothing to extend from
+        return Ok(Consistency::NotApplicable("first checkpoint"));
     };
     let from_size = prev.tree_size;
     let to_size = checkpoint.tree_size;
     // A consistency proof only makes sense for a forward, non-empty extension
     // whose leaves we actually hold.
     if from_size == 0 || from_size > to_size || to_size > artifact_ids.len() {
-        return Ok(());
+        return Ok(Consistency::NotApplicable(
+            "the previous checkpoint is not a prefix of this one",
+        ));
     }
 
     // Rebuild the tree EXACTLY as it was at this checkpoint (first `to_size`
@@ -958,19 +1084,22 @@ fn publish_consistency(
     // than push a proof that cannot verify.
     let computed_root = match cp_tree.root() {
         Some(r) => hex::encode(r),
-        None => return Ok(()),
+        None => return Ok(Consistency::NotApplicable("empty tree")),
     };
     let cp_root = checkpoint
         .root
         .strip_prefix("sha256:")
         .unwrap_or(&checkpoint.root);
     if computed_root != cp_root {
-        printer.hint("consistency proof skipped: tree does not match checkpoint root (re-checkpoint before publishing)");
-        return Ok(());
+        return Ok(Consistency::NotApplicable(
+            "tree does not match checkpoint root (re-checkpoint before publishing)",
+        ));
     }
 
     let Some(proof) = cp_tree.consistency_proof(from_size) else {
-        return Ok(());
+        return Ok(Consistency::NotApplicable(
+            "no consistency proof for this extension",
+        ));
     };
 
     let from_root = prev.root.strip_prefix("sha256:").unwrap_or(&prev.root);
@@ -991,15 +1120,11 @@ fn publish_consistency(
         .set("DPoP", &dpop_jwt)
         .send_json(&body)?;
 
-    printer.info(&format!(
-        "  {} consistency proof published (#{:04} → #{:04}, tree_size {} → {})",
-        printer.green("ok"),
-        prev.index,
-        checkpoint.index,
+    Ok(Consistency::Published {
+        from_index: prev.index,
         from_size,
-        to_size
-    ));
-    Ok(())
+        to_size,
+    })
 }
 
 // ---------------------------------------------------------------------------

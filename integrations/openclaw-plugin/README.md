@@ -23,8 +23,10 @@ copy instead:
 cd integrations/openclaw-plugin
 npm install
 npm run build
-openclaw plugins install --local ./
+openclaw plugins install ./
 ```
+
+(`--local` is not a real `openclaw plugins install` flag on 2026.2.23 or 2026.9.6 -- passing a path directly is the working route, tested as `Installed plugin: treeship`.)
 
 Once published, the registry one-liner will be:
 

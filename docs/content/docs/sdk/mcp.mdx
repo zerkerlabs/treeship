@@ -54,7 +54,11 @@ For every `callTool()` invocation, the bridge produces two attestations:
 Arguments and results are never stored directly. Only their SHA-256 digests enter the artifact. The digest proves which data was involved without exposing the data itself.
 </Callout>
 
-If attestation fails for any reason (CLI not installed, network issue, signing error), the tool call still completes normally. Treeship never breaks your MCP workflow.
+If attestation fails for any reason (CLI not installed, network issue, signing error), the tool call still completes normally -- unless `TREESHIP_STRICT=1` is set, in which case a signing failure throws instead. This fail-open default is separate from the halt check below, which can refuse a call outright regardless of `TREESHIP_STRICT`.
+
+## The kill switch (halt)
+
+Before every `callTool()`, the client checks `treeship halt list` for the calling actor (or `*`). A standing halt refuses the call before it reaches the wrapped MCP client, signs the refusal as `blocked.v1`, and throws `TreeshipHaltedError` -- this one does break the call, always, by design. If the halt check itself cannot run (no CLI on `PATH`, or a CLI too old to have `halt`), the client fails open by default (prints a one-time warning to stderr and proceeds) or, under `TREESHIP_STRICT=1`, refuses instead.
 
 ## Result metadata
 
@@ -96,7 +100,9 @@ If receipt attestation fails (CLI not installed, signing error, network issue), 
 | `TREESHIP_DISABLE=1` | Disable all attestation. Pure passthrough to the upstream MCP client. |
 | `TREESHIP_ACTOR` | Override the default actor URI (default: `agent://mcp-{clientName}`) |
 | `TREESHIP_APPROVAL_NONCE` | Attach an approval nonce to intent attestations |
-| `TREESHIP_DEBUG=1` | Log all attestation activity to stderr |
+| `TREESHIP_STRICT=1` | Fail closed instead of open: a halt check that can't run refuses the call, and a signing failure throws instead of letting the tool call proceed unattested |
+
+There is no `TREESHIP_DEBUG`; nothing in the bridge or SDK reads it.
 
 ## Actor naming
 
@@ -118,3 +124,21 @@ export TREESHIP_APPROVAL_NONCE=abc123
 ```
 
 This is useful when a human reviews and approves a planned action before the agent executes it.
+
+## The treeship-mcp server
+
+Everything above is the wrapped **client** -- for attesting calls your agent makes *to* other MCP servers. `@treeship/mcp` also ships an MCP **server** (`bridges/mcp/src/server.ts`) exposing Treeship's own operations as tools, so any MCP-speaking client can attest, verify, and hand off *as* Treeship. It registers 9 tools:
+
+| Tool | What it does |
+|---|---|
+| `treeship_session_status` | Current session state |
+| `treeship_session_event` | Append a structured event to the session timeline |
+| `treeship_attest_action` | Sign an action attestation |
+| `treeship_verify` | Verify an artifact or chain |
+| `treeship_session_report` | Publish the session report |
+| `treeship_mint_challenge` | Mint a liveness-check challenge nonce |
+| `treeship_present` | Present this agent's proof (respond to a challenge) |
+| `treeship_verify_presentation` | Verify another agent's presentation |
+| `treeship_attest_handoff` | Record a handoff, and how custody was established |
+
+This is the same tool set the [Claude Code plugin](/docs/integrations/claude-code) bundles for `treeship_mint_challenge`/`treeship_present`/`treeship_verify_presentation`/`treeship_attest_handoff`-style A2A verification from inside a session.

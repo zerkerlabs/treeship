@@ -255,6 +255,17 @@ jobs:
           npm install --no-save --ignore-scripts --no-audit --no-fund yaml@^2.9.0
           node scripts/sync-feature-matrix.mjs --check
 
+      # about/changelog.mdx is generated from CHANGELOG.md at build time
+      # (prebuild), so the copy committed to git is only ever a snapshot --
+      # nothing enforced it stayed current. A retest found the committed page
+      # missing an entire release section and, separately, the underlying
+      # CHANGELOG.md source still carrying repo-relative links that had
+      # already 404'd once and been "fixed" only in a later summary bullet,
+      # not the original entries. This closes both: it fails if the
+      # committed page and a fresh render of CHANGELOG.md disagree at all.
+      - name: Generated changelog page matches CHANGELOG.md
+        run: cd docs && node scripts/sync-changelog.mjs --check
+
       # The 2026-08 docs audit found five internal links that 404'd live, three
       # hub endpoints with no page at all, a predicate registry half
       # undocumented, and an event table where only three of seventeen names

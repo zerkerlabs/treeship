@@ -1,8 +1,8 @@
 # Work History: a verifiable track record for agents
 
-**Status:** draft, not implemented
+**Status:** Largely shipped -- `treeship history <agent>` and `treeship profile <agent> [--attest]` both exist, and their `--help` text matches this doc's own description almost verbatim. Body not re-audited section by section against 0.31.10.
 **Pairs with:** [transparency-log](./transparency-log.md), [agent-capability-cards](./agent-capability-cards.md), [capability-provenance](./capability-provenance.md), [agent-resolver](./agent-resolver.md)
-**Last updated:** 2026-07-06
+**Last updated:** 2026-07-06 (status line updated 2026-09-27 against v0.31.10)
 
 ## The shift
 
