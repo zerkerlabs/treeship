@@ -434,11 +434,17 @@ jobs:
           - name: core-wasm wasm32-unknown-unknown
             run: cargo check -p treeship-core-wasm --target wasm32-unknown-unknown
             targets: wasm32-unknown-unknown
+          # PKG-3: the lints differ by target (std::fs::File has no Drop on
+          # wasm32, so a `drop(file)` that is fine on the host fails here).
+          - name: core-wasm wasm32-unknown-unknown clippy
+            run: cargo clippy -p treeship-core-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
+            targets: wasm32-unknown-unknown
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving branch; pinned to current tip)
         with:
           targets: ${{ matrix.targets }}
+          components: clippy
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
         with:
           key: feature-matrix-${{ matrix.name }}

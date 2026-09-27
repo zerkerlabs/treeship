@@ -73,6 +73,7 @@ cmd_prepare() {
   # its integrity hash are deliberately left alone until after publish.
   echo "Updating npm lockfiles..."
   for pkg in packages/verify-js packages/sdk-ts bridges/mcp bridges/a2a \
+           integrations/openclaw-plugin \
            tests/runtime-acceptance/aws-lambda \
            tests/runtime-acceptance/cloudflare-worker \
            tests/runtime-acceptance/vercel-edge; do
@@ -223,6 +224,7 @@ EOF
 cmd_refresh_lockfiles() {
   local failed=0
   for pkg in packages/verify-js packages/sdk-ts bridges/mcp bridges/a2a \
+           integrations/openclaw-plugin \
            tests/runtime-acceptance/aws-lambda \
            tests/runtime-acceptance/cloudflare-worker \
            tests/runtime-acceptance/vercel-edge; do

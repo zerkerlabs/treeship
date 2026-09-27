@@ -75,6 +75,20 @@ def main(argv):
     # @treeship/core-wasm is how three runtime-acceptance lockfiles sat five
     # releases behind on @treeship/verify without anything noticing.
     moved = []
+    # The lockfile names the package's own version twice; `npm install
+    # --package-lock-only` would have stamped both, and check-lockfile-sync
+    # compares them with package.json (the OpenClaw plugin's read 0.10.3 at
+    # 0.31.10). Stamp them here too, or every release fails that check.
+    pkg_json = pkg_dir / "package.json"
+    own = None
+    if pkg_json.is_file():
+        with open(pkg_json, encoding="utf-8") as f:
+            own = json.load(f).get("version")
+    if own:
+        for label, holder, key in (("version", lock, "version"), ("root entry version", root, "version")):
+            if holder.get(key) not in (None, own):
+                moved.append(f"{label} {holder[key]} -> {own}")
+                holder[key] = own
     for section in ("dependencies", "peerDependencies"):
         deps = root.get(section)
         if not isinstance(deps, dict):
