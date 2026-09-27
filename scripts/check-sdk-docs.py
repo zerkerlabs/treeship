@@ -17,9 +17,11 @@ Docs re-test (2026-09-27): the resolver is complete now. Every `<var>.<module>.<
 call is resolved against the modules the TypeScript `Ship` class exposes
 (read from ship.ts, not a hand list), a `<var>.<module>(` call against those
 module names, and `<var>.<method>(` in Python fences (or on `ts`/`client`
-variables) against the Python client's real methods. skills/ and
-integrations/ are scanned too. Findings from the new patterns and roots are
-WARNINGS until `--strict`; the original checks stay errors.
+variables) against the Python client's real methods, or -- same variable
+name convention (`treeship.<method>(`), separate class and package -- the
+A2A bridge middleware's real methods (bridges/a2a/src/middleware.ts).
+skills/ and integrations/ are scanned too. Findings from the new patterns
+and roots are WARNINGS until `--strict`; the original checks stay errors.
 """
 
 import os
@@ -29,6 +31,7 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SDK_SRC = os.path.join(REPO, "packages", "sdk-ts", "src")
 VERIFY_SRC = os.path.join(REPO, "packages", "verify-js", "src", "index.ts")
+A2A_MIDDLEWARE_SRC = os.path.join(REPO, "bridges", "a2a", "src", "middleware.ts")
 
 SCAN_ROOTS = [
     os.path.join(REPO, "docs", "content"),
@@ -77,6 +80,18 @@ def python_methods():
     )
 
 
+def a2a_middleware_methods():
+    """Public method names of `TreeshipA2AMiddleware`, the A2A bridge's own
+    client class (bridges/a2a) -- a separate surface from `Ship`, but docs
+    for it use the same `treeship.<method>(` shape and the same conventional
+    variable name, so it needs its own allow-list here rather than reading
+    as a phantom `Ship` method."""
+    with open(A2A_MIDDLEWARE_SRC) as f:
+        src = f.read()
+    found = set(re.findall(r"^\s+(?:async\s+)?(\w+)\s*[(<]", src, re.MULTILINE))
+    return found - {"constructor", "if", "for", "while", "switch", "catch", "super"}
+
+
 def fences(text):
     """(line number, language, line) for every line inside a code fence."""
     lang = None
@@ -115,7 +130,7 @@ def iter_files(roots=SCAN_ROOTS):
                     yield os.path.join(dirpath, name)
 
 
-def resolve_calls(path, surface, py_methods):
+def resolve_calls(path, surface, py_methods, a2a_methods):
     """The complete resolver: every documented call on a client variable."""
     out = []
     rel = os.path.relpath(path, REPO)
@@ -143,7 +158,12 @@ def resolve_calls(path, surface, py_methods):
             # `sdk.attest_action(` in an untagged fence is the Python client.
             if name in py_methods:
                 continue
-            out.append(f"{rel}:{lineno}: {name}() is neither an SDK module nor a Python client method")
+            # `treeship.onTaskReceived(` etc. is the A2A bridge middleware,
+            # not the `Ship` SDK -- same conventional variable name, separate
+            # class and package (bridges/a2a).
+            if name in a2a_methods:
+                continue
+            out.append(f"{rel}:{lineno}: {name}() is neither an SDK module, a Python client method, nor an A2A middleware method")
     return out
 
 
@@ -154,6 +174,7 @@ def main(argv=None):
     surface = {name: module_methods(filename) for name, filename in modules.items()}
     v_exports = verify_exports()
     py_methods = python_methods()
+    a2a_methods = a2a_middleware_methods()
 
     errors = []
     warnings = []
@@ -185,7 +206,7 @@ def main(argv=None):
 
     # The complete resolver over the original roots and the wider ones.
     for path in list(iter_files()) + list(iter_files(WIDER_ROOTS)):
-        (errors if strict else warnings).extend(resolve_calls(path, surface, py_methods))
+        (errors if strict else warnings).extend(resolve_calls(path, surface, py_methods, a2a_methods))
 
     for w in warnings:
         print(f"  warn  {w}")

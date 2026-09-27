@@ -197,7 +197,12 @@ Enforced at verify time. Prevents approval reuse.
 
 ## CLI Commands
 
-```bash
+A compact map, not a script -- several lines use `a|b` to name two
+subcommands on one line (`session start|close` means `session start` and
+`session close`) and `attest approval` needs a scope flag to actually run.
+See each command's own reference page for a runnable example.
+
+```text
 treeship init                    # Initialize ship (generates keypair)
 treeship install                 # Install shell hooks
 treeship wrap -- <cmd>           # Wrap command, auto-attest

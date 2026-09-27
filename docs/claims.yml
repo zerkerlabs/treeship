@@ -149,6 +149,52 @@ claims:
       cannot be told apart from a removed record.json without a signed
       statement either way (W1-4, CLI-4).
 
+  - id: transparency-log-client-reverified
+    status: shipped
+    says: >
+      The Hub's agent transparency log serves metadata plus Merkle
+      inclusion proofs only, never payloads. Every reader-side surface
+      that uses it -- `treeship audit`, `history`, `resolve --hub` --
+      re-verifies each anchored entry's Merkle inclusion offline against
+      the reader's own trust roots rather than trusting the Hub's say-so,
+      and `audit` additionally witnesses: it persists the highest
+      *verified* checkpoint it has seen per (hub, signer) locally and
+      compares each new one against it, warning on a forking or
+      regressing hub. This is the client half of Certificate Transparency
+      for agents -- the Hub serves, the client decides -- distinct from
+      rekor-artifact-anchoring (an external, third-party Sigstore log) and
+      from checkpoint-not-witnessed (whether a checkpoint is
+      externally corroborated at all, which this client-side witnessing
+      is not: it catches a hub contradicting itself, not a hub colluding
+      consistently with a forger).
+    proof: docs/specs/transparency-log.md
+    not: ["anchored", "witnessed"]
+    notes: >
+      Verified against `audit --help`, `history --help`, `resolve --hub
+      --help` and the spec's own slice list (2026-09-25 full audit,
+      area C: 4 of 6 specs marked draft-not-implemented were found
+      substantially shipped, this one among them).
+
+  - id: hub-storage-write-once
+    status: shipped
+    says: >
+      The Hub's own storage is write-once, not just the artifacts it
+      stores: a pushed artifact is inserted `ON CONFLICT(artifact_id) DO
+      NOTHING` (content-addressed, so a re-push of the same bytes is a
+      no-op, never an overwrite), and a session's receipt can be filled
+      exactly once -- a second upload for the same session_id is refused
+      with 409, not replaced. This is a property of the Hub's database
+      constraints, distinct from receipt-tamper-evidence (which holds even
+      with no Hub involved at all): a Hub operator with direct database
+      access could still edit a row, but the Hub's own API never offers a
+      path to silently overwrite what it already stored.
+    proof: packages/hub/internal/receipts/receipts.go
+    not: ["immutable"]
+    notes: >
+      Content-addressing (packages/hub/internal/db/db.go's `ON
+      CONFLICT(artifact_id) DO NOTHING`) covers artifacts; receipts are
+      write-once per session_id via InsertSessionWriteOnce, same file.
+
   - id: receipt-tamper-evidence
     status: shipped
     says: >

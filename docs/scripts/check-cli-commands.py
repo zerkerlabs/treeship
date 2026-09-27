@@ -15,10 +15,12 @@ TS = sys.argv[1]
 ROOT = Path(sys.argv[2])
 # Docs re-test (2026-09-27): skills/, integrations/ and the root *.md carry
 # runnable fences too. `--warn-root PATH` (a directory, or a file, repeatable)
-# scans them and reports findings without failing, until the drift they
-# surface is fixed and the roots move to the failing set.
+# scans them and reports findings without failing; `--hard-root PATH` scans
+# them in the failing set, same as ROOT. Findings moved from warn to hard
+# once the drift they surfaced was fixed (2026-09-27 retest wave).
 _rest = sys.argv[3:]
 WARN_ROOTS = [Path(_rest[i + 1]) for i, a in enumerate(_rest) if a == "--warn-root" and i + 1 < len(_rest)]
+HARD_ROOTS = [Path(_rest[i + 1]) for i, a in enumerate(_rest) if a == "--hard-root" and i + 1 < len(_rest)]
 
 
 def doc_files(root: Path):
@@ -65,7 +67,10 @@ def blocks(lines):
             buf.append((i, line))
 
 results = []
-for f, warn_only in [(p, False) for p in doc_files(ROOT)] + [(p, True) for r in WARN_ROOTS for p in doc_files(r)]:
+for f, warn_only in (
+    [(p, False) for r in [ROOT, *HARD_ROOTS] for p in doc_files(r)]
+    + [(p, True) for r in WARN_ROOTS for p in doc_files(r)]
+):
     lines = f.read_text(errors="replace").splitlines()
     for lang, start, body in blocks(lines):
         if lang not in RUNNABLE_LANG:
@@ -100,7 +105,10 @@ for f, warn_only in [(p, False) for p in doc_files(ROOT)] + [(p, True) for r in 
                 "raw": line.strip(),
             })
 
-_files = [(p, False) for p in doc_files(ROOT)] + [(p, True) for r in WARN_ROOTS for p in doc_files(r)]
+_files = (
+    [(p, False) for r in [ROOT, *HARD_ROOTS] for p in doc_files(r)]
+    + [(p, True) for r in WARN_ROOTS for p in doc_files(r)]
+)
 print(f"scanned {len(_files)} file(s), {sum(1 for _, w in _files if w)} under --warn-root", file=sys.stderr)
 hard = [r for r in results if not r.get("warn_only")]
 soft = [r for r in results if r.get("warn_only")]
