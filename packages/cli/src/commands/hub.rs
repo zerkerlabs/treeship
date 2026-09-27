@@ -668,6 +668,14 @@ pub fn open(
     // answers JSON at /v1/workspace/{dock}; there is no page to send a
     // browser to, so no share token is minted for it either (CLI-12: a
     // local hub's token used to be pasted into a treeship.dev URL).
+    // The hosted hub speaks https only: a share token minted over plain
+    // http would travel in the clear, so such an endpoint is refused here.
+    if is_treeship_host(&host_of(&entry.endpoint)) && !entry.endpoint.starts_with("https://") {
+        return Err(crate::exit::usage(format!(
+            "hub endpoint {} names the hosted hub over plain http; use https://api.treeship.dev",
+            entry.endpoint
+        )));
+    }
     if !is_hosted_endpoint(&entry.endpoint) {
         printer.blank();
         printer.info("this hub has no workspace UI; its workspace is JSON:");
@@ -826,7 +834,7 @@ pub(crate) fn hosted_workspace_url(hub_id: &str, token: &str) -> String {
 /// local hub, another company's, or a URL smuggling credentials in front
 /// of a treeship.dev host, is self-hosted for every decision here.
 pub(crate) fn is_hosted_endpoint(endpoint: &str) -> bool {
-    is_treeship_host(&host_of(endpoint))
+    endpoint.starts_with("https://") && is_treeship_host(&host_of(endpoint))
 }
 
 /// An endpoint as stored: scheme and authority as given, no trailing slash
@@ -1350,6 +1358,8 @@ mod tests {
     fn only_a_treeship_dev_endpoint_is_the_hosted_hub() {
         assert!(is_hosted_endpoint("https://api.treeship.dev"));
         assert!(is_hosted_endpoint("https://api.treeship.dev/"));
+        // The hosted hub over plain http is not "hosted": no token over http.
+        assert!(!is_hosted_endpoint("http://api.treeship.dev"));
         assert!(!is_hosted_endpoint("http://127.0.0.1:8080/"));
         assert!(!is_hosted_endpoint("https://hub.example.internal"));
         // Credentials in front of a treeship.dev host: a parser disagrees

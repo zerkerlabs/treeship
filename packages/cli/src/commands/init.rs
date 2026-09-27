@@ -112,7 +112,7 @@ pub fn run(
             return Err(format!(
                 "no Treeship workspace of its own in this directory; the global workspace at {} already exists, so nothing was changed.\n\n  \
                  Create one here:                 treeship init --config .treeship/config.json\n  \
-                 Or keep using the global one:    nothing to run; commands here already use it (`treeship init --global` reports it)\n\n  \
+                 Or keep using the global one:    nothing to run; commands here already use it (`treeship init --global` confirms it is set up, `treeship status` shows which store is in use)\n\n  \
                  Until this directory has its own workspace, commands run here use the global one, \
                  so receipts from unrelated projects share one store.",
                 config_path.display()

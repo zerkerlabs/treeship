@@ -251,3 +251,17 @@ fn init_help_does_not_call_the_key_machine_bound() {
     assert!(!t.contains("tied to this machine"), "{t}");
     assert!(t.contains("seed file"), "{t}");
 }
+
+#[test]
+fn hub_open_refuses_the_hosted_hub_over_plain_http() {
+    let ship = Ship::init();
+    // No request is made: the endpoint is judged before anything is minted.
+    ship.attach_fake_hub("http://api.treeship.dev");
+    let out = ship.run(&["hub", "open", "--no-open", "--config", &ship.config()]);
+    assert_eq!(out.status.code(), Some(4), "{}", text(&out));
+    assert!(
+        text(&out).contains("https://api.treeship.dev"),
+        "{}",
+        text(&out)
+    );
+}
