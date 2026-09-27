@@ -75,10 +75,16 @@ fn text(out: &Output) -> String {
     )
 }
 
-/// A one-answer HTTP server: every request gets `status` and `body`.
-fn serve(status: &'static str, body: &'static str) -> String {
+/// A one-answer HTTP server: every request gets `status` and `body`; the
+/// counter says how many arrived.
+fn serve(
+    status: &'static str,
+    body: &'static str,
+) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = hits.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { break };
@@ -105,14 +111,20 @@ fn serve(status: &'static str, body: &'static str) -> String {
                     }
                 }
             }
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let _ = write!(
                 stream,
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}
+Content-Type: application/json
+Content-Length: {}
+Connection: close
+
+{body}",
                 body.len()
             );
         }
     });
-    format!("http://{addr}")
+    (format!("http://{addr}"), hits)
 }
 
 #[test]
@@ -186,22 +198,48 @@ fn a_second_init_in_a_fresh_directory_says_the_global_workspace_exists() {
 }
 
 #[test]
-fn hub_open_on_a_self_hosted_hub_keeps_the_token_on_that_hub() {
+fn hub_open_on_a_self_hosted_hub_mints_no_token_and_points_at_its_json_workspace() {
     let ship = Ship::init();
-    let hub = serve("200 OK", r#"{"token":"tok_local_secret"}"#);
+    let (hub, hits) = serve("200 OK", r#"{"token":"tok_local_secret"}"#);
     ship.attach_fake_hub(&hub);
     let out = ship.run(&["hub", "open", "--no-open", "--config", &ship.config()]);
     assert!(out.status.success(), "{}", text(&out));
     let t = text(&out);
-    let line = t
-        .lines()
-        .find(|l| l.contains("session=tok_local_secret"))
-        .unwrap_or_else(|| panic!("no workspace URL printed:\n{t}"));
-    assert!(line.trim().starts_with(&hub), "{line}");
+    assert!(t.contains("no workspace UI"), "{t}");
+    assert!(
+        t.contains(&format!("{hub}/v1/workspace/dock_test0000000000")),
+        "{t}"
+    );
     assert!(
         !t.contains("treeship.dev"),
-        "the local hub's token went to treeship.dev:\n{t}"
+        "a treeship.dev URL for a local hub:\n{t}"
     );
+    assert!(
+        !t.contains("tok_local_secret"),
+        "a token was minted and printed:\n{t}"
+    );
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no request should reach a hub that has no workspace UI"
+    );
+}
+
+#[test]
+fn hub_attach_endpoint_loses_its_trailing_slash() {
+    // Nothing listens on TCP 1: the attach fails at the network, but the URL
+    // it tried must not carry a doubled slash.
+    let ship = Ship::init();
+    let out = ship.run(&[
+        "hub",
+        "attach",
+        "--endpoint",
+        "http://127.0.0.1:1/",
+        "--config",
+        &ship.config(),
+    ]);
+    assert!(!out.status.success());
+    assert!(!text(&out).contains("//v1/"), "{}", text(&out));
 }
 
 #[test]

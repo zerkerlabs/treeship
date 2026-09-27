@@ -1523,7 +1523,7 @@ enum AgentsCommand {
     /// Promote a Draft or NeedsReview card to Active.
     Approve { agent_id: String },
 
-    /// Delete an Agent Card from the store. Idempotent.
+    /// Delete an Agent Card from the store. Exits 1 when no such card exists.
     Remove { agent_id: String },
 }
 

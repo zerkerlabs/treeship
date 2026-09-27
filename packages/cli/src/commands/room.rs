@@ -95,16 +95,24 @@ fn parse_invitation_authority(
                 );
             }
             // A delegate that is not a key can never sign an invitation; a
-            // typo here used to be accepted and sealed into the room.
+            // typo here used to be accepted and sealed into the room. A bare
+            // base64url key is stored as `ed25519:<key>`, the canonical form.
+            let mut normalized = Vec::with_capacity(delegates.len());
             for d in delegates {
-                if let Err(e) = treeship_core::trust::decode_ed25519_pubkey(d) {
+                let canonical = if d.starts_with("ed25519:") {
+                    d.clone()
+                } else {
+                    format!("ed25519:{d}")
+                };
+                if let Err(e) = treeship_core::trust::decode_ed25519_pubkey(&canonical) {
                     return Err(format!(
                         "--delegate {d:?} is not an Ed25519 public key ({e}); pass the delegate's key as `treeship keys export` prints it (ed25519:<base64url>)"
                     ));
                 }
+                normalized.push(canonical);
             }
             Ok(InvitationAuthority::DelegatedTo {
-                delegates: delegates.to_vec(),
+                delegates: normalized,
             })
         }
         "open" => {
@@ -458,7 +466,9 @@ mod tests {
         let pk2 = "ed25519:9PfbpAhWYgo81lyzCcdeYbcdSJzOIIfNNiqnbXgZrnM";
         let err = parse_invitation_authority(Some("delegated"), &["pk1".into()]).unwrap_err();
         assert!(err.contains("not an Ed25519 public key"), "{err}");
-        let a = parse_invitation_authority(Some("delegated"), &[pk1.into(), pk2.into()]).unwrap();
+        // A bare base64url key is normalized to the ed25519: form.
+        let bare = pk2.trim_start_matches("ed25519:");
+        let a = parse_invitation_authority(Some("delegated"), &[pk1.into(), bare.into()]).unwrap();
         match a {
             InvitationAuthority::DelegatedTo { delegates } => {
                 assert_eq!(delegates, vec![pk1.to_string(), pk2.to_string()]);
