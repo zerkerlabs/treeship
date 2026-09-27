@@ -16,8 +16,9 @@ A Treeship artifact is valid if its Ed25519 signature verifies against a known p
 - Any certificate authority
 - Any token or session
 
+{/* claims:hub-cannot-forge-signed-verification */}
 <Callout type="info">
-The Hub is convenience infrastructure for sharing and discovery. It cannot forge a passing verification result.
+The Hub is convenience infrastructure for sharing and discovery. It cannot forge a passing verification result for a signed artifact -- it holds no signing key, and you check the signature against your own trust roots. That's narrower than a bare Session Receipt fetch, which carries no signature at all; see [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get).
 </Callout>
 
 ## Key hierarchy
