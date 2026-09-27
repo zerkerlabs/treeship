@@ -1,8 +1,8 @@
 # Agent Invitations and Multi-Agent Rooms — design draft
 
-**Status:** draft, not implemented
+**Status:** Phases 1 and 2 shipped (see "Implementation phases" below); Phases 3-4 still draft, not implemented.
 **Pairs with:** [workflow-declarations.md](workflow-declarations.md) (PR #107)
-**Last updated:** 2026-05-18
+**Last updated:** 2026-05-18 (status line updated 2026-09-27 against v0.31.10)
 
 ## The shift
 
@@ -232,17 +232,17 @@ The `treeship room` commands are sugar over `treeship session`. A room is just a
 
 ## Implementation phases
 
-**Phase 1: invitation as approval grant (2-3 days)**
+**Phase 1: invitation as approval grant -- SHIPPED**
 - New canonical type `treeship/invitation/v1` in `packages/core/src/statements/`
 - Reuse Approval Use Journal for consume-before-join semantics
 - `treeship session invite` and `treeship session join` CLI commands
-- No room concept yet; works against any existing session
+- Since W1-3b (#499): `session join --out` and `session countersign --pending` extend this across two machines, gated on a mandatory liveness challenge (`session mint-challenge` / `answer-challenge`) -- the cross-machine transfer this phase's own description didn't yet cover.
 
-**Phase 2: room concept (3-5 days)**
-- `room` field on session declaration (backwards compat via `#[serde(default)]`)
+**Phase 2: room concept -- SHIPPED (since v0.24)**
+- `room` field on session declaration
 - `treeship room create / status / participants` CLI sugar
-- Checkpoint-every-N-actions cadence
-- Participant event canonical type with two-sided signature
+- Participant event canonical type with two-sided signature (host + joiner)
+- Not shipped from this phase: a checkpoint-every-N-actions cadence tied specifically to rooms (the general `checkpoint --publish` cadence, unrelated to this spec, does exist -- see `cli/merkle.mdx`)
 
 **Phase 3: workflow integration (1 week, depends on PR #107)**
 - Invitations can narrow workflow scope

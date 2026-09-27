@@ -117,7 +117,11 @@ decision; a receipt never carries a key you are told to trust.
 ## Statement types
 
 The `payloadType` names the statement kind. Each payload also carries a `type`
-field with the same version string. Current media types:
+field, but it is a *shorter, differently-shaped string* -- `treeship/<kind>/v1`,
+not the same value as `payloadType`. `payload_type("action")` produces
+`application/vnd.treeship.action.v1+json`; the matching `type` field is
+`treeship/action/v1`. Current media types (10, one per real `payload_type()`
+/ `payload_type_v2()` call in `packages/core/src/statements/`):
 
 ```
 application/vnd.treeship.action.v1+json
@@ -126,9 +130,20 @@ application/vnd.treeship.approval.v1+json
 application/vnd.treeship.handoff.v1+json
 application/vnd.treeship.endorsement.v1+json
 application/vnd.treeship.receipt.v1+json
-application/vnd.treeship.session.v1+json
+application/vnd.treeship.decision.v1+json
+application/vnd.treeship.invitation.v1+json
+application/vnd.treeship.session-participant.v1+json
+application/vnd.treeship.session-liveness.v1+json
 application/vnd.treeship.bundle.v1+json
 ```
+
+There is no `application/vnd.treeship.session.v1+json` media type. The session
+close record (`record.json` in a package) uses the ordinary `receipt.v1`
+`payloadType`; what marks it as a close record is a `kind` field inside the
+payload set to `"session.v1"`, alongside a `type` field of `treeship/receipt/v1`.
+`package verify`'s `receipt_binding` check reads both: a `record.json` whose
+`type`/`kind` don't match exactly this pair is rejected as "not a session.v1
+close record," not silently accepted as some other statement.
 
 `action.v2` is what `treeship attest action --v2` emits: an action bound to a
 signed grant, carrying the mandate and optional effect/runtime fields. Plain

@@ -1,8 +1,8 @@
 # Agent Resolver: the Hub as DNS + OCSP for agents
 
-**Status:** draft, not implemented
+**Status:** Largely shipped -- `treeship resolve <agent>` exists, its `--help` matches this doc's own description almost verbatim (identity, current card, revocation, provenance grades, re-derived locally). Body not re-audited section by section against 0.31.10; treat "not implemented" claims below with that in mind.
 **Pairs with:** [per-actor signing](./per-actor-signing.md), [agent capability cards](./agent-capability-cards.md), the Hub Merkle log, `agent_card_revocation.v1`
-**Last updated:** 2026-06-24
+**Last updated:** 2026-06-24 (status line updated 2026-09-27 against v0.31.10)
 
 ## The shift
 
