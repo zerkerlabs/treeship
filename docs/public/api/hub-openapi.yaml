@@ -15,6 +15,16 @@ security:
   - DPoP: []
 
 components:
+  schemas:
+    EnvelopeEntry:
+      type: object
+      nullable: true
+      description: A raw signed DSSE envelope plus metadata; the client re-verifies it.
+      properties:
+        artifact_id:   { type: string }
+        envelope_json: { type: string }
+        signer_keyid:  { type: string }
+        signed_at:     { type: integer }
   securitySchemes:
     DPoP:
       type: http
@@ -39,15 +49,14 @@ paths:
               schema:
                 type: object
                 properties:
-                  device_code: { type: string, example: "dvc_a1b2c3d4" }
-                  nonce:       { type: string, example: "nce_7f8e9d0a" }
-                  expires_at:  { type: integer, example: 1711494000 }
-                  verify_url:  { type: string, example: "https://treeship.dev/dock/activate" }
+                  device_code: { type: string, example: "a1b2c3d4e5f60718" }
+                  nonce:       { type: string, example: "7f8e9d0a1b2c3d4e5f60718293a4b5c6" }
+                  expires_at:  { type: string, example: "1711494000", description: "Unix timestamp as a string" }
 
   /v1/dock/authorized:
     get:
       summary: Poll for device flow completion
-      description: Poll after the user has approved at treeship.dev/dock/activate.
+      description: Poll after the user has approved at treeship.dev/hub/activate.
       operationId: dockAuthorized
       security: []
       parameters:
@@ -57,20 +66,51 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Approved
+          description: |
+            Browser approved (state `approved`) or device attached (state
+            `attached`). `attached` includes `dock_id` plus provider-neutral
+            `next_steps` and an illustrative `example`.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  dock_id: { type: string, example: "dck_9f8e7d6c" }
+                  state:      { type: string, enum: [approved, attached] }
+                  dock_id:    { type: string, example: "dck_9f8e7d6c5b4a39281706f5e4d3c2b1a0" }
+                  next_steps: { type: array, items: { type: string } }
+                  example:    { type: string }
         '202':
           description: Pending -- user has not approved yet
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, example: "pending" }
+        '404':
+          description: Unknown device code (never issued, or purged past expiry)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, example: "invalid" }
+        '410':
+          description: Device code expired before it was attached
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, example: "expired" }
 
   /v1/dock/authorize:
     post:
       summary: Complete device flow authorization
-      description: Called by treeship.dev when the user approves. Stores the keypair binding.
+      description: |
+        Two calling modes. The browser calls it with only device_code to approve
+        the challenge. The CLI calls it with keys and the challenge nonce to
+        finalize registration; the challenge must already be browser-approved.
       operationId: dockAuthorize
       security: []
       requestBody:
@@ -79,20 +119,42 @@ paths:
           application/json:
             schema:
               type: object
-              required: [device_code, ship_public_key, dock_public_key]
+              required: [device_code]
               properties:
                 device_code:      { type: string }
-                ship_public_key:  { type: string, description: "hex-encoded Ed25519 public key" }
-                dock_public_key:  { type: string, description: "hex-encoded Ed25519 public key" }
+                ship_public_key:  { type: string, description: "hex-encoded Ed25519 public key (CLI finalize mode)" }
+                dock_public_key:  { type: string, description: "hex-encoded Ed25519 public key (CLI finalize mode)" }
+                nonce:            { type: string, description: "nonce from /v1/dock/challenge; required in CLI finalize mode" }
       responses:
         '200':
-          description: Docked
+          description: |
+            Browser approval (state `approved`) or device attached
+            (state `attached`, with `dock_id`, `next_steps`, `example`).
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  dock_id: { type: string }
+                  state:      { type: string, enum: [approved, attached] }
+                  dock_id:    { type: string }
+                  next_steps: { type: array, items: { type: string } }
+                  example:    { type: string }
+        '409':
+          description: Device code already used (challenge already finalized)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, example: "already_attached" }
+        '410':
+          description: Device code expired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, example: "expired" }
 
   /v1/artifacts:
     post:
@@ -125,7 +187,23 @@ paths:
                 properties:
                   artifact_id:  { type: string }
                   hub_url:      { type: string, example: "https://treeship.dev/verify/art_f7e6d5c4b3a2f7e6" }
-                  rekor_index:  { type: integer, nullable: true }
+                  rekor_index:  { type: integer, nullable: true, description: "Global Rekor log index. Kept for older clients; read rekor" }
+                  rekor:
+                    type: object
+                    description: >
+                      The anchoring outcome (TS-2026-003). Never absent on this
+                      hub version: a failed or skipped attempt says why.
+                    properties:
+                      status:    { type: string, enum: [anchored, failed, skipped] }
+                      reason:    { type: string, description: "Set when not anchored" }
+                      log_index: { type: integer }
+                      entry:
+                        type: object
+                        description: >
+                          The Rekor log entry exactly as Rekor returned it, plus
+                          its uuid: body, integratedTime, logID, logIndex, and
+                          verification (signedEntryTimestamp, inclusionProof
+                          with the signed checkpoint). Verify it offline.
 
   /v1/artifacts/{id}:
     get:
@@ -146,12 +224,14 @@ paths:
 
   /v1/verify/{id}:
     get:
-      summary: Verify a chain
+      summary: Retired server-side verification endpoint
       description: |
-        Runs treeship verify on the artifact chain server-side.
-        The /verify/:id page also runs the WASM verifier client-side independently --
-        the Hub cannot forge a passing result.
+        Server-side verification is retired. Any verdict the server produced
+        would represent the server's trust policy, not the verifier's. The Hub
+        is transport/index only: fetch the signed artifact from
+        /v1/artifacts/{id} and verify it locally against your own trust roots.
       operationId: verifyChain
+      deprecated: true
       security: []
       parameters:
         - name: id
@@ -159,22 +239,25 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        '200':
-          description: Verification result
+        '410':
+          description: Endpoint retired (artifact exists)
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  outcome:  { type: string, enum: [pass, fail, error] }
-                  chain:    { type: integer, description: "Number of artifacts in chain" }
-                  approver: { type: string, nullable: true }
-                  checks:   { type: array, items: { type: object } }
+                  outcome:      { type: string, enum: [retired] }
+                  message:      { type: string, example: "server-side verification is retired; fetch the signed artifact and verify it locally" }
+                  artifact_url: { type: string, example: "/v1/artifacts/art_f7e6d5c4b3a2f7e6" }
+        '400':
+          description: Missing artifact ID
+        '404':
+          description: Artifact not found
 
   /v1/workspace/{dockId}:
     get:
       summary: Fetch workspace artifacts
-      description: Returns all artifacts associated with a dock. Requires DPoP authentication.
+      description: Returns all artifacts associated with a hub connection. Requires DPoP authentication.
       operationId: getWorkspace
       parameters:
         - name: dockId
@@ -194,7 +277,7 @@ paths:
         '401':
           description: DPoP authentication failed
         '404':
-          description: Dock not found
+          description: Hub connection not found
 
   /v1/merkle/checkpoint:
     post:
@@ -218,7 +301,7 @@ paths:
                 signer:       { type: string, description: "Key ID of the signer" }
                 signature:    { type: string, description: "Base64url-encoded Ed25519 signature" }
                 public_key:   { type: string, description: "Base64url-encoded Ed25519 public key" }
-                rekor_index:  { type: integer, nullable: true, description: "Rekor transparency log index, if anchored" }
+                rekor_index:  { type: integer, nullable: true, description: "Ignored (TS-2026-003). Checkpoints are not anchored yet" }
                 index:        { type: integer, description: "Checkpoint sequence number" }
       responses:
         '200':
@@ -274,15 +357,20 @@ paths:
   /v1/merkle/checkpoint/latest:
     get:
       summary: Fetch the latest Merkle checkpoint
-      description: Returns the most recent checkpoint. Optionally filter by dock_id query parameter.
+      description: >-
+        Returns the most recent checkpoint, plus `age_seconds`, computed at
+        read time from its `signed_at`, so a monitor has one number to alert
+        on. The checkpoint is signed by the ship that published it; the hub
+        stores and verifies it and signs nothing (it is not a witness).
+        Optionally filter by hub_id query parameter.
       operationId: getLatestCheckpoint
       security: []
       parameters:
-        - name: dock_id
+        - name: hub_id
           in: query
           required: false
           schema: { type: string }
-          description: Filter by dock ID
+          description: Filter by hub ID
       responses:
         '200':
           description: Latest checkpoint
@@ -300,6 +388,7 @@ paths:
                   signature_b64:  { type: string }
                   public_key_b64: { type: string }
                   rekor_index: { type: integer, nullable: true }
+                  age_seconds: { type: integer, nullable: true, description: "Seconds since signed_at, computed at read time; null when signed_at does not parse" }
         '404':
           description: No checkpoints found
 
@@ -390,12 +479,536 @@ paths:
         '404':
           description: Proof not found
 
-  /.well-known/treeship/revoked.json:
+  /v1/receipt/{session_id}:
+    put:
+      summary: Publish a session receipt
+      description: DPoP authenticated. Idempotent upload of a canonical Session Receipt; served afterward at the permanent public URL.
+      operationId: putReceipt
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: A treeship/session-receipt/v1 document
+      responses:
+        '200':
+          description: Receipt stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:  { type: string }
+                  receipt_url: { type: string, example: "https://treeship.dev/receipt/ssn_42e740bd9eb238f6" }
+                  agents:      { type: integer }
+                  events:      { type: integer }
+                  uploaded_at: { type: integer }
+        '400':
+          description: Missing session_id, empty body, invalid JSON, or unsupported receipt type
+        '401':
+          description: DPoP authentication failed
     get:
-      summary: Revocation list
-      description: Signed JSON list of revoked artifact IDs and key fingerprints.
-      operationId: revocationList
+      summary: Fetch a session receipt
+      description: Public, permanent URL. Returns the raw receipt JSON verbatim; cached immutably.
+      operationId: getReceipt
+      security: []
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The receipt JSON, verbatim
+        '404':
+          description: No receipt uploaded for this session
+
+  /v1/ship/agents:
+    get:
+      summary: List the calling ship's agents
+      description: DPoP authenticated (or a workspace share token via ?session=). Registry derived from uploaded receipts.
+      operationId: listShipAgents
+      responses:
+        '200':
+          description: Agent registry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:     { type: string }
+                        label:  { type: string }
+                        role:   { type: string }
+                        model:  { type: string }
+                        host:   { type: string }
+                        status: { type: string }
+        '401':
+          description: Authentication failed
+
+  /v1/ship/sessions:
+    get:
+      summary: List the calling ship's sessions
+      description: DPoP authenticated (or a workspace share token via ?session=). Session history derived from uploaded receipts.
+      operationId: listShipSessions
+      responses:
+        '200':
+          description: Session history
+        '401':
+          description: Authentication failed
+
+  /v1/session:
+    post:
+      summary: Mint a short-lived workspace share token
+      description: |
+        DPoP authenticated, no body. Issues a 15-minute opaque token an
+        unauthenticated browser can present via ?session= on the workspace GET.
+        The token is scoped to the authenticated dock only.
+      operationId: mintWorkspaceSession
+      responses:
+        '200':
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:      { type: string, description: "32 random bytes, base64url" }
+                  dock_id:    { type: string }
+                  expires_at: { type: integer, description: "Unix timestamp, now + 900s" }
+        '401':
+          description: DPoP authentication failed
+
+  /v1/agents:
+    get:
+      summary: Resolve an agent to its verifiable bundle
+      description: |
+        Public. Returns raw signed envelopes (cards, certs, revocations) plus
+        the current card's Merkle proof; the client re-verifies and grades
+        everything offline. The Hub never grades trust.
+      operationId: resolveAgent
+      security: []
+      parameters:
+        - name: agent
+          in: query
+          required: true
+          schema: { type: string }
+          description: Agent URI, e.g. agent://deployer
+      responses:
+        '200':
+          description: Resolvable bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent:        { type: string }
+                  current_card: { $ref: '#/components/schemas/EnvelopeEntry' }
+                  cards:        { type: array, items: { $ref: '#/components/schemas/EnvelopeEntry' } }
+                  certs:        { type: array, items: { $ref: '#/components/schemas/EnvelopeEntry' } }
+                  revocations:  { type: array, items: { $ref: '#/components/schemas/EnvelopeEntry' } }
+                  transparency: { type: object, nullable: true, description: "Current card's Merkle ProofFile, verbatim" }
+                  note:         { type: string }
+        '400':
+          description: Missing agent query parameter
+
+  /v1/agents/log:
+    get:
+      summary: Agent transparency log
+      description: Public. Append-only receipt history — metadata and Merkle anchors only, never payloads.
+      operationId: agentLog
+      security: []
+      parameters:
+        - name: agent
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Log entries, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent: { type: string }
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        artifact_id:   { type: string }
+                        kind:          { type: string, enum: [action, agent_card.v1] }
+                        actor:         { type: string }
+                        action:        { type: string }
+                        signed_at:     { type: integer }
+                        digest:        { type: string }
+                        merkle_anchor: { type: object, nullable: true, properties: { checkpoint_id: { type: integer }, leaf_index: { type: integer } } }
+                  committed_anchor: { type: object, nullable: true, description: "The evidence_anchor from the agent's latest signed card" }
+                  note: { type: string }
+        '400':
+          description: Missing agent query parameter
+
+  /v1/agents/history:
+    get:
+      summary: Agent work history
+      description: Public. The transparency log filtered to the agent's signed session.v1 records, as raw envelopes the client re-verifies.
+      operationId: agentHistory
+      security: []
+      parameters:
+        - name: agent
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: History entries, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent: { type: string }
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        artifact_id:   { type: string }
+                        envelope_json: { type: string }
+                        signer:        { type: string }
+                        signed_at:     { type: integer }
+                        merkle_anchor: { type: object, nullable: true }
+                  count: { type: integer }
+                  note:  { type: string }
+        '400':
+          description: Missing agent query parameter
+
+  /v1/agents/match:
+    get:
+      summary: Match agents by exercised evidence
+      description: |
+        Public. Scans signed session.v1 records for tools matching a glob and
+        ranks candidates by matched sessions (descending). An untrusted index
+        proposal — records ship as raw envelopes so the client re-verifies
+        each one before ranking.
+      operationId: matchAgents
+      security: []
+      parameters:
+        - name: exercised
+          in: query
+          required: true
+          schema: { type: string }
+          description: "Tool glob, e.g. payments.* (single *; no * means exact)"
+        - name: class
+          in: query
+          required: false
+          schema: { type: string, enum: [self, runtime, countersigned] }
+        - name: min_sessions
+          in: query
+          required: false
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Ranked candidates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exercised: { type: string }
+                  candidates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        agent:            { type: string }
+                        matched_tools:    { type: array, items: { type: string } }
+                        matched_sessions: { type: integer }
+                        records:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              artifact_id:   { type: string }
+                              envelope_json: { type: string }
+                              merkle_anchor: { type: object, nullable: true }
+                  count: { type: integer }
+                  note:  { type: string }
+        '400':
+          description: Missing exercised query parameter
+
+  /v1/stats:
+    get:
+      summary: Public adoption metrics
+      description: Counts only, never identifiers. Cache-Control public, max-age=300. Whole request fails 500 rather than returning a partial document.
+      operationId: stats
       security: []
       responses:
         '200':
+          description: Metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artifacts: { type: object, properties: { total: { type: integer }, last_7d: { type: integer } } }
+                  docks:     { type: object, properties: { total: { type: integer }, attached_last_7d: { type: integer }, active_last_7d: { type: integer } } }
+                  sessions:  { type: object, properties: { total: { type: integer }, receipts_uploaded: { type: integer }, uploaded_last_7d: { type: integer } } }
+                  agents:
+                    type: object
+                    description: >-
+                      Counts CLAIMS, unlike the blocks above. Populated from
+                      AgentGraph nodes in uploaded session receipts, which the
+                      hub does not cryptographically verify -- so an
+                      authenticated dock can inflate these. Artifact, dock and
+                      session counts are facts about the hub's own state and
+                      are unaffected.
+                    properties:
+                      claimed_total: { type: integer }
+                      claimed_seen_last_7d: { type: integer }
+                      basis: { type: string, description: "States plainly that these are self-reported." }
+                      total: { type: integer, deprecated: true, description: "Same value as claimed_total. Removed at the next major." }
+                      seen_last_7d: { type: integer, deprecated: true, description: "Same value as claimed_seen_last_7d." }
+                  generated_at: { type: string, format: date-time }
+        '500':
+          description: Stats unavailable
+
+  /v1/merkle/consistency:
+    post:
+      summary: Publish a client-computed Merkle consistency proof
+      description: |
+        DPoP authenticated, body capped at 10 MB. The Hub stores and serves
+        verbatim; it never generates or verifies proofs. The signer must be
+        owned by the authenticated dock (it must have published a checkpoint
+        signed by that signer).
+      operationId: publishConsistency
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signer, from_size, from_root, to_size, to_root, proof_json]
+              properties:
+                signer:     { type: string }
+                from_size:  { type: integer }
+                from_root:  { type: string }
+                to_size:    { type: integer }
+                to_root:    { type: string }
+                version:    { type: integer }
+                proof_json: { type: string, description: "JSON array of hex node hashes, serialized as a string" }
+                signed_at:  { type: string }
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:              { type: integer }
+                  hub_received_at: { type: string, format: date-time }
+        '400':
+          description: Invalid body, missing fields, or from_size > to_size
+        '401':
+          description: DPoP authentication failed
+        '403':
+          description: Signer is not owned by this dock
+    get:
+      summary: Fetch a signer's consistency-proof chain
+      description: Public. Returns consecutive proofs from a given tree size onward — the chain an auditor walks offline.
+      operationId: getConsistency
+      security: []
+      parameters:
+        - name: signer
+          in: query
+          required: true
+          schema: { type: string }
+        - name: from
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Consistency chain
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signer: { type: string }
+                  from:   { type: integer }
+                  chain:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:         { type: integer }
+                        signer:     { type: string }
+                        from_size:  { type: integer }
+                        from_root:  { type: string }
+                        to_size:    { type: integer }
+                        to_root:    { type: string }
+                        version:    { type: integer }
+                        proof_json: { type: string }
+                        signed_at:  { type: string }
+                        dock_id:    { type: string, nullable: true }
+                  note: { type: string }
+        '400':
+          description: Missing signer or invalid from size
+
+  /.well-known/treeship/revoked.json:
+    get:
+      summary: Revocation list
+      description: >-
+        Grant revocations published by this hub. Each entry carries the
+        grantor-signed `grant_revocation.v1` DSSE envelope.
+
+        The hub does NOT sign this list and holds no signing key. That is
+        deliberate: the entries are already signed by the grantor who issued
+        the grant, so a client verifies each envelope against that key -- the
+        same check it runs on a locally-held revocation. A hub signature would
+        add a party to trust and prove less, attesting that the hub said this
+        rather than that the grantor did. The timestamp field is therefore
+        `generated_at`, not `signed_at`.
+
+        A hostile hub can WITHHOLD revocations, which is why absence from this
+        list is never proof that a grant is live. It cannot manufacture one.
+
+        Cache-Control is max-age=300. Longer would turn a revocation into a
+        grace period of the same length for whoever holds the revoked grant.
+
+        `truncated` is always present; when true the list is incomplete and
+        must not be treated as exhaustive.
+
+        Each entry carries `dock_id` and `rekor_index` so a client can act on
+        the withholding caveat above rather than only be warned about it:
+        `dock_id` names the log the artifact belongs to, so inclusion can be
+        checked against that dock's checkpoint and a forked log detected via
+        /v1/merkle/consistency. `rekor_index` is null when the best-effort
+        anchor did not land -- null means "not anchored", never "anchored and
+        fine". The response also carries a `completeness` field stating in the
+        document itself that absence proves nothing.
+      responses:
+        '200':
           description: Revocation list
+
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: >-
+        Whether the process is up. Always 200 while the process can answer at
+        all; a load balancer uses this to decide whether to restart, not
+        whether to route. Deliberately outside the public rate-limit budget --
+        a probe that 429s gets the instance declared dead while it is merely
+        busy.
+      operationId: healthz
+      security: []
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      description: >-
+        Whether the process can serve. Distinct from liveness: this is false
+        before the listener is up, false while the database is unreachable, and
+        false from the moment a shutdown signal arrives -- which is what takes
+        an instance out of rotation before its connections are cut rather than
+        after. Pings the database, because readiness that checks nothing is
+        liveness with a longer name.
+      operationId: readyz
+      security: []
+      responses:
+        '200':
+          description: Ready to serve
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ready] }
+        '503':
+          description: Draining, or the database is unreachable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [draining, database unavailable] }
+
+  /health:
+    get:
+      summary: Liveness probe (alias of /healthz)
+      operationId: health
+      security: []
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /v1/version:
+    get:
+      summary: Which build is this hub
+      description: >-
+        Version, commit and build time from the build, plus the Go runtime.
+        Unset values read "dev" or "unknown" rather than a guess. Never
+        cached. `/version` is an alias.
+      operationId: version
+      security: []
+      responses:
+        '200':
+          description: Build info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service:  { type: string, enum: [treeship-hub] }
+                  version:  { type: string }
+                  commit:   { type: string }
+                  built_at: { type: string }
+                  go:       { type: string }
+                  dirty:    { type: boolean }
+
+  /version:
+    get:
+      summary: Which build is this hub (alias of /v1/version)
+      operationId: versionAlias
+      security: []
+      responses:
+        '200':
+          description: Build info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service:  { type: string }
+                  version:  { type: string }
+                  commit:   { type: string }
+                  built_at: { type: string }
+                  go:       { type: string }
