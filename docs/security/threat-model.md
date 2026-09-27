@@ -265,7 +265,8 @@ its configured trust root; nothing else.
 
 ### Bundle import safety
 
-Until `v0.10.3`, the bundle import path (`treeship package import` and
+Until `v0.10.3`, the bundle import path (`treeship bundle import` --
+`package` has no `import` subcommand, only `inspect`/`verify` -- and
 the WASM equivalent) silently trusted envelope signatures inside the
 bundle without re-verifying them against the bundle's own signer. The
 P0 fix in audit lane H rebuilds bundle import to re-verify every

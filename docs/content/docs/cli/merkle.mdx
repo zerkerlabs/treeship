@@ -5,6 +5,10 @@ description: Merkle tree operations for batch integrity and inclusion proofs.
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
+<Callout type="info">
+**Hidden from `--help`.** `merkle` is implemented, tested, and shipped -- proof generation, offline verification, and checkpoint status. Hidden from the top-level list as a UX choice, not because it's incomplete.
+</Callout>
+
 Treeship maintains a local Merkle tree over all artifacts. Checkpoints seal a signed root, and inclusion proofs let anyone verify that a specific artifact was part of the tree at a given point in time.
 
 ## Why Merkle proofs

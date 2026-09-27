@@ -90,7 +90,7 @@ git-reconcile in isolation. The session is essentially a "what did the workspace
 |---|---|---|
 | **Cursor (medium)** | high | Cursor doesn't currently expose a native hook surface. The MCP-routed signals are the practical ceiling. |
 | **Codex (medium)** | high | Same — Codex's tool surface is MCP. |
-| **SuperNinja (basic)** | medium / high | Wait for v0.9.9's `treeship agent invite` / `treeship join --invite` so Treeship can run inside the remote VM. |
+| **SuperNinja (basic)** | medium / high | `treeship session invite` from the host, `treeship session join` (or `--out` across machines) from inside the remote VM, so its work joins the same session instead of standing alone. See [Multi-Agent Sessions](/docs/concepts/multi-agent-sessions). |
 | **Custom shell-wrap (basic)** | medium | Add an MCP server in front of your custom agent and route tool calls through it; `treeship harness inspect generic-mcp` for the shape. |
 
 ## Reading coverage in a session report

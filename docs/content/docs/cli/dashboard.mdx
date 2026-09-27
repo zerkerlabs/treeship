@@ -5,6 +5,10 @@ description: Local control-plane dashboard for sealed receipts, agent work, repo
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
+<Callout type="info">
+**Hidden from `--help`.** `dashboard` is implemented, tested, and shipped. Hidden from the top-level list as a UX choice, not because it's incomplete.
+</Callout>
+
 `treeship dashboard` starts a read-only localhost control plane over local Treeship instances and their sealed `.treeship` session packages. It is the browser companion to [`treeship ui`](/docs/cli/ui): the terminal UI is for live terminal operation, while the browser dashboard is for reviewing Treeships, attached agents, receipts, reports, trust status, and workspace capabilities.
 
 ## Usage
