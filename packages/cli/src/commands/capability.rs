@@ -387,9 +387,14 @@ pub fn revoke_capability(
     let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
     let card_agent = card.get("agent").and_then(|v| v.as_str()).unwrap_or("");
 
-    if let Some(existing) = existing_card_revocation(&ctx, card_id) {
+    // Only a revocation verify-capability honors counts as "already
+    // revoked": another ship's agent_card_revocation.v1 copied into the
+    // store used to block the owner's revoke here while every verifier
+    // still honored the card (review of #541).
+    let trust = TrustRootStore::open_default_or_empty()?;
+    if let Some((_, who)) = find_revocation(&ctx, card_id, card_keyid, &trust) {
         return Err(format!(
-            "card {card_id} is already revoked by {existing}; a second revocation receipt would add nothing"
+            "card {card_id} is already revoked ({who}); a second revocation receipt would add nothing"
         )
         .into());
     }
@@ -422,7 +427,6 @@ pub fn revoke_capability(
     // locally — then this revocation will be silently IGNORED by every
     // verifier. Refuse to mint it rather than print a success banner for a
     // revocation nobody will honor (fail-open masquerading as done).
-    let trust = TrustRootStore::open_default_or_empty()?;
     let will_be_honored = {
         let signer_kid = signer.key_id();
         let self_revoke = !card_keyid.is_empty() && signer_kid == card_keyid;
@@ -669,31 +673,4 @@ fn actor_proven_by_cert(
         return true;
     }
     false
-}
-
-/// The id of an agent_card_revocation.v1 receipt this store already holds
-/// for `card_id`, if any.
-fn existing_card_revocation(ctx: &crate::ctx::Ctx, card_id: &str) -> Option<String> {
-    let pt = payload_type("receipt");
-    for entry in ctx.storage.list_by_type(&pt) {
-        let Ok(rec) = ctx.storage.read(&entry.id) else {
-            continue;
-        };
-        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
-            continue;
-        };
-        if stmt.kind != "agent_card_revocation.v1" {
-            continue;
-        }
-        let same = stmt
-            .payload
-            .as_ref()
-            .and_then(|p| p.get("card"))
-            .and_then(|v| v.as_str())
-            == Some(card_id);
-        if same {
-            return Some(entry.id.clone());
-        }
-    }
-    None
 }
