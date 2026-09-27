@@ -126,7 +126,7 @@ All release-train packages share a single version (enforced by `scripts/check-re
 | `@treeship/cli-linux-arm64` | [npm](https://www.npmjs.com/package/@treeship/cli-linux-arm64) | (auto-installed) | Binary for Linux arm64 |
 | `@treeship/cli-linux-x64` | [npm](https://www.npmjs.com/package/@treeship/cli-linux-x64) | (auto-installed) | Binary for Linux x86_64 |
 
-**Note:** the `treeship-cli` crate on crates.io is orphaned at v0.4.0. It is no longer the canonical install path; use the `treeship` npm wrapper instead. The crate name is preserved on crates.io to avoid squatting and to keep download counters meaningful for historical references.
+**Note:** the `treeship-cli` crate on crates.io has every version yanked (`cargo install treeship-cli` fails outright). It is no longer the canonical install path; use the `treeship` npm wrapper instead. The crate name is preserved on crates.io to avoid squatting and to keep download counters meaningful for historical references.
 
 **Plugin marketplace:** the treeship monorepo also ships `.claude-plugin/marketplace.json` at the root, so `claude plugin marketplace add zerkerlabs/treeship` registers the Treeship plugin marketplace. `claude plugin install treeship@treeship` then installs the official Claude Code plugin from `integrations/claude-code-plugin/`.
 
@@ -155,7 +155,7 @@ npm install -g treeship
 curl -fsSL https://www.treeship.dev/install | sh
 ```
 
-The `treeship-cli` cargo install path is no longer available; that crate is orphaned at v0.4.0. The CLI ships exclusively via the npm wrapper / shell installers above (which fetch a prebuilt platform binary, no Rust toolchain required).
+The `treeship-cli` cargo install path is no longer available; that crate has every version yanked (`cargo install` fails outright). The CLI ships exclusively via the npm wrapper / shell installers above (which fetch a prebuilt platform binary, no Rust toolchain required).
 
 ### Quickstart
 
@@ -549,7 +549,7 @@ Platform packages:
 - `@treeship/cli-linux-arm64` -- Linux arm64
 - `@treeship/cli-linux-x64` -- Linux x86_64
 
-If the binary download fails, postinstall prints a fallback message pointing the user to the shell installer (`curl -fsSL https://www.treeship.dev/install | sh`) or the one-liner setup (`curl -fsSL https://www.treeship.dev/setup | sh`). The `cargo install treeship-cli` fallback is no longer offered (that crate is orphaned at v0.4.0).
+If the binary download fails, postinstall prints a fallback message pointing the user to the shell installer (`curl -fsSL https://www.treeship.dev/install | sh`) or the one-liner setup (`curl -fsSL https://www.treeship.dev/setup | sh`). The `cargo install treeship-cli` fallback is no longer offered (that crate has every version yanked).
 
 ---
 
@@ -672,7 +672,7 @@ SDK:
 - `treeship attest endorsement` subcommand implemented
 - Auto-chain all attest commands via `write_last()`
 - `~/.treeship/` directory permissions set to 0700
-- Hub Dockerfile with treeship CLI for `/v1/verify`
+- Hub Dockerfile with treeship CLI for `/v1/verify` (that server-side verdict is retired now -- see the retired-endpoint row above)
 - Full release pipeline: npm, crates.io, PyPI, GitHub Releases
 - Automated PyPI publishing in CI
 

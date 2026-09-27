@@ -1,8 +1,9 @@
 # TREESHIP --AGENT INSTRUCTIONS
 
 > **Read this file first. Every time. It is the single source of truth.**
-> Last updated: August 2026 · shipped at v0.24.0 · CLI + Hub + SDKs + MCP/A2A
-> bridges + Claude Code / OpenClaw / Kimi plugins + a Rig integration.
+> CLI + Hub + SDKs + MCP/A2A bridges + Claude Code / OpenClaw / Kimi plugins
+> + a Rig integration. Run `treeship --version` for what's actually
+> installed -- this file names no version of its own, on purpose.
 >
 > **This file is orientation, not inventory.** It described v0.10.2 for four
 > months while the product reached 0.24, and the specific numbers in it were
@@ -44,14 +45,14 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 | Component | Location | Status |
 |-----------|----------|--------|
 | Rust core library | `packages/core/` | signing, verification, keystore, Merkle |
-| Rust CLI binary | `packages/cli/` | 25+ commands |
+| Rust CLI binary | `packages/cli/` | see `command-matrix.mdx` (generated from `--help`) for the full command list |
 | TUI (Ratatui) | `packages/cli/` | Interactive terminal dashboard (`treeship ui`) |
 | OTel export | `packages/cli/` | OpenTelemetry span export (feature-flagged) |
-| Go Hub server | `packages/hub/` | 12 API endpoints |
-| WASM verifier | `packages/core-wasm/` | 167KB gzipped, Merkle + Ed25519 verify |
-| TypeScript SDK | `packages/sdk-ts/` | @treeship/sdk, 6 tests |
+| Go Hub server | `packages/hub/` | JSON API under `/v1/...`; see `main.go` for the route list |
+| WASM verifier | `packages/core-wasm/` | Merkle + Ed25519 verify |
+| TypeScript SDK | `packages/sdk-ts/` | @treeship/sdk |
 | Python SDK | `packages/sdk-python/` | treeship-sdk, parity-tested vs TS via cross-SDK suite |
-| Cross-SDK contract suite | `tests/cross-sdk/` | 4 vectors, runs in CI matrix (Ubuntu+macOS, Node 20/22, Python 3.11/3.12) |
+| Cross-SDK contract suite | `tests/cross-sdk/` | runs in CI matrix (Ubuntu+macOS, Node 20/22, Python 3.11/3.12) |
 | MCP bridge | `bridges/mcp/` | @treeship/mcp |
 | Fumadocs site | `docs/` | 62 pages + 18 blog posts |
 | Website | (separate repo) | 8 pages |
@@ -115,8 +116,8 @@ treeship/                           # monorepo root
 │   │           ├── daemon.rs       # treeship daemon start|stop|status
 │   │           ├── doctor.rs       # treeship doctor
 │   │           ├── merkle.rs       # treeship checkpoint, merkle proof|verify|status|publish
-│   │           ├── dock.rs         # treeship hub attach|push|pull|status|undock
-│   │           ├── ui.rs           # treeship ui (Ratatui interactive dashboard)
+│   │           ├── hub.rs          # treeship hub attach|detach|ls|status|use|push|pull|open|kill
+│   │           ├── tui/            # treeship ui (Ratatui interactive dashboard)
 │   │           └── otel.rs         # treeship otel test|status|export|enable|disable (feature-flagged)
 │   │
 │   ├── hub/                        # Go HTTP server (12 endpoints)
@@ -131,11 +132,11 @@ treeship/                           # monorepo root
 │   │       ├── merkle/             # Merkle checkpoint + proof endpoints
 │   │       └── rekor/              # Rekor anchoring (best-effort)
 │   │
-│   ├── core-wasm/                  # WASM verifier (167KB gzipped, Merkle + Ed25519)
-│   └── sdk-ts/                     # @treeship/sdk (6 tests)
+│   ├── core-wasm/                  # WASM verifier (Merkle + Ed25519)
+│   └── sdk-ts/                     # @treeship/sdk
 │
 ├── bridges/
-│   └── mcp/                        # @treeship/mcp (3 tests)
+│   └── mcp/                        # @treeship/mcp
 │
 └── docs/                           # Fumadocs site (45 pages)
 ```
@@ -320,7 +321,7 @@ GET /v1/verify/:id
   index only; verify locally against your own pinned roots (`treeship
   verify`, `package verify`, or `@treeship/verify` in-process).
 
-GET /v1/workspace
+GET /v1/workspace/{dockId}
   List artifacts for the authenticated dock. DPoP required.
   Return: { "artifacts": [...] }
 
@@ -335,11 +336,11 @@ POST /v1/merkle/proof  [DPoP authenticated]
   Body: { artifact_id, proof_json }
   Store an inclusion proof for an artifact.
 
-GET /v1/merkle/proof/:artifact_id
+GET /v1/merkle/{artifactId}
   Return inclusion proof for an artifact.
 
-GET /v1/merkle/latest
-  Return the latest checkpoint for the authenticated dock.
+GET /v1/merkle/checkpoint/latest
+  Return the latest checkpoint (also returns age_seconds since W4-4).
 
 GET /.well-known/treeship/revoked.json
   Return: { "revoked": [], "signed_at": "...", "version": "1" }
@@ -387,7 +388,7 @@ the signature and the key; the payload itself is not published.
 
 **main.go:** chi router, all routes wired, DB init on startup, listen on :8080 (PORT env var), log every request.
 
-### 6.2 packages/cli/src/commands/dock.rs
+### 6.2 packages/cli/src/commands/hub.rs (was named dock.rs in an earlier draft; the file is hub.rs)
 
 **Add to config.rs HubConfig:**
 ```rust
@@ -539,7 +540,7 @@ treeship verify art_xxxxx
 - `--format json` on every command, stable schema
 - Exit codes: `0` = ok, `1` = error, `3` = not initialized, `4` = usage
 - No interactive prompts. Agents can't handle them.
-- `TREESHIP_ACTOR`, `TREESHIP_PARENT`, `TREESHIP_TOKEN` env vars as flag fallbacks
+- `TREESHIP_PARENT` env var as a flag fallback (`wrap.rs`, `session.rs`, `hook.rs`). `TREESHIP_ACTOR` is read by the MCP bridge (`@treeship/mcp`), not by the CLI itself. `TREESHIP_TOKEN` reads nothing; the real vars are `TREESHIP_TOKENS_IN` / `TREESHIP_TOKENS_OUT`
 - Respect `NO_COLOR` and `--no-color`
 - `treeship wrap` always propagates subprocess exit code
 

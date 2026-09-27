@@ -40,6 +40,19 @@ Resolution order for the binary is `cli_path` > `bot_mode` bootstrap > plain
 bootstrap path: a default `Treeship()` runs whatever `treeship` your `PATH`
 resolves, even if `$TREESHIP_BIN` points elsewhere.
 
+### `Treeship.ensure_cli()`
+
+A classmethod that resolves a working CLI binary without instantiating the SDK -- the same bootstrap logic `bot_mode=True` runs at construction time, callable up front. Order: env var (`$TREESHIP_BIN`) -> `PATH` -> cache -> `npm install` -> GitHub Release; each step is fast and idempotent, and the function returns at the first success. Raises `TreeshipBootstrapError` if every probe fails.
+
+Returns a `BootstrapResult`: `ok`, `binary` (absolute path), `version`, `source` (`"env" | "path" | "npm-cache" | "github-release"`), and `cache_dir` (set only for cache-based sources). A `Treeship(bot_mode=True)` instance exposes the same result on its `.bootstrap` property (`None` when `bot_mode` wasn't used), and `.binary` for the resolved path regardless of mode.
+
+```python
+from treeship_sdk import Treeship
+
+result = Treeship.ensure_cli()
+print(result.source)  # "path", "npm-cache", "github-release", ...
+```
+
 ## Quick start
 
 ```python
@@ -156,6 +169,12 @@ document -- the artifact id -- for the wrapper to parse.
 
 Returns `ActionResult(artifact_id)`.
 
+### `session_event(event_type, *, tool=None, file=None, destination=None, actor=None, agent_name=None, duration_ms=None, exit_code=None)`
+
+Append a structured event to the active session's timeline. Mirrors `ship.session.event()` in the TypeScript SDK. The timeline is what the receipt page renders (unsigned, in the session's `events.jsonl`); signed artifacts remain the evidence. Typical `event_type` values: `agent.called_tool`, `agent.wrote_file`, `agent.read_file`, `agent.connected_network`, `agent.decision`.
+
+Returns `SessionEventResult(event_id, sequence_no, session_id)`.
+
 ### `session_report(session_id=None, *, timeout=None)`
 
 Upload a closed session's [Session Receipt](/docs/concepts/session-receipts) to the configured hub and return the permanent public URL.
@@ -229,6 +248,16 @@ class VerifyResult:
 class PushResult:
     hub_url: str
     rekor_index: Optional[int] = None
+```
+
+### `SessionEventResult`
+
+```python
+@dataclass
+class SessionEventResult:
+    event_id: str
+    sequence_no: int
+    session_id: str
 ```
 
 ### `SessionReportResult`
