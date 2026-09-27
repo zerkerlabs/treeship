@@ -100,6 +100,13 @@ func TestStats_CountsSplitByWindow(t *testing.T) {
 	); err != nil {
 		t.Fatalf("insert session: %v", err)
 	}
+	// A receipt taken down this week: not a session, not an upload.
+	if _, err := database.Exec(
+		`INSERT INTO sessions (session_id, dock_id, status, receipt_json, uploaded_at, tombstoned_at) VALUES (?, ?, 'tombstoned', NULL, ?, ?)`,
+		"ssn_gone", "dck_new", now, now,
+	); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
 
 	// Agents: same agent_id on two docks counts once (DISTINCT agent_id);
 	// one agent last seen long ago drops out of the 7d window.

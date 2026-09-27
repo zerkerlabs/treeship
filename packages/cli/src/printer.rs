@@ -141,6 +141,15 @@ impl Printer {
         out!("{}", self.dim(msg));
     }
 
+    /// Dim diagnostic on stderr, for commands whose stdout belongs to someone
+    /// else (the shell hooks print into the prompt). Quiet silences it.
+    pub fn note(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
+        err!("{}", self.dim(msg));
+    }
+
     /// Bold section header (for status-style multi-part output)
     pub fn section(&self, title: &str) {
         if self.quiet || self.format == Format::Json {

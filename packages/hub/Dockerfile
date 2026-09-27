@@ -9,8 +9,13 @@ COPY . .
 #   docker build --build-arg HUB_VERSION=0.31.10 --build-arg HUB_COMMIT=$(git rev-parse --short HEAD) \
 #     --build-arg HUB_BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) .
 # Unset, the endpoint reports "dev" / "unknown" rather than guessing.
+# Build args with defaults. Railway passes its own build-time variables in
+# as ARGs when declared, so the commit comes from RAILWAY_GIT_COMMIT_SHA when
+# nothing else set it. An empty HUB_VERSION falls back at runtime to the
+# Release constant in internal/version, which the release script stamps.
+ARG RAILWAY_GIT_COMMIT_SHA=""
 ARG HUB_VERSION=""
-ARG HUB_COMMIT=""
+ARG HUB_COMMIT="${RAILWAY_GIT_COMMIT_SHA}"
 ARG HUB_BUILT_AT=""
 RUN CGO_ENABLED=1 go build \
     -ldflags "-X github.com/zerkerlabs/treeship/packages/hub/internal/version.Version=${HUB_VERSION} -X github.com/zerkerlabs/treeship/packages/hub/internal/version.Commit=${HUB_COMMIT} -X github.com/zerkerlabs/treeship/packages/hub/internal/version.BuiltAt=${HUB_BUILT_AT}" \

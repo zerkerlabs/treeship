@@ -140,6 +140,10 @@ const SKIP: &[(&str, &str)] = &[
     ("hub open", "opens a browser"),
     ("hub pull", "needs a hub"),
     (
+        "hub unpublish",
+        "needs a hub; its JSON is checked against a fake hub in hub_unpublish_cli.rs",
+    ),
+    (
         "hub push",
         "needs a hub (covered with a mock in hub_share_urls_cli.rs)",
     ),

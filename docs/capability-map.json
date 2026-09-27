@@ -254,6 +254,7 @@
     {
       "path": "/v1/receipt/{session_id}",
       "methods": [
+        "DELETE",
         "GET",
         "PUT"
       ]

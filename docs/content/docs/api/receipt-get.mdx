@@ -60,6 +60,19 @@ The `immutable` cache directive reflects the fact that a receipt for a given `se
 
 Returned when a row exists for this `session_id` but no receipt has been uploaded yet. This shape lets A2A consumers distinguish "session exists but is still running" from "no such session".
 
+### 410 Gone
+
+The publishing dock took the receipt down with [`DELETE /v1/receipt/{session_id}`](/docs/api/receipt-delete). The body is gone for good; the response names the takedown and, when one was given, the reason. It is served with `Cache-Control: no-store`.
+
+```json
+{
+  "error": "this receipt was taken down by its publisher; the session id is retired",
+  "session_id": "ssn_42e740bd9eb238f6",
+  "tombstoned_at": 1758931200,
+  "reason": "leaked local paths"
+}
+```
+
 ### 404 Not Found
 
 ```json

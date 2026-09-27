@@ -137,6 +137,32 @@ def pyproject_version(rel: str) -> str | None:
     return None
 
 
+def go_release_const(rel: str) -> str | None:
+    """Read `const Release = "X"` from a Go source file (the hub's version
+    fallback for builds without -ldflags)."""
+    text = read_text(rel)
+    if text is None:
+        return None
+    m = re.search(r'^const Release = "([^"]+)"', text, re.M)
+    return m.group(1) if m else None
+
+
+def set_go_release_const(rel: str, version: str) -> None:
+    text = read_text(rel)
+    if text is None:
+        raise FileNotFoundError(rel)
+    new, n = re.subn(
+        r'^(const Release = ")[^"]+(")',
+        lambda m: m.group(1) + version + m.group(2),
+        text,
+        count=1,
+        flags=re.M,
+    )
+    if n != 1:
+        raise ValueError(f"{rel}: no `const Release = ...` to stamp")
+    write_text(rel, new)
+
+
 def py_dunder_version(rel: str) -> str | None:
     """Extract the version that ``__version__`` will resolve to at runtime.
 
@@ -383,6 +409,17 @@ def collect_sites() -> list[Site]:
                 lambda v, rel=rel: set_cargo_package_version(rel, v),
             )
         )
+
+    # The hub's version fallback for builds without -ldflags (Railway).
+    hub_rel = "packages/hub/internal/version/version.go"
+    sites.append(
+        Site(
+            hub_rel,
+            "hub version.Release constant",
+            go_release_const(hub_rel),
+            lambda v, rel=hub_rel: set_go_release_const(rel, v),
+        )
+    )
 
     # Workspace-internal Cargo pins: crates that depend on core must name the
     # same version. `cargo publish` puts this literal in the released manifest,

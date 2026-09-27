@@ -596,6 +596,23 @@ treeship hub open [OPTIONS]
 | `--hub <NAME\|ID>` | Open workspace for a specific hub connection |
 | `--no-open` | Print URL only, don't open browser |
 
+### `treeship hub unpublish`
+
+Take a published session receipt down from the hub
+
+```
+treeship hub unpublish [OPTIONS] <SESSION_ID>
+```
+
+| Argument | Description |
+|---|---|
+| `<SESSION_ID>` | Session id of the receipt to take down (ssn_...) |
+
+| Option | Description |
+|---|---|
+| `--hub <NAME\|ID>` | Hub connection to use (default: the active one) |
+| `--reason <TEXT>` | A short public reason (at most 200 characters), shown with the 410 |
+
 ### `treeship hub kill`
 
 Remove a hub connection (revokes + deletes local keys)
