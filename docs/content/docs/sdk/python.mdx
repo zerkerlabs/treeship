@@ -71,7 +71,7 @@ print(result.artifact_id)
 verified = ts.verify(result.artifact_id)
 print(verified.outcome)  # "pass"
 
-# Upload a closed session's receipt and get the permanent public URL
+# Upload a closed session's receipt and get the public URL
 report = ts.session_report()
 print(report.receipt_url)
 ```
@@ -177,7 +177,7 @@ Returns `SessionEventResult(event_id, sequence_no, session_id)`.
 
 ### `session_report(session_id=None, *, timeout=None)`
 
-Upload a closed session's [Session Receipt](/docs/concepts/session-receipts) to the configured hub and return the permanent public URL.
+Upload a closed session's [Session Receipt](/docs/concepts/session-receipts) to the configured hub and return the public URL. Stays up until the publishing dock runs [`treeship hub unpublish`](/docs/cli/hub#treeship-hub-unpublish).
 
 ```python
 # Upload the most recently closed session

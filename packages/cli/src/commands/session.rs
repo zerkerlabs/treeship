@@ -3336,7 +3336,7 @@ fn emit_report_output(
             printer.info(&format!("  warnings: {}", warnings.len()));
         }
         printer.blank();
-        printer.hint("share these URLs freely -- they never expire and need no auth");
+        printer.hint("share these URLs freely -- they need no auth and stay up until you unpublish them");
         printer.blank();
     } else {
         // No upload (--no-upload or hub error in text mode is unusual

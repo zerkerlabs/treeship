@@ -5,7 +5,7 @@ description: Upload a Session Receipt v1 to the hub. DPoP authenticated. Idempot
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Uploads a [Session Receipt v1](/docs/concepts/session-receipts) to the hub and makes it available at the permanent public URL `https://treeship.dev/receipt/{session_id}`.
+Uploads a [Session Receipt v1](/docs/concepts/session-receipts) to the hub and makes it available at the public URL `https://treeship.dev/receipt/{session_id}`, until the publishing dock takes it down with [`treeship hub unpublish`](/docs/cli/hub#treeship-hub-unpublish) ([`DELETE /v1/receipt/{session_id}`](/docs/api/receipt-delete)).
 
 In practice you do not call this directly. Run [`treeship session report`](/docs/cli/session#treeship-session-report) and the CLI handles package discovery, body serialization, and DPoP signing for you.
 
