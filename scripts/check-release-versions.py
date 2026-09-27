@@ -160,7 +160,7 @@ def set_go_release_const(rel: str, version: str) -> None:
     )
     if n != 1:
         raise ValueError(f"{rel}: no `const Release = ...` to stamp")
-    write_text(rel, new)
+    _write_text(rel, new)
 
 
 def py_dunder_version(rel: str) -> str | None:

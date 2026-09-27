@@ -97,6 +97,14 @@ cmd_prepare() {
   python3 "$(dirname "$0")/changelog.py" assemble "$VERSION" \
     || { echo "changelog assemble failed" >&2; exit 1; }
 
+  # The docs site carries a copy of CHANGELOG.md, and docs-drift fails when
+  # a released section is missing from it. The section assembled just above
+  # is new, so regenerate the copy here or the release PR goes red.
+  echo
+  echo "Syncing the docs changelog page..."
+  (cd "$(dirname "$0")/../docs" && node scripts/sync-changelog.mjs) \
+    || { echo "docs changelog sync failed (run: cd docs && npm ci)" >&2; exit 1; }
+
   echo
   echo "Running release version preflight..."
   if ! python3 "$(dirname "$0")/check-release-versions.py" "$VERSION"; then
