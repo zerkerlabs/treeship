@@ -369,6 +369,14 @@ pub fn resolve_config_path() -> Result<(PathBuf, ConfigSource), ConfigError> {
 /// the CLI runs under another (a test harness with HOME=$(mktemp -d)
 /// signed a fixture with the real key into the real store). An explicit
 /// --config or TREESHIP_CONFIG never gets here.
+/// The checks discovery applies to a project config before it is used,
+/// for a caller that located the file itself (the shell hook).
+pub fn check_discovered_config(found: &Path) -> Result<(), ConfigError> {
+    let home = home::home_dir().ok_or(ConfigError::NoHome)?;
+    let global_path = home.join(".treeship").join("config.json");
+    refuse_foreign_extends(found, &global_path, &home)
+}
+
 fn refuse_foreign_extends(stub: &Path, global: &Path, home: &Path) -> Result<(), ConfigError> {
     let Ok(bytes) = fs::read(stub) else {
         return Ok(());

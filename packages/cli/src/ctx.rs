@@ -154,7 +154,22 @@ pub fn open(config_path_override: Option<&str>) -> Result<Ctx, CtxError> {
         Some(p) => (PathBuf::from(p), ConfigSource::Explicit),
         None => config::resolve_config_path()?,
     };
+    open_resolved(config_path, config_source)
+}
 
+/// Open a project config that a command found by walking up from the cwd
+/// itself (the shell hook finds `.treeship/config.yaml` that way). It is a
+/// DISCOVERED config, never an explicit one: a repository may ship any
+/// config it likes, so the same checks run as for `treeship` discovery
+/// (a stub extending outside HOME, stores outside the project's
+/// `.treeship`, a linked `.treeship` or config file). Passing such a path
+/// to `open(Some(..))` would skip them all.
+pub fn open_discovered(config_path: &std::path::Path) -> Result<Ctx, CtxError> {
+    config::check_discovered_config(config_path)?;
+    open_resolved(config_path.to_path_buf(), ConfigSource::ProjectLocal)
+}
+
+fn open_resolved(config_path: PathBuf, config_source: ConfigSource) -> Result<Ctx, CtxError> {
     let cfg = config::load(&config_path)?;
     config::refuse_store_dirs_outside_project(&cfg, &config_path, config_source)?;
     refuse_linked_store_dirs(&cfg)?;

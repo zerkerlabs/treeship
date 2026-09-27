@@ -130,15 +130,23 @@ pub fn post(
     let now_ms = epoch_ms();
     let elapsed_ms = now_ms.saturating_sub(start_ms);
 
-    // Open the workspace this hook belongs to. The hook found the project's
-    // .treeship/config.yaml by walking up from the cwd, so the config
-    // beside it is the store the session in this project uses. An exported
-    // TREESHIP_CONFIG used to win here and send the receipt to another
-    // store than the one `session start --config` named; an explicit
-    // --config still wins over both.
+    // Which workspace records this hook? An explicit --config wins. Else,
+    // when a session is active in the project the hook found (session.json
+    // beside its config.yaml), that project's own config: the session was
+    // started there, and an exported TREESHIP_CONFIG used to send the
+    // hook's receipt to another store. Otherwise the normal resolution
+    // (TREESHIP_CONFIG, then discovery). The project config is opened as
+    // DISCOVERED, never as explicit: the shell hook runs on every prompt,
+    // so a cloned repository's config.json gets every discovery check
+    // (stores inside its .treeship, no foreign extends, no links) before a
+    // key is touched.
     let project_json = config_path.with_file_name("config.json");
-    let project_json = project_json.to_string_lossy().into_owned();
-    let ctx = ctx::open(Some(config_override.unwrap_or(project_json.as_str())))?;
+    let session_here = ts_dir.join("session.json").is_file();
+    let ctx = match config_override {
+        Some(explicit) => ctx::open(Some(explicit))?,
+        None if session_here && project_json.is_file() => ctx::open_discovered(&project_json)?,
+        None => ctx::open(None)?,
+    };
 
     let actor_uri = {
         // Try to get actor from project config
