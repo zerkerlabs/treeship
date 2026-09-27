@@ -1229,10 +1229,15 @@ mod tests {
         // function ignoring cwd entirely; we don't actually need to
         // chdir to confirm that.
         let p = global_config_path().expect("home should be resolvable in CI");
-        assert!(
-            p.ends_with(".treeship/config.json"),
-            "expected ~/.treeship/config.json, got {}",
-            p.display(),
-        );
+        // An exported TREESHIP_CONFIG is the one thing that outranks the
+        // home path; the developer's shell may have one.
+        match std::env::var_os("TREESHIP_CONFIG").filter(|v| !v.is_empty()) {
+            Some(env) => assert_eq!(p, PathBuf::from(env)),
+            None => assert!(
+                p.ends_with(".treeship/config.json"),
+                "expected ~/.treeship/config.json, got {}",
+                p.display(),
+            ),
+        }
     }
 }

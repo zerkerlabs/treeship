@@ -102,10 +102,6 @@ impl Ship {
 /// this list nor the run below fails `every_leaf_is_classified`.
 const SKIP: &[(&str, &str)] = &[
     ("__dump-cli", "is the tree itself"),
-    (
-        "add",
-        "detects and instruments installed agents on this machine",
-    ),
     ("agents approve", "needs a pending card review"),
     (
         "agents remove",
@@ -387,6 +383,9 @@ fn every_json_capable_command_emits_json() {
     );
     check("vi keygen", &["vi", "keygen"]);
     check("vi keys list", &["vi", "keys", "list"]);
+    // 0.31.10 printed one success document per detected harness; the run
+    // is a dry run so nothing on this machine is configured.
+    check("add", &["add", "--dry-run", "--all"]);
 
     // Last, so `verify last` above still saw an honest artifact: the two paths that printed a warning document before the result in
     // 0.31.10 (`json.load(stdout)` failed with "Extra data"): a v2 action

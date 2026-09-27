@@ -2935,28 +2935,15 @@ pub fn report(
     let (hub_name, hub_entry) = match hub_resolved {
         Ok(t) => t,
         Err(e) => {
-            // No hub attached. In `--format json` we degrade to a
-            // local-only response so AI agents can still consume the
-            // shape; in text mode we keep the original recovery
-            // hint that points the user at `hub attach` or local
-            // verify.
+            // No hub attached: an error, in every format. 0.31.10 printed
+            // a report document carrying `error` on stdout in JSON mode
+            // and exited nonzero; errors go to stderr, and the local verdict
+            // is one flag away.
             if format == "json" {
-                emit_report_output(
-                    format,
-                    None,
-                    None,
-                    None,
-                    None,
-                    &resolved_id,
-                    &receipt_digest,
-                    package_digest.as_deref(),
-                    &verification_status,
-                    &warnings,
-                    Some("hub not attached -- run `treeship hub attach` to publish; see verification_status for the local verdict"),
-                    None,
-                    printer,
-                )?;
-                return finish_report(&verification_status, Some("hub not attached -- run `treeship hub attach` to publish; see verification_status for the local verdict"));
+                return Err(format!(
+                    "{e}: run `treeship hub attach` to publish, or `treeship session report --no-upload` for the local verdict"
+                )
+                .into());
             }
             return Err(format!(
                 "{e}\n\n  \

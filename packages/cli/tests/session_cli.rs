@@ -12,6 +12,7 @@ fn session_close_json_is_one_parseable_document() {
 
     let command = |args: &[&str]| {
         let mut cmd = Command::new(cli_path());
+        cmd.env_remove("TREESHIP_CONFIG");
         cmd.current_dir(root).env("HOME", root).args(args);
         cmd.output().expect("run treeship")
     };
@@ -102,6 +103,7 @@ fn session_event_json_actually_emits_the_event_id() {
 
     let command = |args: &[&str]| {
         let mut cmd = Command::new(cli_path());
+        cmd.env_remove("TREESHIP_CONFIG");
         cmd.current_dir(root).env("HOME", root).args(args);
         cmd.output().expect("run treeship")
     };

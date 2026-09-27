@@ -38,6 +38,7 @@ impl Workspace {
 
     fn command(&self) -> Command {
         let mut command = Command::new(cli_path());
+        command.env_remove("TREESHIP_CONFIG");
         command
             .env("HOME", &self.root)
             .env("TREESHIP_ALLOW_INSECURE_KEY_PERMS", "1")
