@@ -27,6 +27,14 @@ elsewhere in the same paragraph is unbacked. Findings from the wider scan
 and the finer marker rule are WARNINGS until `--strict` (the drift they
 surface is being fixed separately); findings under the original rule on the
 registered files stay errors either way.
+
+Both scans look at prose only: fenced code blocks and inline `code spans`
+are stripped before matching. A flag literally named `--max-unwitnessed`,
+a JSON field named `anchored`, or a curl one-liner is a real identifier or
+a code sample, not an unbacked claim about what Treeship does -- of the
+124 wider-scope findings the 2026-09-27 retest turned up, 27 were this:
+the banned word appeared only inside backticks or a fence, never in a
+sentence making a claim.
 """
 
 from __future__ import annotations
@@ -54,6 +62,26 @@ BANNED_PHRASES = [
 ]
 # `<!-- claims:some-id -->` (markdown) or `{/* claims:some-id */}` (mdx).
 MARKER = re.compile(r"(?:<!--\s*claims:([a-z0-9-]+)\s*-->|\{/\*\s*claims:([a-z0-9-]+)\s*\*/\})")
+INLINE_CODE = re.compile(r"`[^`]*`")
+FENCE_LINE = re.compile(r"^\s*```")
+
+
+def prose_only(text: str) -> str:
+    """Drop fenced code blocks and inline code spans before a banned-phrase
+    scan. A flag literally named `--max-unwitnessed`, a JSON field named
+    `anchored`, or a curl one-liner is a real identifier or a code sample,
+    not an unbacked prose claim about what Treeship does -- the registry
+    exists to catch sentences, not to force a marker onto every doc page
+    that names a real flag or field."""
+    out_lines = []
+    in_fence = False
+    for line in text.splitlines():
+        if FENCE_LINE.match(line):
+            in_fence = not in_fence
+            out_lines.append("")
+            continue
+        out_lines.append("" if in_fence else INLINE_CODE.sub("", line))
+    return "\n".join(out_lines)
 
 
 SCAN_ROOTS = [ROOT / "docs" / "content", ROOT / "skills"]
@@ -95,8 +123,9 @@ def line_findings(rel: str, text: str, valid_ids: set[str]) -> list[str]:
     out = []
     lines = text.splitlines()
     cover = covered_lines(lines)
+    clean_lines = prose_only(text).splitlines()
     for i, line in enumerate(lines):
-        low = line.lower()
+        low = clean_lines[i].lower() if i < len(clean_lines) else line.lower()
         hits = [p for p in BANNED_PHRASES if p in low]
         if not hits:
             continue
@@ -178,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
         text = path.read_text()
         lower = text.lower()
         for start, para in paragraphs(text):
-            para_lower = para.lower()
+            para_lower = prose_only(para).lower()
             hits = [p for p in BANNED_PHRASES if p in para_lower]
             if not hits:
                 continue

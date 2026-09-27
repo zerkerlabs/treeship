@@ -33,7 +33,7 @@ A clean trust story for agents has to keep three different concerns from collaps
 | **Model + provider** | claude-opus-4-7 / anthropic, gpt-5 / openai, kimi-k2 / moonshot, llama / meta, local / ollama | Provider-colored model pill on each agent card |
 | **Tool channel** | Native hook, MCP gateway, shell wrap, git reconciliation | `source` field on every file row and process row |
 
-Any agent that speaks MCP attaches via the same gateway. Any model behind that agent gets attributed. Any tool channel that touches the working tree gets witnessed.
+Any agent that speaks MCP attaches via the same gateway. Any model behind that agent gets attributed. Any tool channel that touches the working tree gets captured.
 
 ## The bar
 
@@ -47,7 +47,7 @@ Hooks and MCP cover most paths but not all. An agent that runs `sed -i` inside a
 | 2 | Promoted from `agent.called_tool` | MCP bridge captured the call; the aggregator inferred direction from tool name + meta | `source: "mcp"` — medium, direction inferred |
 | 3 | `git diff` at session close | Backstop; catches anything missed | `source: "git-reconcile"` — completeness over direct attribution |
 
-Every file row on a receipt carries one of these `source` labels so a reviewer can see how each change was witnessed, not just that it happened.
+Every file row on a receipt carries one of these `source` labels so a reviewer can see how each change was captured, not just that it happened.
 
 ## Determinism is a property, not a marketing word
 

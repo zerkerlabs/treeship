@@ -46,7 +46,7 @@ revoked grant.
 |---|---|
 | `envelope` | The signed bytes. Verify this against the grantor — do not trust the flattened fields beside it, which this server wrote. |
 | `dock_id` | Which log the entry belongs to, so you can fetch that dock's checkpoint and request an inclusion proof. |
-| `rekor_index` | `null` means *not anchored*. It never means "anchoring failed silently and that is fine". |
+| `rekor_index` | `null` means *not anchored*. It never means "anchoring failed silently and that is fine". {/* claims:rekor-artifact-anchoring */} |
 | `truncated` | `true` when more revocations exist than were returned (the cap is 1000). A truncated list adds `truncation_warning`. |
 
 <Callout type="warn">

@@ -139,7 +139,7 @@ The caller must own **both** the artifact and the checkpoint. This is object-lev
 authorization, not a formality: because proofs are stored per
 `(artifact_id, checkpoint_id)` and the highest checkpoint wins, any authenticated
 dock that could write a proof it did not own could shadow another dock's proof and
-make anchored artifacts read as un-anchored.
+make anchored artifacts read as un-anchored. {/* claims:transparency-log-client-reverified */}
 
 | Status | Cause |
 |---|---|
