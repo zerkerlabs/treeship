@@ -422,10 +422,10 @@ pub fn revoke_capability(
     // locally — then this revocation will be silently IGNORED by every
     // verifier. Refuse to mint it rather than print a success banner for a
     // revocation nobody will honor (fail-open masquerading as done).
+    let trust = TrustRootStore::open_default_or_empty()?;
     let will_be_honored = {
         let signer_kid = signer.key_id();
         let self_revoke = !card_keyid.is_empty() && signer_kid == card_keyid;
-        let trust = TrustRootStore::open_default_or_empty()?;
         // Batch 5: issuer revocation is now scoped to the `Revoker` kind.
         let issuer_revoke = trust
             .roots()
@@ -467,6 +467,9 @@ pub fn revoke_capability(
     })?;
 
     let self_revoke = signer.key_id() == card_keyid;
+    // An asserted card's key is the ship's default key; "agent key" would
+    // claim a per-agent key that does not exist.
+    let key_bound = self_revoke && is_key_bound(card_keyid, card_keyid, &trust);
     printer.success(
         "capability card revoked",
         &[
@@ -475,8 +478,10 @@ pub fn revoke_capability(
             ("agent", card_agent),
             (
                 "authority",
-                if self_revoke {
+                if key_bound {
                     "self (agent key)"
+                } else if self_revoke {
+                    "self (the card's key, the ship default key)"
                 } else {
                     "ship default key"
                 },
@@ -521,14 +526,22 @@ pub(crate) fn find_revocation(
             continue;
         }
         // The revoker's key must have produced a VALID signature over the
-        // revocation, re-verified against trust roots — not read from the
-        // unverified `signatures[0].keyid`. Otherwise a revocation carrying a
-        // forged first keyid (the card's key, or a Ship root) plus a garbage
+        // revocation, re-verified against the keys this machine trusts (its
+        // own keys and the pinned roots, the same set the card itself is
+        // verified against) — not read from the unverified
+        // `signatures[0].keyid`. Otherwise a revocation carrying a forged
+        // first keyid (the card's key, or a Ship root) plus a garbage
         // signature would be honored, letting a stranger revoke a card (DoS).
-        let verified: Vec<String> = treeship_core::verify::resolution::verifier_from_trust(trust)
-            .verify_any(&rec.envelope)
-            .map(|r| r.verified_key_ids)
-            .unwrap_or_default();
+        // Local keys count: an asserted card's key is the ship's own key,
+        // and its self-revocation was silently ignored while `revoke` said
+        // "revoked" (0.31.11 re-test, N-38).
+        let verified: Vec<String> =
+            crate::commands::verifier::from_local_and_trust(&ctx.keys, trust)
+                .ok()
+                .flatten()
+                .and_then(|v| v.verify_any(&rec.envelope).ok())
+                .map(|r| r.verified_key_ids)
+                .unwrap_or_default();
         let self_revoke = !card_keyid.is_empty() && verified.iter().any(|k| k == card_keyid);
         // Batch 5: issuer revocation is now scoped to the `Revoker` kind.
         let issuer_revoke = verified.iter().any(|rk| {
