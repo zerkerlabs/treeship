@@ -15,7 +15,8 @@ Artifact IDs are derived from the artifact's content:
 art_ + hex(sha256(PAE bytes)[:16])
 ```
 
-The ID is not assigned. It is computed. Change one byte of the artifact and the ID changes. There is no way to modify an artifact while preserving its ID.
+{/* claims:receipt-tamper-evidence */}
+The ID is not assigned. It is computed from the signed payload bytes. Change one byte of that signed payload and the ID changes -- there is no way to modify it while preserving the ID. That's tamper-*evident*, not tamper-proof or immutable: fields outside the signed payload can still change on disk, and a key holder can always sign a new artifact; the ID only pins the signed content, not everything ever associated with it.
 
 <Callout type="info">
 PAE (Pre-Authentication Encoding) is the DSSE standard for encoding payload type and payload before signing. The ID is derived from the same bytes that are signed.

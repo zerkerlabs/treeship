@@ -32,23 +32,27 @@ if (result.outcome === 'pass') {
 }
 ```
 
-### `verifyCertificate(target, now?)`
+### `verifyCertificate(target, now?, trustRoots?)`
 
-Verifies the Ed25519 signature on an Agent Certificate against the public key embedded in the certificate. With `now` supplied (Date or RFC 3339 string), also classifies the validity window.
+Verifies the Ed25519 signature on an Agent Certificate against a trust root the caller pins via `trustRoots` -- as of the v0.10.3 trust-root audit fix, the certificate's own embedded public key is never trusted on its own; that would make every certificate self-signed. `trustRoots` is required for the signature to be accepted; omit it to get a deliberate fail-closed result for diagnostic UIs. With `now` supplied (Date or RFC 3339 string), also classifies the validity window.
 
 ```typescript
 import { verifyCertificate } from '@treeship/verify';
 
-const result = await verifyCertificate('./researcher.agent/certificate.json', new Date());
+const result = await verifyCertificate(
+  './researcher.agent/certificate.json',
+  new Date(),
+  trustRootsJson, // e.g. the contents of ~/.treeship/trust_roots.json
+);
 
 if (result.outcome === 'pass' && result.validity === 'valid') {
   console.log(`certificate valid for ${result.certificate.agent_name}`);
 }
 ```
 
-### `crossVerify(receipt, certificate, now?)`
+### `crossVerify(receipt, certificate, now?, trustRoots?)`
 
-Answers three questions: do the receipt and certificate reference the same ship, was the certificate valid at `now`, was every tool the session called authorized by the certificate. The `ok` field is the roll-up.
+Answers three questions: do the receipt and certificate reference the same ship, was the certificate valid at `now`, was every tool the session called authorized by the certificate. The `ok` field is the roll-up. Like `verifyCertificate`, the certificate's signature is only accepted against a pinned `trustRoots` set -- omit it for a deliberate fail-closed result.
 
 ```typescript
 import { crossVerify } from '@treeship/verify';
@@ -56,6 +60,8 @@ import { crossVerify } from '@treeship/verify';
 const result = await crossVerify(
   'https://treeship.dev/receipt/ssn_abc',
   'https://example.com/researcher.agent.json',
+  new Date(),
+  trustRootsJson,
 );
 
 if (result.ok) {
@@ -166,7 +172,7 @@ renderChecks(result.checks);
 ## What this package is NOT
 
 - **Not an attestation SDK.** For signing artifacts, session management, Hub push/pull, or agent registration, use [`@treeship/sdk`](../sdk-ts/) which shells out to the `treeship` CLI.
-- **Not a trust anchor.** The embedded Ed25519 signature on an Agent Certificate is verified against the certificate's own public key. Chaining a certificate to a trusted issuer is the caller's responsibility.
+- **Not a trust anchor.** `verifyCertificate` checks the embedded Ed25519 signature against a `trustRoots` set the caller pins and passes in -- not against the certificate's own embedded key, which would make every certificate self-signed. Deciding *which* roots to trust, and chaining further to an issuer, is the caller's responsibility.
 - **Not a drop-in for local-chain verification.** Some signature verification needs the original envelope bytes, which a URL-fetched receipt does not carry. Use `treeship verify <artifact-id>` on the CLI for that.
 
 ## License
