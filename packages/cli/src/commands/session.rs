@@ -1593,6 +1593,31 @@ pub fn close(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // The operator's narrative is free text and lands in the signed receipt;
+    // a home path in it is rewritten as `~/...` like every other field, and
+    // the person is told, since these are their own words (0.31.11 re-test,
+    // N-28).
+    let mut rewritten: Vec<&str> = Vec::new();
+    let mut redact_text = |label: &'static str, text: Option<String>| -> Option<String> {
+        let text = text?;
+        let out = treeship_core::session::redact_home_path(&text);
+        if out != text {
+            rewritten.push(label);
+        }
+        Some(out)
+    };
+    let summary = redact_text("--summary", summary);
+    let headline = redact_text("--headline", headline);
+    let review = redact_text("--review", review);
+    if !rewritten.is_empty() {
+        printer.warn(
+            &format!(
+                "home directory paths in {} were rewritten as ~/... before signing",
+                rewritten.join(", ")
+            ),
+            &[],
+        );
+    }
     let mut manifest = match load_session() {
         Some(m) => m,
         None => {
