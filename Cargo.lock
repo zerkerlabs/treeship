@@ -3160,7 +3160,7 @@ dependencies = [
 
 [[package]]
 name = "rig-treeship"
-version = "0.31.10"
+version = "0.31.11"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -4327,7 +4327,7 @@ dependencies = [
 
 [[package]]
 name = "treeship-cli"
-version = "0.31.10"
+version = "0.31.11"
 dependencies = [
  "base64",
  "clap",
@@ -4353,7 +4353,7 @@ dependencies = [
 
 [[package]]
 name = "treeship-core"
-version = "0.31.10"
+version = "0.31.11"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -4374,7 +4374,7 @@ dependencies = [
 
 [[package]]
 name = "treeship-core-wasm"
-version = "0.31.10"
+version = "0.31.11"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ec 0.4.2",
