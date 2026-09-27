@@ -159,3 +159,146 @@ fn the_active_sessions_workspace_wins_over_an_exported_treeship_config() {
     assert!(out.status.success(), "{}", text(&out));
     assert_eq!(artifacts(other.path()), before_other + 1, "{}", text(&out));
 }
+
+/// A harness that sandboxes HOME and TREESHIP_CONFIG but runs from the real
+/// user's project must not climb to the real user's session and sign with
+/// their key: only a workspace inside the (canonical) HOME qualifies.
+#[test]
+fn a_session_outside_home_never_outranks_the_sandbox() {
+    let real = tempfile::tempdir().unwrap();
+    let real_project = real.path().join("project");
+    std::fs::create_dir_all(&real_project).unwrap();
+    let real_cfg = real_project.join(".treeship/config.json");
+    let out = run(
+        &real_project,
+        real.path(),
+        &[],
+        &[
+            "init",
+            "--name",
+            "real",
+            "--config",
+            &real_cfg.to_string_lossy(),
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    let out = run(
+        &real_project,
+        real.path(),
+        &[],
+        &["session", "start", "--name", "theirs"],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    let real_before = artifacts(&real_project);
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let sandbox_cfg = sandbox.path().join(".treeship/config.json");
+    let out = run(
+        sandbox.path(),
+        sandbox.path(),
+        &[],
+        &[
+            "init",
+            "--name",
+            "sandbox",
+            "--config",
+            &sandbox_cfg.to_string_lossy(),
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    let env = [("TREESHIP_CONFIG", sandbox_cfg.to_str().unwrap())];
+    let out = run(
+        &real_project,
+        sandbox.path(),
+        &env,
+        &[
+            "attest",
+            "action",
+            "--actor",
+            "agent://harness",
+            "--action",
+            "fixture",
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    assert_eq!(
+        artifacts(&real_project),
+        real_before,
+        "the harness signed into the real user's store"
+    );
+    assert_eq!(
+        artifacts(sandbox.path()),
+        1,
+        "the fixture did not land in the sandbox:\n{}",
+        text(&out)
+    );
+}
+
+/// A repository cannot plant a real `.treeship/session.json` with
+/// `config.json -> ~/.treeship/config.json` to have the global key sign into
+/// the global store with its session as the parent.
+#[cfg(unix)]
+#[test]
+fn a_linked_config_beside_a_planted_session_is_refused() {
+    let home = tempfile::tempdir().unwrap();
+    let global_cfg = home.path().join(".treeship/config.json");
+    let out = run(
+        home.path(),
+        home.path(),
+        &[],
+        &[
+            "init",
+            "--name",
+            "me",
+            "--config",
+            &global_cfg.to_string_lossy(),
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    // A real session manifest to plant: start and read one, then close it.
+    let out = run(
+        home.path(),
+        home.path(),
+        &[],
+        &["session", "start", "--name", "mine"],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    let manifest = std::fs::read(home.path().join(".treeship/session.json")).unwrap();
+    let out = run(home.path(), home.path(), &[], &["session", "close"]);
+    assert!(out.status.success(), "{}", text(&out));
+    let global_before = artifacts(home.path());
+
+    let repo = home.path().join("evil");
+    std::fs::create_dir_all(repo.join(".treeship")).unwrap();
+    std::fs::write(repo.join(".treeship/session.json"), &manifest).unwrap();
+    std::os::unix::fs::symlink(&global_cfg, repo.join(".treeship/config.json")).unwrap();
+
+    let out = run(
+        &repo,
+        home.path(),
+        &[],
+        &[
+            "attest",
+            "action",
+            "--actor",
+            "agent://evil",
+            "--action",
+            "plant",
+        ],
+    );
+    assert!(
+        !out.status.success(),
+        "a linked config beside a planted session was accepted:\n{}",
+        text(&out)
+    );
+    assert!(
+        text(&out).to_lowercase().contains("symlink"),
+        "{}",
+        text(&out)
+    );
+    assert_eq!(
+        artifacts(home.path()),
+        global_before,
+        "the global store received the planted attestation"
+    );
+}

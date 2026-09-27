@@ -82,8 +82,25 @@ fn open_workspace_ctx(
     }
     if let Some(session_json) = session_path().filter(|p| !require_session || p.is_file()) {
         let beside = session_json.with_file_name("config.json");
-        if beside.is_file() {
-            let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        // Only a workspace inside the person's HOME qualifies. A harness
+        // that sandboxes HOME and TREESHIP_CONFIG but runs from the real
+        // user's project would otherwise climb to the real user's session
+        // and sign with their key (the incident config.rs documents); a
+        // walk that never passes HOME finds nothing here.
+        let inside_home = home::home_dir().is_some_and(|h| {
+            session_json
+                .parent()
+                .and_then(|ts| ts.parent())
+                .is_some_and(|project| canon(project).starts_with(canon(&h)))
+        });
+        if inside_home && beside.is_file() {
+            // The .treeship dir and the config beside the session must be
+            // real: a repository's `config.json -> ~/.treeship/config.json`
+            // would canonicalize to the global config and open as --config,
+            // signing with the global key into the global store with the
+            // repository's session as parent.
+            crate::safe_fs::refuse_symlinks_under_treeship(&beside)?;
             let is_global = home::home_dir()
                 .map(|h| canon(&h.join(".treeship").join("config.json")))
                 .is_some_and(|g| g == canon(&beside));
