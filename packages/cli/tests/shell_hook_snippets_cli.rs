@@ -89,9 +89,10 @@ fn bash_records_a_compound_line_once_and_an_empty_enter_records_nothing() {
         1,
         "the compound line must be recorded exactly once:\n{all}"
     );
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        !String::from_utf8_lossy(&out.stdout).contains("stale hook state"),
-        "hook diagnostics reached stdout:\n{all}"
+        !stdout.contains("stale hook state") && !stdout.contains("art_"),
+        "the hook printed into the prompt:\n{all}"
     );
     assert!(all.contains("ok"), "{all}");
 
@@ -132,4 +133,104 @@ fn zsh_with_nounset_stays_quiet_on_an_empty_enter() {
         "nounset tripped on the hook's variables:\n{all}"
     );
     assert_eq!(artifacts(project.path()), 1, "{all}");
+}
+
+fn bash_in(home: &std::path::Path, project: &std::path::Path) -> Command {
+    let mut cmd = Command::new("bash");
+    cmd.current_dir(project)
+        .env("HOME", home)
+        .env("HISTFILE", home.join(".bash_history"))
+        .env_remove("TREESHIP_CONFIG")
+        .env_remove("PROMPT_COMMAND")
+        .args([
+            "--noprofile",
+            "--rcfile",
+            home.join(".bashrc").to_str().unwrap(),
+            "-i",
+        ]);
+    cmd
+}
+
+/// A line history did not record must not inherit the previous entry: with
+/// `ignorespace`, ` echo ok` after a matched git line used to be signed as
+/// that git commit. Same with history switched off.
+#[test]
+fn bash_never_signs_a_line_history_did_not_record() {
+    let (home, project) = setup("/bin/bash");
+    let mut cmd = bash_in(home.path(), project.path());
+    cmd.env("HISTCONTROL", "ignorespace");
+    let out = drive(
+        cmd,
+        "git commit -m one && echo ok\n echo ok\n echo ok\nexit\n",
+    );
+    assert_eq!(
+        artifacts(project.path()),
+        1,
+        "a space-prefixed line was recorded as the earlier git commit:\n{}",
+        text(&out)
+    );
+
+    let cmd = bash_in(home.path(), project.path());
+    let out = drive(
+        cmd,
+        "set +o history\ngit commit -m two && echo ok\necho ok\ngit commit -m three\nexit\n",
+    );
+    // Without history the first simple command stands for the line: both
+    // git lines are recorded, `echo ok` is not, and nothing is recorded twice.
+    assert_eq!(artifacts(project.path()), 3, "{}", text(&out));
+}
+
+/// bash rewrites redirections in BASH_COMMAND (`2>/dev/null` becomes
+/// `2> /dev/null`); the history line, taken whole, is what was typed.
+#[test]
+fn bash_records_a_redirected_pipeline_as_typed() {
+    let (home, project) = setup("/bin/bash");
+    let cmd = bash_in(home.path(), project.path());
+    let out = drive(cmd, "git commit -m x 2>/dev/null | cat\nexit\n");
+    assert_eq!(artifacts(project.path()), 1, "{}", text(&out));
+    let recorded = recorded_commands(project.path());
+    assert!(
+        recorded
+            .iter()
+            .any(|c| c == "git commit -m x 2>/dev/null | cat"),
+        "the recorded command is not the typed line: {recorded:?}"
+    );
+}
+
+/// The `command` of every signed action in the project's store, read from
+/// the stored DSSE envelopes.
+fn recorded_commands(store: &std::path::Path) -> Vec<String> {
+    use base64::Engine;
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(store.join(".treeship/artifacts"))
+        .unwrap()
+        .flatten()
+    {
+        let Ok(raw) = std::fs::read(entry.path()) else {
+            continue;
+        };
+        let Ok(env) = serde_json::from_slice::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        let Some(payload) = env["envelope"]["payload"].as_str() else {
+            continue;
+        };
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload))
+            .unwrap_or_default();
+        let Ok(stmt) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        let cmd = stmt["meta"]["command"]
+            .as_str()
+            .or_else(|| stmt["predicate"]["meta"]["command"].as_str())
+            .or_else(|| stmt["predicate"]["command"].as_str());
+        if let Some(c) = cmd {
+            out.push(c.to_string());
+        } else {
+            out.push(String::from_utf8_lossy(&bytes).to_string());
+        }
+    }
+    out
 }

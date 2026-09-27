@@ -20,13 +20,13 @@ fn zsh_hook(bin: &str) -> String {
         r#"# Treeship shell hook -- installed by treeship install
 treeship_preexec() {{
   TREESHIP_LAST_CMD="$1"
-  {bin} hook pre -- "$1" 2>/dev/null
+  {bin} --quiet hook pre -- "$1" 2>/dev/null
 }}
 autoload -Uz add-zsh-hook
 add-zsh-hook preexec treeship_preexec
 
 treeship_precmd() {{
-  {bin} hook post "$?" -- "${{TREESHIP_LAST_CMD-}}" 2>/dev/null
+  {bin} --quiet hook post "$?" -- "${{TREESHIP_LAST_CMD-}}" 2>/dev/null
   unset TREESHIP_LAST_CMD
 }}
 add-zsh-hook precmd treeship_precmd
@@ -40,24 +40,33 @@ fn bash_hook(bin: &str) -> String {
         r#"# Treeship shell hook -- installed by treeship install
 # The DEBUG trap fires for every simple command; only the first one after
 # a prompt is the line the person typed. That line comes from history when
-# it is there (a compound `a && b` arrives whole), else from BASH_COMMAND.
+# history just added it (a compound `a && b` arrives whole); a line history
+# did not record (ignorespace, `set +o history`) is taken from BASH_COMMAND,
+# never from the previous history entry.
+treeship_precmd() {{
+  {bin} --quiet hook post "$1" -- "${{TREESHIP_LAST_CMD-}}" 2>/dev/null
+  unset TREESHIP_LAST_CMD
+  TREESHIP_HIST_N=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null)
+  TREESHIP_HIST_N="${{TREESHIP_HIST_N#"${{TREESHIP_HIST_N%%[![:space:]]*}}"}}"
+  TREESHIP_HIST_N="${{TREESHIP_HIST_N%%[![:digit:]]*}}"
+}}
 treeship_preexec() {{
-  case "$BASH_COMMAND" in "{bin} hook post "*) unset TREESHIP_AT_PROMPT; return ;; esac
+  case "$BASH_COMMAND" in "treeship_precmd "*) unset TREESHIP_AT_PROMPT; return ;; esac
   [ -n "${{TREESHIP_AT_PROMPT-}}" ] || return
   unset TREESHIP_AT_PROMPT
-  local line
+  local line num
   line=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null)
   line="${{line#"${{line%%[![:space:]]*}}"}}"
-  line="${{line#"${{line%%[![:digit:]]*}}"}}"
+  num="${{line%%[![:digit:]]*}}"
+  line="${{line#"$num"}}"
   line="${{line#"${{line%%[![:space:]]*}}"}}"
-  case "$line" in *"$BASH_COMMAND"*) ;; *) line="$BASH_COMMAND" ;; esac
+  if [ -z "$num" ] || [ "$num" = "${{TREESHIP_HIST_N-}}" ]; then line="$BASH_COMMAND"; fi
   TREESHIP_LAST_CMD="$line"
-  {bin} hook pre -- "$line" 2>/dev/null
+  {bin} --quiet hook pre -- "$line" 2>/dev/null
 }}
 trap 'treeship_preexec' DEBUG
 
-PROMPT_COMMAND="{bin} hook post \$? -- \"\${{TREESHIP_LAST_CMD-}}\" 2>/dev/null; unset TREESHIP_LAST_CMD; ${{PROMPT_COMMAND:+$PROMPT_COMMAND; }}TREESHIP_AT_PROMPT=1"
-TREESHIP_AT_PROMPT=1
+PROMPT_COMMAND="treeship_precmd \$?; ${{PROMPT_COMMAND:+$PROMPT_COMMAND; }}TREESHIP_AT_PROMPT=1"
 # End Treeship shell hook"#,
         bin = bin
     )
@@ -67,11 +76,11 @@ fn fish_hook(bin: &str) -> String {
     format!(
         r#"# Treeship shell hook -- installed by treeship install
 function treeship_preexec --on-event fish_preexec
-  {bin} hook pre -- "$argv" 2>/dev/null
+  {bin} --quiet hook pre -- "$argv" 2>/dev/null
 end
 
 function treeship_postexec --on-event fish_postexec
-  {bin} hook post $status -- "$argv" 2>/dev/null
+  {bin} --quiet hook post $status -- "$argv" 2>/dev/null
 end
 # End Treeship shell hook"#,
         bin = bin
@@ -160,7 +169,8 @@ fn replace_block(contents: &str, hook: &str) -> Option<String> {
     ))
 }
 
-/// Remove the installed block and the line ending after it, nothing else.
+/// Remove the installed block, the line ending after it and the blank line
+/// `install` put before it, nothing else.
 fn without_block(contents: &str) -> Option<String> {
     let range = block_range(contents)?;
     let mut end = range.end;
@@ -170,7 +180,14 @@ fn without_block(contents: &str) -> Option<String> {
     } else if rest.starts_with('\n') {
         end += 1;
     }
-    Some(format!("{}{}", &contents[..range.start], &contents[end..]))
+    let mut start = range.start;
+    let before = &contents[..start];
+    if before.ends_with("\r\n\r\n") {
+        start -= 2;
+    } else if before.ends_with("\n\n") {
+        start -= 1;
+    }
+    Some(format!("{}{}", &contents[..start], &contents[end..]))
 }
 
 /// Remove treeship hook lines from a config file.

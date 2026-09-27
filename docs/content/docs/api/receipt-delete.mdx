@@ -1,0 +1,73 @@
+---
+title: DELETE /v1/receipt/{session_id}
+description: Take a published Session Receipt down. DPoP authenticated; only the publishing dock. Permanent.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Takes a published [Session Receipt](/docs/concepts/session-receipts) down. The hub removes the receipt body for good, along with the session's name, timing and counts, and keeps only the session id, the dock and the time of the takedown. From then on [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) answers `410 Gone`, never the old bytes, and the id cannot be re-uploaded.
+
+In practice you run [`treeship hub unpublish <session_id>`](/docs/cli/hub), which signs the request for you.
+
+## Request
+
+```
+DELETE /v1/receipt/{session_id}
+Authorization: DPoP dck_9f8e7d6c
+DPoP: eyJhbGciOiJFZERTQSIsInR5cCI6ImRwb3Arand0In0...
+Content-Type: application/json
+```
+
+### Path parameters
+
+| Name | Description |
+|------|------|
+| `session_id` | The session whose receipt comes down. Must have been published by the calling dock. |
+
+### Body (optional)
+
+```json
+{ "reason": "leaked local paths" }
+```
+
+| Field | Type | Description |
+|-------|------|------|
+| `reason` | string | A short public reason, served with the `410`. Cut at 200 bytes on a character boundary. |
+
+### Authentication
+
+DPoP-authenticated like the upload: `Authorization: DPoP {dock_id}` and a `DPoP` JWT with `htm: "DELETE"` and `htu` set to the full request URL. Each proof's `jti` is accepted once, so a captured proof cannot be replayed. See the [Hub API overview](/docs/api/overview).
+
+## Response
+
+```json
+{
+  "session_id": "ssn_42e740bd9eb238f6",
+  "status": "tombstoned",
+  "tombstoned_at": 1758931200
+}
+```
+
+| Field | Type | Description |
+|-------|------|------|
+| `session_id` | string | Echoed session id |
+| `status` | string | Always `tombstoned` |
+| `tombstoned_at` | integer | Unix timestamp of the takedown |
+
+## Errors
+
+| Status | Body | Cause |
+|--------|------|------|
+| `400` | `{"error": "missing or too long session_id in path"}` | Empty or oversized path parameter |
+| `401` | `{"error": "invalid DPoP proof"}` | DPoP JWT invalid, expired, replayed or bound to another URL |
+| `403` | `{"error": "session_id is owned by another dock"}` | A different dock published this receipt |
+| `404` | `{"error": "session not found"}` | No session with this id |
+| `410` | `{"error": "receipt already taken down"}` | The receipt was taken down before |
+
+## What stays public
+
+Taken-down receipts are left out of `/v1/stats` session counts. A copy a browser or proxy cached while the receipt was public can persist for up to 24 hours, the cache lifetime it was served with. Artifacts pushed with `treeship hub push` are separate objects and stay at their own URLs.
+
+<Callout type="warn">
+The takedown is permanent. Local copies of the receipt are untouched, but the session id is retired on the hub: a later `PUT` for it answers `410`.
+</Callout>

@@ -29,12 +29,12 @@ sets up) and, on a match, signs an action receipt without you typing
 # zsh
 treeship_preexec() {
   TREESHIP_LAST_CMD="$1"
-  treeship hook pre -- "$1" 2>/dev/null
+  treeship --quiet hook pre -- "$1" 2>/dev/null
 }
 add-zsh-hook preexec treeship_preexec
 
 treeship_precmd() {
-  treeship hook post "$?" -- "$TREESHIP_LAST_CMD" 2>/dev/null
+  treeship --quiet hook post "$?" -- "${TREESHIP_LAST_CMD-}" 2>/dev/null
   unset TREESHIP_LAST_CMD
 }
 add-zsh-hook precmd treeship_precmd
@@ -45,9 +45,12 @@ fish_preexec` / `fish_postexec`. All three call the same two subcommands,
 and all three hand the finished command to `hook post` so state left by a
 `pre` whose `post` never ran is never charged to the next command. In bash
 the `DEBUG` trap fires for every simple command, so the snippet acts only on
-the first one after a prompt and takes the whole line from history when it
-is there (`git commit -m x && echo ok` arrives as one line, as it does in
-zsh and fish). The bash snippet installs its own `DEBUG` trap, replacing one
+the first one after a prompt and takes the whole line from history when
+history just recorded it (`git commit -m x && echo ok` arrives as one line,
+as it does in zsh and fish); a line history did not record (`ignorespace`,
+`set +o history`) is taken from `BASH_COMMAND`, never from the previous
+history entry. The hooks run with `--quiet`, so a matched command prints
+nothing into the prompt. The bash snippet installs its own `DEBUG` trap, replacing one
 you had set. Hooks written by a release before 0.31.11 pass no command;
 `treeship install` replaces such a block with the current one, changing
 only the bytes between its two marker lines.

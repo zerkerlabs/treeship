@@ -125,6 +125,33 @@ fn install_changes_only_the_block_bytes() {
     assert!(out.status.success(), "{}", text(&out));
     assert_eq!(
         std::fs::read_to_string(&rc).unwrap(),
-        "export EDITOR=vi  \r\n\r\nalias ll='ls -l'\r\n# no final newline"
+        "export EDITOR=vi  \r\nalias ll='ls -l'\r\n# no final newline",
+        "uninstall must also take back the blank line install put before the block"
     );
+}
+
+/// Install then uninstall on a file with no final newline gives the file back.
+#[test]
+fn install_then_uninstall_gives_the_file_back() {
+    let home = tempfile::tempdir().unwrap();
+    let rc = home.path().join(".zshrc");
+    std::fs::write(&rc, "export EDITOR=vi").unwrap();
+    let run = |cmd: &str| {
+        Command::new(cli_path())
+            .current_dir(home.path())
+            .env("HOME", home.path())
+            .env("SHELL", "/bin/zsh")
+            .env_remove("TREESHIP_CONFIG")
+            .arg(cmd)
+            .output()
+            .expect("run treeship")
+    };
+    assert!(run("install").status.success());
+    let with_hook = std::fs::read_to_string(&rc).unwrap();
+    assert!(
+        with_hook.starts_with("export EDITOR=vi\n\n# Treeship shell hook"),
+        "{with_hook:?}"
+    );
+    assert!(run("uninstall").status.success());
+    assert_eq!(std::fs::read_to_string(&rc).unwrap(), "export EDITOR=vi\n");
 }

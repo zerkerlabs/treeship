@@ -10,6 +10,7 @@
     "workspace",
     "receipt-put",
     "receipt-get",
+    "receipt-delete",
     "ship-registry",
     "agents",
     "stats",
