@@ -28,18 +28,24 @@ sets up) and, on a match, signs an action receipt without you typing
 ```sh
 # zsh
 treeship_preexec() {
-  treeship hook pre "$1" 2>/dev/null
+  TREESHIP_LAST_CMD="$1"
+  treeship hook pre -- "$1" 2>/dev/null
 }
 add-zsh-hook preexec treeship_preexec
 
 treeship_precmd() {
-  treeship hook post "$?" 2>/dev/null
+  treeship hook post "$?" -- "$TREESHIP_LAST_CMD" 2>/dev/null
+  unset TREESHIP_LAST_CMD
 }
 add-zsh-hook precmd treeship_precmd
 ```
 
 bash uses a `DEBUG` trap plus `PROMPT_COMMAND`; fish uses `--on-event
-fish_preexec` / `fish_postexec`. All three call the same two subcommands.
+fish_preexec` / `fish_postexec`. All three call the same two subcommands,
+and all three hand the finished command to `hook post` so state left by a
+`pre` whose `post` never ran is never charged to the next command. Hooks
+written by a release before 0.31.11 pass no command; `treeship install`
+replaces such a block with the current one.
 
 ## treeship hook pre
 
@@ -73,11 +79,14 @@ treeship hook post <EXIT_CODE> [COMMAND]
 | Argument | Description |
 |---|---|
 | `<EXIT_CODE>` | Exit code of the completed command |
-| `[COMMAND]` | The command that ran (optional; not used by the shell snippets above, which read it from the `pre` state instead) |
+| `[COMMAND]` | The command that ran (optional; the shell snippets pass it after `--`) |
 
 Reads `.pending_hook` (written by `pre`), and does nothing if it isn't there
 -- meaning `pre` didn't match a rule for this command. Deletes the state
-file immediately so a crash doesn't leave stale state, then signs the action
+file immediately so a crash doesn't leave stale state. When a command is
+given and it is not the one `pre` matched, the state was stale (that `pre`'s
+own `post` never ran) and nothing is recorded; without a command, state
+older than 24 hours is dropped the same way. Otherwise it signs the action
 receipt (elapsed time, exit code, the matched label) and writes `.last`.
 
 ## Failure mode

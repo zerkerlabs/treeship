@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -141,6 +142,10 @@ func TestOwnerTakesDownAndTheBytesAreGone(t *testing.T) {
 	if sess.TombstonedAt == nil || sess.DockID != owner.id {
 		t.Fatalf("tombstone not recorded: %+v", sess)
 	}
+	// Nothing descriptive survives: the name, timing and counts go with the body.
+	if sess.Name != nil || sess.StartedAt != nil || sess.EndedAt != nil || sess.DurationMS != nil || sess.AgentCount != 0 || sess.ActionCount != 0 {
+		t.Fatalf("descriptive fields kept on a tombstone: %+v", sess)
+	}
 	// The slot is retired: no second upload, no second takedown.
 	if w := do(r, "PUT", "/v1/receipt/ssn_1", receiptBody("ssn_1"), &owner, ""); w.Code != http.StatusGone {
 		t.Fatalf("put after takedown: want 410, got %d %s", w.Code, w.Body.String())
@@ -233,5 +238,51 @@ func TestHeadIsServedOnGetRoutes(t *testing.T) {
 	resp2.Body.Close()
 	if resp2.StatusCode != http.StatusNotFound {
 		t.Fatalf("HEAD missing: want 404, got %d", resp2.StatusCode)
+	}
+}
+
+func TestALongMultibyteReasonIsCutOnACharacterBoundary(t *testing.T) {
+	database := openTestDB(t)
+	owner := registerDock(t, database, "dock_owner00000000")
+	r := router(&Handlers{DB: database})
+	if w := do(r, "PUT", "/v1/receipt/ssn_2", receiptBody("ssn_2"), &owner, ""); w.Code != 200 {
+		t.Fatalf("put: %d %s", w.Code, w.Body.String())
+	}
+	// 150 two-byte characters: byte 200 falls inside the 100th character.
+	long := strings.Repeat("é", 150)
+	body, _ := json.Marshal(map[string]string{"reason": long})
+	if w := do(r, "DELETE", "/v1/receipt/ssn_2", body, &owner, ""); w.Code != 200 {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	w := do(r, "GET", "/v1/receipt/ssn_2", nil, nil, "")
+	if w.Code != http.StatusGone {
+		t.Fatalf("want 410, got %d", w.Code)
+	}
+	var resp struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !utf8.ValidString(resp.Reason) || strings.ContainsRune(resp.Reason, utf8.RuneError) {
+		t.Fatalf("reason is not clean UTF-8: %q", resp.Reason)
+	}
+	if len(resp.Reason) != 200 || strings.Count(resp.Reason, "é") != 100 {
+		t.Fatalf("want 100 whole characters in 200 bytes, got %d bytes %q", len(resp.Reason), resp.Reason)
+	}
+}
+
+func TestTruncateReasonKeepsWholeCharacters(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"shor", "shor"},
+		{"aaaa", "aaaa"},
+		{"aaaé", "aaa"}, // the é would start at byte 3 and end past the cap of 4
+		{"aaé", "aaé"},  // exactly four bytes
+		{"aa€b", "aa"},  // the three-byte € straddles the cap
+		{"😀😀", "😀"},     // a four-byte character at the cap
+	} {
+		if got := truncateReason(tc.in, 4); got != tc.want {
+			t.Errorf("truncateReason(%q, 4) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

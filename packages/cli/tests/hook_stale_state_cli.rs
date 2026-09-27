@@ -89,3 +89,76 @@ fn a_post_for_another_command_drops_stale_pre_state_and_records_nothing() {
     assert!(out.status.success(), "{}", text(&out));
     assert_eq!(artifacts(project.path()), before + 1, "{}", text(&out));
 }
+
+fn set_pending_age(project: &std::path::Path, age_ms: u64) {
+    let path = project.join(".treeship/.pending_hook");
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    v["start_ms"] = serde_json::json!(now - age_ms);
+    std::fs::write(&path, serde_json::to_string(&v).unwrap()).unwrap();
+}
+
+/// A hook installed before 0.31.11 passes no command. Its `post` still
+/// records fresh state, and drops state older than a day.
+#[test]
+fn a_post_without_a_command_records_fresh_state_and_drops_day_old_state() {
+    let home = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let cfg = project.path().join(".treeship/config.json");
+    let out = run(
+        project.path(),
+        home.path(),
+        &["init", "--name", "w", "--config", &cfg.to_string_lossy()],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    let before = artifacts(project.path());
+
+    // Fresh state, no command given: recorded, as before.
+    let out = run(
+        project.path(),
+        home.path(),
+        &["hook", "pre", "git commit -m a"],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    let out = run(project.path(), home.path(), &["hook", "post", "0"]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert_eq!(artifacts(project.path()), before + 1, "{}", text(&out));
+
+    // Day-old state, no command given: dropped.
+    let out = run(
+        project.path(),
+        home.path(),
+        &["hook", "pre", "git commit -m b"],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    set_pending_age(project.path(), 25 * 60 * 60 * 1000);
+    let out = run(project.path(), home.path(), &["hook", "post", "0"]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert_eq!(
+        artifacts(project.path()),
+        before + 1,
+        "day-old state was recorded:\n{}",
+        text(&out)
+    );
+    assert!(text(&out).contains("older than 24h"), "{}", text(&out));
+    assert!(!project.path().join(".treeship/.pending_hook").exists());
+
+    // The installed hooks pass the command after `--`, so a command that
+    // starts with a dash is not read as a flag.
+    let out = run(
+        project.path(),
+        home.path(),
+        &["hook", "pre", "--", "-n deploy"],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    let out = run(
+        project.path(),
+        home.path(),
+        &["hook", "post", "0", "--", "-n deploy"],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+}

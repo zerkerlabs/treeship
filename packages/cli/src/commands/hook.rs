@@ -94,6 +94,9 @@ pub fn pre(command: &str, printer: &Printer) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// Pending state older than this, from a hook that names no command, is dropped.
+const STALE_PENDING_MS: u64 = 24 * 60 * 60 * 1000;
+
 /// Post-hook: called after a command completes.
 ///
 /// Reads .pending_hook, creates a receipt, writes .last, cleans up.
@@ -141,6 +144,16 @@ pub fn post(
     // Elapsed time
     let now_ms = epoch_ms();
     let elapsed_ms = now_ms.saturating_sub(start_ms);
+
+    // A hook installed before 0.31.11 passes no command. Without one the
+    // only tell for stale state is age: a `pre` a day old whose `post`
+    // never ran belongs to a shell that is gone.
+    if command_arg.is_none() && elapsed_ms > STALE_PENDING_MS {
+        printer.dim_info(&format!(
+            "  stale hook state for `{command}` dropped (older than 24h); run `treeship install` to update the shell hook"
+        ));
+        return Ok(());
+    }
 
     // Open treeship context (loads keys + storage)
     let ctx = ctx::open(config_override)?;

@@ -172,12 +172,12 @@ impl SideEffects {
                 } => {
                     let idx = se.processes.len();
                     se.processes.push(ProcessExecution {
-                        process_name: process_name.clone(),
+                        process_name: crate::session::redact_home_path(process_name),
                         agent_instance_id: event.agent_instance_id.clone(),
                         started_at: event.timestamp.clone(),
                         exit_code: None,
                         duration_ms: None,
-                        command: command.clone(),
+                        command: command.as_deref().map(crate::session::redact_home_path),
                         source: Some(source_from_meta(event, "hook")),
                     });
                     started_processes
@@ -196,17 +196,18 @@ impl SideEffects {
                             proc.exit_code = *exit_code;
                             proc.duration_ms = *duration_ms;
                             if proc.command.is_none() {
-                                proc.command = command.clone();
+                                proc.command =
+                                    command.as_deref().map(crate::session::redact_home_path);
                             }
                         }
                     } else {
                         se.processes.push(ProcessExecution {
-                            process_name: process_name.clone(),
+                            process_name: crate::session::redact_home_path(process_name),
                             agent_instance_id: event.agent_instance_id.clone(),
                             started_at: event.timestamp.clone(),
                             exit_code: *exit_code,
                             duration_ms: *duration_ms,
-                            command: command.clone(),
+                            command: command.as_deref().map(crate::session::redact_home_path),
                             source: Some(source_from_meta(event, "hook")),
                         });
                     }
@@ -434,7 +435,7 @@ fn promote_mcp_called_tool(event: &SessionEvent, tool_name: &str, se: &mut SideE
         }
         (ToolCategory::Write, Some(p), _) => {
             se.files_written.push(FileAccess {
-                file_path: p,
+                file_path: crate::session::redact_home_path(&p),
                 agent_instance_id: event.agent_instance_id.clone(),
                 timestamp: event.timestamp.clone(),
                 digest: None,
@@ -446,7 +447,10 @@ fn promote_mcp_called_tool(event: &SessionEvent, tool_name: &str, se: &mut SideE
         }
         (ToolCategory::Process, _, Some(cmd)) => {
             // Trim long commands to a usable process_name; the full
-            // command string is preserved in `command`.
+            // command string is preserved in `command`. Both carry the
+            // `~/` form: a command line names home paths as often as a
+            // file ledger does.
+            let cmd = crate::session::redact_home_path(&cmd);
             let short = cmd.chars().take(120).collect::<String>();
             se.processes.push(ProcessExecution {
                 process_name: short,
@@ -465,7 +469,7 @@ fn promote_mcp_called_tool(event: &SessionEvent, tool_name: &str, se: &mut SideE
             // fabric bar is completeness; misclassifying a read as a
             // write is recoverable, dropping the path silently is not.
             se.files_written.push(FileAccess {
-                file_path: p,
+                file_path: crate::session::redact_home_path(&p),
                 agent_instance_id: event.agent_instance_id.clone(),
                 timestamp: event.timestamp.clone(),
                 digest: None,

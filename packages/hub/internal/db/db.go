@@ -967,9 +967,10 @@ type Session struct {
 
 // TombstoneSession removes a published receipt's body at its dock's request
 // and records the takedown. Outcomes: "ok", "not_found", "owned_by_other"
-// (another dock published it), "already" (already taken down). The body is
-// overwritten with NULL in the same statement that records the tombstone,
-// so no row ever carries both.
+// (another dock published it), "already" (already taken down). The body,
+// name, timing and counts are cleared in the same statement that records
+// the tombstone; only the id, the dock and the takedown remain, so no row
+// ever carries both a body and a tombstone.
 func TombstoneSession(database *sql.DB, sessionID, dockID, reason string, now int64) (string, error) {
 	existing, err := GetSession(database, sessionID)
 	if err != nil {
@@ -985,8 +986,9 @@ func TombstoneSession(database *sql.DB, sessionID, dockID, reason string, now in
 		return "already", nil
 	}
 	res, err := database.Exec(
-		`UPDATE sessions SET receipt_json = NULL, status = 'tombstoned',
-		   tombstoned_at = ?, tombstone_reason = ?
+		`UPDATE sessions SET receipt_json = NULL, name = NULL, started_at = NULL,
+		   ended_at = NULL, duration_ms = NULL, agent_count = 0, action_count = 0,
+		   status = 'tombstoned', tombstoned_at = ?, tombstone_reason = ?
 		 WHERE session_id = ? AND dock_id = ? AND tombstoned_at IS NULL`,
 		now, reason, sessionID, dockID,
 	)

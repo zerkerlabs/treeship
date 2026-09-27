@@ -1061,13 +1061,17 @@ fn event_summary(et: &super::event::EventType) -> Option<String> {
         )),
         AgentOpenedPort { port, .. } => Some(format!("Opened port {port}")),
         AgentConnectedNetwork { destination, .. } => Some(format!("Connected to {destination}")),
-        AgentStartedProcess { process_name, .. } => Some(format!("Started {process_name}")),
+        AgentStartedProcess { process_name, .. } => Some(format!(
+            "Started {}",
+            crate::session::redact_home_path(process_name)
+        )),
         AgentCompletedProcess {
             process_name,
             exit_code,
             ..
         } => Some(format!(
-            "Completed {process_name} (exit {})",
+            "Completed {} (exit {})",
+            crate::session::redact_home_path(process_name),
             exit_code.unwrap_or(-1)
         )),
         AgentCompleted { termination_reason } => termination_reason

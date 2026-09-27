@@ -19,13 +19,15 @@ fn zsh_hook(bin: &str) -> String {
     format!(
         r#"# Treeship shell hook -- installed by treeship install
 treeship_preexec() {{
-  {bin} hook pre "$1" 2>/dev/null
+  TREESHIP_LAST_CMD="$1"
+  {bin} hook pre -- "$1" 2>/dev/null
 }}
 autoload -Uz add-zsh-hook
 add-zsh-hook preexec treeship_preexec
 
 treeship_precmd() {{
-  {bin} hook post "$?" 2>/dev/null
+  {bin} hook post "$?" -- "$TREESHIP_LAST_CMD" 2>/dev/null
+  unset TREESHIP_LAST_CMD
 }}
 add-zsh-hook precmd treeship_precmd
 # End Treeship shell hook"#,
@@ -37,11 +39,13 @@ fn bash_hook(bin: &str) -> String {
     format!(
         r#"# Treeship shell hook -- installed by treeship install
 treeship_preexec() {{
-  {bin} hook pre "$BASH_COMMAND" 2>/dev/null
+  case "$BASH_COMMAND" in "{bin} hook post "*) return ;; esac
+  TREESHIP_LAST_CMD="$BASH_COMMAND"
+  {bin} hook pre -- "$BASH_COMMAND" 2>/dev/null
 }}
 trap 'treeship_preexec' DEBUG
 
-PROMPT_COMMAND="{bin} hook post \$? 2>/dev/null; ${{PROMPT_COMMAND}}"
+PROMPT_COMMAND="{bin} hook post \$? -- \"\$TREESHIP_LAST_CMD\" 2>/dev/null; ${{PROMPT_COMMAND}}"
 # End Treeship shell hook"#,
         bin = bin
     )
@@ -51,11 +55,11 @@ fn fish_hook(bin: &str) -> String {
     format!(
         r#"# Treeship shell hook -- installed by treeship install
 function treeship_preexec --on-event fish_preexec
-  {bin} hook pre "$argv" 2>/dev/null
+  {bin} hook pre -- "$argv" 2>/dev/null
 end
 
 function treeship_postexec --on-event fish_postexec
-  {bin} hook post $status 2>/dev/null
+  {bin} hook post $status -- "$argv" 2>/dev/null
 end
 # End Treeship shell hook"#,
         bin = bin
@@ -109,13 +113,12 @@ impl Shell {
     }
 }
 
-/// Check if the hook is already installed in a config file.
-fn already_installed(path: &PathBuf) -> bool {
-    if let Ok(contents) = std::fs::read_to_string(path) {
-        contents.contains(MARKER_START)
-    } else {
-        false
-    }
+/// The installed hook block, marker lines included, when one is present.
+fn installed_block(path: &PathBuf) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let start = contents.find(MARKER_START)?;
+    let end = contents[start..].find(MARKER_END)? + start + MARKER_END.len();
+    Some(contents[start..end].to_string())
 }
 
 /// Remove treeship hook lines from a config file.
@@ -162,22 +165,30 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         .config_path()
         .ok_or("could not determine home directory")?;
 
-    if already_installed(&config_path) {
-        printer.info(&format!(
-            "{} Shell hooks already installed ({})",
-            printer.green("ok"),
-            config_path.display(),
-        ));
-        return Ok(());
+    // Use absolute path to the treeship binary to prevent PATH hijacking
+    let bin_path = treeship_binary_path();
+
+    // An installed block from an older release is replaced with the current
+    // one (the 0.31.11 hooks pass the command to `hook post`); an identical
+    // block is left alone.
+    let mut updated = false;
+    if let Some(block) = installed_block(&config_path) {
+        if block.trim() == shell.hook_text(&bin_path).trim() {
+            printer.info(&format!(
+                "{} Shell hooks already installed ({})",
+                printer.green("ok"),
+                config_path.display(),
+            ));
+            return Ok(());
+        }
+        remove_hook(&config_path)?;
+        updated = true;
     }
 
     // Ensure parent directory exists (relevant for fish)
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-
-    // Use absolute path to the treeship binary to prevent PATH hijacking
-    let bin_path = treeship_binary_path();
 
     // Append hook to shell config
     let mut contents = if config_path.exists() {
@@ -197,7 +208,11 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
 
     printer.blank();
     printer.success(
-        "Shell hooks installed",
+        if updated {
+            "Shell hooks updated"
+        } else {
+            "Shell hooks installed"
+        },
         &[(
             "shell",
             &format!(

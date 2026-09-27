@@ -777,6 +777,7 @@ pub fn unpublish(
             "hub": entry.hub_id,
             "receipt_url": share_url(&entry.endpoint, None, &format!("/v1/receipt/{session_id}")),
             "tombstoned_at": tombstoned_at,
+            "cached_copies_max_age_s": 86400,
         }));
         return Ok(());
     }
@@ -789,6 +790,7 @@ pub fn unpublish(
         ],
     );
     printer.hint("local copies of the receipt are untouched; the session id cannot be re-uploaded");
+    printer.hint("copies a browser or proxy cached while it was public can persist for up to 24h (it was served with max-age=86400)");
     Ok(())
 }
 

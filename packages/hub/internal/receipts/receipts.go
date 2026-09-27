@@ -18,6 +18,7 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
@@ -268,7 +269,8 @@ func (h *Handlers) GetReceipt(w http.ResponseWriter, r *http.Request) {
 // so a captured proof cannot be replayed). The receipt body is removed and
 // the row keeps only the id, the dock and the tombstone time (plus an
 // optional short reason from the body: {"reason": "..."}, capped at 200
-// chars). GetReceipt answers 410 Gone from then on; PutReceipt on the id
+// bytes on a character boundary); the name, timing and counts are cleared
+// with the body. GetReceipt answers 410 Gone from then on; PutReceipt on the id
 // answers 410 too, so the slot is never refilled.
 func (h *Handlers) DeleteReceipt(w http.ResponseWriter, r *http.Request) {
 	dockID := dpop.Verify(h.DB, w, r)
@@ -287,10 +289,7 @@ func (h *Handlers) DeleteReceipt(w http.ResponseWriter, r *http.Request) {
 			Reason string `json:"reason"`
 		}
 		if json.Unmarshal(body, &req) == nil {
-			reason = req.Reason
-			if len(reason) > 200 {
-				reason = reason[:200]
-			}
+			reason = truncateReason(req.Reason, 200)
 		}
 	}
 	now := time.Now().Unix()
@@ -321,6 +320,20 @@ func (h *Handlers) DeleteReceipt(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- helpers ---
+
+// truncateReason caps a reason at max bytes without splitting a UTF-8
+// sequence, so a long multibyte reason never comes back with a broken
+// final character.
+func truncateReason(reason string, max int) string {
+	if len(reason) <= max {
+		return reason
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(reason[cut]) {
+		cut--
+	}
+	return reason[:cut]
+}
 
 func writeError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
