@@ -61,6 +61,34 @@ impl Printer {
         self.print_fields(fields);
     }
 
+    /// `success` with JSON-valued fields that belong in the same document:
+    /// in JSON mode they are merged into the envelope (a nested object, not
+    /// a second document); in text mode they are not shown, the caller
+    /// prints them however text wants them.
+    pub fn success_with(
+        &self,
+        msg: &str,
+        fields: &[(&str, &str)],
+        extra: &[(&str, serde_json::Value)],
+    ) {
+        // `extra` is output the caller asked for by name (`--out -`), so in
+        // JSON mode it is printed even under `--quiet`: quiet silences
+        // commentary, not requested output. Text mode under quiet stays
+        // silent (the caller printed the raw envelope itself).
+        if self.quiet && (self.format != Format::Json || extra.is_empty()) {
+            return;
+        }
+        if self.format == Format::Json {
+            out!(
+                "{}",
+                self.json_envelope_with("ok", Some(msg), fields, extra)
+            );
+            return;
+        }
+        out!("{}", self.green(&format!("✓ {msg}")));
+        self.print_fields(fields);
+    }
+
     /// ✗ red failure to stderr -- always shows.
     ///
     /// In JSON mode emits a structured error envelope:
@@ -194,6 +222,16 @@ impl Printer {
         message: Option<&str>,
         fields: &[(&str, &str)],
     ) -> String {
+        self.json_envelope_with(status, message, fields, &[])
+    }
+
+    fn json_envelope_with(
+        &self,
+        status: &str,
+        message: Option<&str>,
+        fields: &[(&str, &str)],
+        extra: &[(&str, serde_json::Value)],
+    ) -> String {
         let mut m = serde_json::Map::new();
         m.insert(
             "status".into(),
@@ -212,6 +250,9 @@ impl Printer {
         }
         for (k, v) in fields {
             m.insert(k.to_string(), serde_json::Value::String(v.to_string()));
+        }
+        for (k, v) in extra {
+            m.insert(k.to_string(), v.clone());
         }
         serde_json::to_string(&m).unwrap_or_default()
     }

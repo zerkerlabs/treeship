@@ -143,7 +143,7 @@ pub fn checkpoint_with(
         print_sealed(&sealed, printer);
     }
     let published = if publish_after {
-        Some(publish_report(config, printer)?)
+        Some(publish_report(config, printer))
     } else {
         None
     };
@@ -151,16 +151,29 @@ pub fn checkpoint_with(
         // One document, whatever was asked for: the checkpoint, and the
         // publish result under `publish` when --publish ran. In 0.31.10 the
         // JSON was identical with or without --publish, so a caller could
-        // not tell from the document that anything reached the hub.
+        // not tell from the document that anything reached the hub. A failed
+        // publish is reported in the same document: the checkpoint is
+        // sealed, and a retry must not seal a second one for nothing.
         let mut doc = sealed.to_json();
-        if let Some(report) = &published {
-            doc["publish"] = report.to_json();
+        match &published {
+            Some(Ok(report)) => doc["publish"] = report.to_json(),
+            Some(Err(e)) => {
+                doc["publish"] = serde_json::json!({
+                    "status": "failed",
+                    "ok": false,
+                    "error": e.to_string(),
+                })
+            }
+            None => {}
         }
         printer.json(&doc);
-    } else if let Some(report) = &published {
+    } else if let Some(Ok(report)) = &published {
         print_published(report, printer);
     }
-    Ok(())
+    match published {
+        Some(Err(e)) => Err(e),
+        _ => Ok(()),
+    }
 }
 
 /// What `checkpoint` sealed, for the text and JSON views.
@@ -1066,10 +1079,20 @@ fn publish_consistency(
     let from_size = prev.tree_size;
     let to_size = checkpoint.tree_size;
     // A consistency proof only makes sense for a forward, non-empty extension
-    // whose leaves we actually hold.
-    if from_size == 0 || from_size > to_size || to_size > artifact_ids.len() {
+    // whose leaves we actually hold. Each degenerate case says what it is.
+    if from_size == 0 {
         return Ok(Consistency::NotApplicable(
-            "the previous checkpoint is not a prefix of this one",
+            "the previous checkpoint has an empty tree",
+        ));
+    }
+    if from_size > to_size {
+        return Ok(Consistency::NotApplicable(
+            "the previous checkpoint is larger than this one, so it is not a prefix of it",
+        ));
+    }
+    if to_size > artifact_ids.len() {
+        return Ok(Consistency::NotApplicable(
+            "this checkpoint covers more leaves than the store holds",
         ));
     }
 

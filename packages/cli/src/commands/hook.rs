@@ -15,12 +15,21 @@ use crate::{ctx, printer::Printer};
 /// a malicious .treeship/config.yaml in a cloned repo from being loaded.
 fn find_project_config() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
+    // The walk stops at the home directory: a project lives under it, and
+    // nothing above it (`/Users`, `/`) is the person's to configure. A
+    // config planted there would otherwise run on every prompt.
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .and_then(|h| std::fs::canonicalize(&h).ok().or(Some(h)));
     loop {
         let config_yaml = dir.join(".treeship").join("config.yaml");
         let config_json = dir.join(".treeship").join("config.json");
         // Only trust config.yaml if there's also a config.json (initialized treeship)
         if config_yaml.exists() && config_json.exists() {
             return Some(config_yaml);
+        }
+        if home.as_deref() == Some(dir.as_path()) {
+            return None;
         }
         if !dir.pop() {
             return None;

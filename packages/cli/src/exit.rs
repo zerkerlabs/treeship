@@ -27,6 +27,10 @@ pub const NOT_IN_BUILD: i32 = 5;
 /// CLI-5). An invalid signature is still 1.
 pub const NOT_PINNED: i32 = 6;
 
+/// The wrapped command could not be started (not found, not executable):
+/// 127, as a shell reports it (`wrap`).
+pub const COMMAND_NOT_STARTED: i32 = 127;
+
 /// An error that names its exit code.
 #[derive(Debug)]
 pub struct ExitError {
@@ -58,6 +62,11 @@ pub fn usage(message: impl Into<String>) -> Box<dyn std::error::Error> {
 #[allow(dead_code)]
 pub fn not_in_build(message: impl Into<String>) -> Box<dyn std::error::Error> {
     boxed(NOT_IN_BUILD, message)
+}
+
+/// The wrapped command could not be started (exit 127).
+pub fn command_not_started(message: impl Into<String>) -> Box<dyn std::error::Error> {
+    boxed(COMMAND_NOT_STARTED, message)
 }
 
 /// The signer is not pinned here (exit 6).

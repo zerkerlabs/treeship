@@ -43,6 +43,7 @@ fn wrap_and_decode(input: &str) -> Vec<String> {
     let bin = PathBuf::from(env!("CARGO_BIN_EXE_treeship"));
 
     let init = Command::new(&bin)
+        .env_remove("TREESHIP_CONFIG")
         .arg("init")
         .arg("--config")
         .arg(&config)
@@ -56,6 +57,7 @@ fn wrap_and_decode(input: &str) -> Vec<String> {
 
     let args: Vec<&str> = input.split_whitespace().collect();
     let mut cmd = Command::new(&bin);
+    cmd.env_remove("TREESHIP_CONFIG");
     // cwd inside the temp dir so a repo-local .treeship cannot be picked up.
     cmd.current_dir(tmp.path())
         .arg("wrap")

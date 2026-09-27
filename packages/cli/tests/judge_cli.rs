@@ -37,6 +37,7 @@ impl Ws {
     }
     fn run(&self, args: &[&str]) -> (bool, String) {
         let out = Command::new(cli_path())
+            .env_remove("TREESHIP_CONFIG")
             .env("HOME", &self.root)
             .env("TREESHIP_ALLOW_INSECURE_KEY_PERMS", "1")
             .env("TREESHIP_TRUST_ROOTS", self.root.join("trust_roots.json"))

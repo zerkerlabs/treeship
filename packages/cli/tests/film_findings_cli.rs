@@ -38,6 +38,7 @@ impl Ws {
     }
     fn cmd_in(&self, dir: &Path) -> Command {
         let mut c = Command::new(cli_path());
+        c.env_remove("TREESHIP_CONFIG");
         c.env("HOME", &self.root)
             .env("TREESHIP_ALLOW_INSECURE_KEY_PERMS", "1")
             .env("TREESHIP_TRUST_ROOTS", self.root.join("trust_roots.json"))
@@ -225,6 +226,7 @@ fn finding_9_first_receipt_does_not_list_treeship_config_as_written() {
     let proj = tempfile::tempdir().unwrap();
     let run = |args: &[&str]| {
         let out = Command::new(cli_path())
+            .env_remove("TREESHIP_CONFIG")
             .current_dir(proj.path())
             .env("HOME", home.path())
             .env("TREESHIP_ALLOW_INSECURE_KEY_PERMS", "1")
@@ -303,6 +305,7 @@ fn finding_10_dangling_stub_is_named_by_init_and_doctor() {
     std::fs::create_dir_all(&sub).unwrap();
     let run = |args: &[&str]| {
         let out = Command::new(cli_path())
+            .env_remove("TREESHIP_CONFIG")
             .current_dir(&sub)
             .env("HOME", home.path())
             .env("TREESHIP_ALLOW_INSECURE_KEY_PERMS", "1")
@@ -334,6 +337,7 @@ fn finding_11_single_use_holds_across_a_project_stub_and_the_global_workspace() 
     std::fs::create_dir_all(&pay).unwrap();
     let run = |dir: &Path, args: &[&str]| {
         let out = Command::new(cli_path())
+            .env_remove("TREESHIP_CONFIG")
             .current_dir(dir)
             .env("HOME", home.path())
             .env("TREESHIP_ALLOW_INSECURE_KEY_PERMS", "1")

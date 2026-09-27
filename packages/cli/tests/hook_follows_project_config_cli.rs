@@ -233,3 +233,70 @@ fn without_a_session_in_the_project_the_environment_still_wins() {
     );
     assert_eq!(artifacts(project.path()), 0);
 }
+
+/// The upward walk for `.treeship/config.yaml` stops at the home directory.
+/// A config planted above it (`/Users/.treeship`, `/.treeship`) would run
+/// on every prompt in every project.
+#[test]
+fn the_hooks_upward_walk_stops_at_home() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let project = home.join("work").join("proj");
+    std::fs::create_dir_all(&project).unwrap();
+    // A workspace above HOME, with the default rules (which match git).
+    let above_cfg = root.path().join(".treeship/config.json");
+    let out = run(
+        root.path(),
+        &home,
+        &[],
+        &[
+            "init",
+            "--name",
+            "above",
+            "--config",
+            &above_cfg.to_string_lossy(),
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(root.path().join(".treeship/config.yaml").is_file());
+
+    let out = run(
+        &project,
+        &home,
+        &[],
+        &["hook", "pre", "--", "git commit -m x"],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(
+        !root.path().join(".treeship/.pending_hook").exists(),
+        "the hook used a config above HOME"
+    );
+
+    // Inside HOME the walk still climbs: a workspace at ~/work is found from ~/work/proj.
+    let work_cfg = home.join("work/.treeship/config.json");
+    let out = run(
+        &home.join("work"),
+        &home,
+        &[],
+        &[
+            "init",
+            "--name",
+            "work",
+            "--config",
+            &work_cfg.to_string_lossy(),
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    let out = run(
+        &project,
+        &home,
+        &[],
+        &["hook", "pre", "--", "git commit -m x"],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(
+        home.join("work/.treeship/.pending_hook").exists(),
+        "a workspace under HOME was not found:\n{}",
+        text(&out)
+    );
+}

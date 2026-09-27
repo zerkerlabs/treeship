@@ -20,7 +20,8 @@ treeship wrap [OPTIONS] -- <command> [args...]
 |-------|-------|
 | actor | From `--actor` flag or `TREESHIP_ACTOR` env var |
 | action | The binary name of the command (or `--action` override) |
-| exit_code | The subprocess exit code |
+| exit_code | The subprocess exit code; `128 + signal` when a signal ended it |
+| signal | The signal that ended the subprocess, when one did (JSON output only) |
 | elapsed_ms | Elapsed time in milliseconds |
 | timestamp | RFC 3339 at the moment of signing |
 | parent_id | From `--parent` flag or `TREESHIP_PARENT` |
@@ -68,5 +69,7 @@ The `--push` flag pushes the artifact to the Hub immediately after attesting.
 | `--push` | Push to Hub immediately after attesting |
 
 <Callout type="info">
-`treeship wrap` always propagates the subprocess exit code. If your command exits 1, `treeship wrap` exits 1. The artifact is still signed and stored -- even failed runs are attested.
+`treeship wrap` always propagates the subprocess exit code. If your command exits 1, `treeship wrap` exits 1. A command ended by a signal exits `128 + signal`, as a shell reports it (`137` for SIGKILL), and the JSON output names the signal in `signal`. A command that cannot be started exits `127`, with nothing signed. The artifact is still signed and stored for every command that ran -- even failed runs are attested.
+
+The propagated code is the child's, so it can coincide with one of `treeship wrap`'s own codes (`1` general error, `4` usage, `127` not started): read `--format json`'s `exit_code` and `succeeded`, or stderr, to tell them apart.
 </Callout>
