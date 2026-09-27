@@ -1,0 +1,2 @@
+- **docs.treeship.dev serves security.txt (RFC 9116).** `/.well-known/security.txt` 404'd. Added as a route handler (`app/.well-known/security.txt/route.ts`, same pattern as `app/llms.txt`) rather than a `public/` static file -- a static file at that path is shadowed by the `[[...slug]]` catch-all's own generated response for the same URL. Same content as www's, with `Canonical` pointing at the docs host.
+- **TS-2026-003.md said its fix "ships in the next release."** It shipped in 0.31.9, already tagged. Fixed the public-disclosure-window field.
