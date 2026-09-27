@@ -87,12 +87,21 @@ impl Printer {
     }
 
     /// ⚠ amber warning
+    ///
+    /// In JSON mode the warning envelope `{"status": "warning", "message":
+    /// ...}` goes to stderr, like errors: a command that warns and then
+    /// succeeds must still leave exactly one JSON document on stdout
+    /// (0.31.10 printed two on `attest action --v2` out of scope and on
+    /// `trust add --replace`, and `json.load(stdout)` failed with "Extra
+    /// data"). Warnings that belong in the result are fields of the
+    /// success document, not a second document.
     pub fn warn(&self, msg: &str, fields: &[(&str, &str)]) {
         if self.quiet {
             return;
         }
         if self.format == Format::Json {
-            self.print_json_with_status("warning", Some(msg), fields);
+            let body = self.json_envelope("warning", Some(msg), fields);
+            err!("{body}");
             return;
         }
         out!("{}", self.yellow(&format!("⚠ {msg}")));
