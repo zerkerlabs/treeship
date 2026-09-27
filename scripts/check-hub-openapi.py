@@ -3,9 +3,16 @@
 
 Extracts METHOD+path pairs from the chi route registrations in
 packages/hub/main.go and compares them against the paths documented in
-docs/content/docs/api/hub-openapi.yaml. This is the gate that would have
+docs/public/api/hub-openapi.yaml. This is the gate that would have
 caught the /v1/hub/* -> /v1/dock/* drift the 2026-07 docs audit found in
 production.
+
+Lives under docs/public/ (not docs/content/) because it needs to be the
+actual served file at docs.treeship.dev/api/hub-openapi.yaml -- an earlier
+copy of this same spec sat in docs/content/docs/api/ instead, where fumadocs
+never serves it, so the file this check validated and the file
+`/api/hub-openapi.yaml` actually returned to a visitor were two different,
+diverging documents (found live, 2026-09-27).
 
 No dependencies: the YAML is parsed structurally (path keys at 2-space
 indent under `paths:`, method keys at 4-space indent), which is exactly the
@@ -20,7 +27,7 @@ import yaml
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAIN_GO = os.path.join(REPO, "packages", "hub", "main.go")
-OPENAPI = os.path.join(REPO, "docs", "content", "docs", "api", "hub-openapi.yaml")
+OPENAPI = os.path.join(REPO, "docs", "public", "api", "hub-openapi.yaml")
 
 
 def routes_from_router():
@@ -129,7 +136,7 @@ def main():
         print(f"  ✓ hub-openapi.yaml matches the router ({len(code)} routes)")
         return 0
     print(f"\n{len(missing)} undocumented, {len(stale)} stale. "
-          "Fix docs/content/docs/api/hub-openapi.yaml (and the reference pages).")
+          "Fix docs/public/api/hub-openapi.yaml (and the reference pages).")
     return 1
 
 
