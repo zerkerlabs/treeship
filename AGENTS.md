@@ -60,7 +60,7 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 
 <!-- claims:rekor-artifact-anchoring -->
 <!-- claims:checkpoint-root-anchoring -->
-1. **ZK TLS (TLSNotary)** -- fully specced, feature-flagged, TLSNotary still alpha
+1. **ZK TLS (TLSNotary)** -- `treeship zk-tls-setup` exists and is not feature-gated, but it only prints setup instructions for a notary you'd run yourself; there is no TLSNotary proving/capture path implemented, and no feature flag gates one because none exists yet
 2. **`treeship attach claude/cursor`** -- agent process detection (the official Claude Code plugin at `integrations/claude-code-plugin/` covers Claude Code via PostToolUse hooks; standalone process attach for Cursor/Cline is still planned)
 3. **Checkpoint anchoring** -- per-artifact Rekor anchoring works as of TS-2026-003 (it never did before: every submission was rejected and the failure was swallowed). Checkpoint roots are not anchored yet, local-only sessions get nothing, and an anchor proves existence by push time, not creation time. RFC 3161 timestamps are not implemented.
 4. **Certificate pinning to `api.treeship.dev`** -- hub writes are DPoP-authenticated (RFC 9449), which binds the request to a dock keypair, but the TLS connection itself is trusted on the system root store. A machine with a hostile root CA sees a hub it should not trust.

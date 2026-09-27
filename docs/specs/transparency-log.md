@@ -1,8 +1,8 @@
 # Transparency Log Surface: Certificate Transparency for agents
 
-**Status:** draft, not implemented
+**Status:** Largely shipped -- `treeship audit <agent> [--hub <url>] [--watch <seconds>]` exists and matches this doc's own description almost verbatim (re-verifies anchored inclusion offline, checks completeness, monitor mode included). Body not re-audited section by section against 0.31.10.
 **Pairs with:** [agent-resolver](./agent-resolver.md), the Hub Merkle log, capability cards' `evidence_anchor`
-**Last updated:** 2026-06-24
+**Last updated:** 2026-06-24 (status line updated 2026-09-27 against v0.31.10)
 
 ## The shift
 
