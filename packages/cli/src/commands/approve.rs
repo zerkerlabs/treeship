@@ -6,7 +6,7 @@ use treeship_core::{
     storage::Record,
 };
 
-use crate::{ctx, printer::Printer};
+use crate::printer::Printer;
 
 /// Set file permissions to 0600 (owner read/write only) on Unix.
 // ---------------------------------------------------------------------------
@@ -320,7 +320,7 @@ pub fn approve(
 
     let (path, mut pa) = entries[idx - 1].clone();
 
-    let ctx = ctx::open(config)?;
+    let ctx = crate::commands::session::open_ctx(config)?;
 
     // Generate approval nonce
     let nonce = generate_nonce();
@@ -402,7 +402,7 @@ pub fn deny(
 
     let (path, pa) = entries[idx - 1].clone();
 
-    let ctx = ctx::open(config)?;
+    let ctx = crate::commands::session::open_ctx(config)?;
 
     // Create a denial action artifact
     let actor = format!("ship://{}", ctx.config.ship_id);
