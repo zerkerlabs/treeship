@@ -1047,19 +1047,37 @@ fn event_summary(et: &super::event::EventType) -> Option<String> {
         } => Some(format!(
             "{from_agent_instance_id} -> {to_agent_instance_id}"
         )),
-        AgentNote { text } => text.clone(),
+        // A note is free text an agent wrote; a path in it is redacted like
+        // any other. `session close --summary` is the operator's own words
+        // and is published as written.
+        AgentNote { text } => text.as_ref().map(|t| crate::session::redact_home_path(t)),
         AgentCalledTool { tool_name, .. } => Some(format!("Called {tool_name}")),
-        AgentReadFile { file_path, .. } => Some(format!("Read {file_path}")),
-        AgentWroteFile { file_path, .. } => Some(format!("Wrote {file_path}")),
+        // The same `~/` form the file ledger uses: a summary is published
+        // with the receipt too.
+        AgentReadFile { file_path, .. } => Some(format!(
+            "Read {}",
+            crate::session::redact_home_path(file_path)
+        )),
+        AgentWroteFile { file_path, .. } => Some(format!(
+            "Wrote {}",
+            crate::session::redact_home_path(file_path)
+        )),
         AgentOpenedPort { port, .. } => Some(format!("Opened port {port}")),
-        AgentConnectedNetwork { destination, .. } => Some(format!("Connected to {destination}")),
-        AgentStartedProcess { process_name, .. } => Some(format!("Started {process_name}")),
+        AgentConnectedNetwork { destination, .. } => Some(format!(
+            "Connected to {}",
+            crate::session::redact_home_path(destination)
+        )),
+        AgentStartedProcess { process_name, .. } => Some(format!(
+            "Started {}",
+            crate::session::redact_home_path(process_name)
+        )),
         AgentCompletedProcess {
             process_name,
             exit_code,
             ..
         } => Some(format!(
-            "Completed {process_name} (exit {})",
+            "Completed {} (exit {})",
+            crate::session::redact_home_path(process_name),
             exit_code.unwrap_or(-1)
         )),
         AgentCompleted { termination_reason } => termination_reason

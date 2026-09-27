@@ -104,9 +104,9 @@ func (h *Handlers) Stats(w http.ResponseWriter, r *http.Request) {
 		{&resp.Docks.Total, `SELECT COUNT(*) FROM ships`, nil},
 		{&resp.Docks.AttachedLast7d, `SELECT COUNT(*) FROM ships WHERE created_at >= ?`, []any{cutoff}},
 		{&resp.Docks.ActiveLast7d, `SELECT COUNT(DISTINCT dock_id) FROM artifacts WHERE dock_id IS NOT NULL AND signed_at >= ?`, []any{cutoff}},
-		{&resp.Sessions.Total, `SELECT COUNT(*) FROM sessions`, nil},
+		{&resp.Sessions.Total, `SELECT COUNT(*) FROM sessions WHERE tombstoned_at IS NULL`, nil},
 		{&resp.Sessions.ReceiptsUploaded, `SELECT COUNT(*) FROM sessions WHERE receipt_json IS NOT NULL`, nil},
-		{&resp.Sessions.UploadedLast7d, `SELECT COUNT(*) FROM sessions WHERE uploaded_at IS NOT NULL AND uploaded_at >= ?`, []any{cutoff}},
+		{&resp.Sessions.UploadedLast7d, `SELECT COUNT(*) FROM sessions WHERE uploaded_at IS NOT NULL AND uploaded_at >= ? AND tombstoned_at IS NULL`, []any{cutoff}},
 		{&resp.Agents.ClaimedTotal, `SELECT COUNT(DISTINCT agent_id) FROM ship_agents`, nil},
 		{&resp.Agents.ClaimedSeenLast7d, `SELECT COUNT(DISTINCT agent_id) FROM ship_agents WHERE last_seen >= ?`, []any{cutoff}},
 	}

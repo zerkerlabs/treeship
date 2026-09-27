@@ -220,7 +220,7 @@ treeship session close --summary "fixed JWT expiry bug" --receipt-dir receipts
 
 | Option | Description |
 |--------|-------------|
-| `--summary <text>` | Plain-text summary of what the session accomplished |
+| `--summary <text>` | Plain-text summary of what the session accomplished. Published as written: unlike file paths and command lines in the receipt, it is not redacted, so keep local paths out of it |
 | `--headline <text>` | One-line headline for the receipt |
 | `--review <text>` | What should be reviewed before trusting the output |
 | `--receipt-dir <dir>` | Copy the sealed `.treeship` package into `<dir>/<session_id>.treeship` (created if missing). `.treeship/` is usually gitignored; this puts the package somewhere it can be committed next to the change it accounts for. See [Receipts in pull requests](/docs/guides/receipts-in-pull-requests). |

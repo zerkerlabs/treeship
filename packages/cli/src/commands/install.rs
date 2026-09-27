@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::printer::Printer;
 
@@ -19,13 +19,15 @@ fn zsh_hook(bin: &str) -> String {
     format!(
         r#"# Treeship shell hook -- installed by treeship install
 treeship_preexec() {{
-  {bin} hook pre "$1" 2>/dev/null
+  TREESHIP_LAST_CMD="$1"
+  {bin} --quiet hook pre -- "$1" 2>/dev/null
 }}
 autoload -Uz add-zsh-hook
 add-zsh-hook preexec treeship_preexec
 
 treeship_precmd() {{
-  {bin} hook post "$?" 2>/dev/null
+  {bin} --quiet hook post "$?" -- "${{TREESHIP_LAST_CMD-}}" 2>/dev/null
+  unset TREESHIP_LAST_CMD
 }}
 add-zsh-hook precmd treeship_precmd
 # End Treeship shell hook"#,
@@ -36,12 +38,35 @@ add-zsh-hook precmd treeship_precmd
 fn bash_hook(bin: &str) -> String {
     format!(
         r#"# Treeship shell hook -- installed by treeship install
+# The DEBUG trap fires for every simple command; only the first one after
+# a prompt is the line the person typed. That line comes from history when
+# history just added it (a compound `a && b` arrives whole); a line history
+# did not record (ignorespace, `set +o history`) is taken from BASH_COMMAND,
+# never from the previous history entry.
+treeship_precmd() {{
+  {bin} --quiet hook post "$1" -- "${{TREESHIP_LAST_CMD-}}" 2>/dev/null
+  unset TREESHIP_LAST_CMD
+  TREESHIP_HIST_N=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null)
+  TREESHIP_HIST_N="${{TREESHIP_HIST_N#"${{TREESHIP_HIST_N%%[![:space:]]*}}"}}"
+  TREESHIP_HIST_N="${{TREESHIP_HIST_N%%[![:digit:]]*}}"
+}}
 treeship_preexec() {{
-  {bin} hook pre "$BASH_COMMAND" 2>/dev/null
+  case "$BASH_COMMAND" in "treeship_precmd "*) unset TREESHIP_AT_PROMPT; return ;; esac
+  [ -n "${{TREESHIP_AT_PROMPT-}}" ] || return
+  unset TREESHIP_AT_PROMPT
+  local line num
+  line=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null)
+  line="${{line#"${{line%%[![:space:]]*}}"}}"
+  num="${{line%%[![:digit:]]*}}"
+  line="${{line#"$num"}}"
+  line="${{line#"${{line%%[![:space:]]*}}"}}"
+  if [ -z "$num" ] || [ "$num" = "${{TREESHIP_HIST_N-}}" ]; then line="$BASH_COMMAND"; fi
+  TREESHIP_LAST_CMD="$line"
+  {bin} --quiet hook pre -- "$line" 2>/dev/null
 }}
 trap 'treeship_preexec' DEBUG
 
-PROMPT_COMMAND="{bin} hook post \$? 2>/dev/null; ${{PROMPT_COMMAND}}"
+PROMPT_COMMAND="treeship_precmd \$?; ${{PROMPT_COMMAND:+$PROMPT_COMMAND; }}TREESHIP_AT_PROMPT=1"
 # End Treeship shell hook"#,
         bin = bin
     )
@@ -51,11 +76,11 @@ fn fish_hook(bin: &str) -> String {
     format!(
         r#"# Treeship shell hook -- installed by treeship install
 function treeship_preexec --on-event fish_preexec
-  {bin} hook pre "$argv" 2>/dev/null
+  {bin} --quiet hook pre -- "$argv" 2>/dev/null
 end
 
 function treeship_postexec --on-event fish_postexec
-  {bin} hook post $status 2>/dev/null
+  {bin} --quiet hook post $status -- "$argv" 2>/dev/null
 end
 # End Treeship shell hook"#,
         bin = bin
@@ -109,13 +134,60 @@ impl Shell {
     }
 }
 
-/// Check if the hook is already installed in a config file.
-fn already_installed(path: &PathBuf) -> bool {
-    if let Ok(contents) = std::fs::read_to_string(path) {
-        contents.contains(MARKER_START)
+/// The byte range of the installed hook block in `contents`, marker lines
+/// included, when one is present.
+fn block_range(contents: &str) -> Option<std::ops::Range<usize>> {
+    let start = contents.find(MARKER_START)?;
+    let end = contents[start..].find(MARKER_END)? + start + MARKER_END.len();
+    Some(start..end)
+}
+
+/// The installed hook block, marker lines included, when one is present.
+fn installed_block(path: &PathBuf) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let range = block_range(&contents)?;
+    Some(contents[range].to_string())
+}
+
+/// Replace the installed block in `contents` with `hook`, touching no other
+/// byte: the block keeps its place, the rest of the file its line endings,
+/// trailing whitespace and (missing) final newline. A block written in
+/// CRLF stays CRLF.
+fn replace_block(contents: &str, hook: &str) -> Option<String> {
+    let range = block_range(contents)?;
+    let old = &contents[range.clone()];
+    let hook = if old.contains("\r\n") {
+        hook.replace('\n', "\r\n")
     } else {
-        false
+        hook.to_string()
+    };
+    Some(format!(
+        "{}{}{}",
+        &contents[..range.start],
+        hook,
+        &contents[range.end..]
+    ))
+}
+
+/// Remove the installed block, the line ending after it and the blank line
+/// `install` put before it, nothing else.
+fn without_block(contents: &str) -> Option<String> {
+    let range = block_range(contents)?;
+    let mut end = range.end;
+    let rest = &contents[end..];
+    if rest.starts_with("\r\n") {
+        end += 2;
+    } else if rest.starts_with('\n') {
+        end += 1;
     }
+    let mut start = range.start;
+    let before = &contents[..start];
+    if before.ends_with("\r\n\r\n") {
+        start -= 2;
+    } else if before.ends_with("\n\n") {
+        start -= 1;
+    }
+    Some(format!("{}{}", &contents[..start], &contents[end..]))
 }
 
 /// Remove treeship hook lines from a config file.
@@ -124,31 +196,10 @@ fn remove_hook(path: &PathBuf) -> Result<bool, Box<dyn std::error::Error>> {
         return Ok(false);
     }
     let contents = std::fs::read_to_string(path)?;
-    if !contents.contains(MARKER_START) {
+    let Some(result) = without_block(&contents) else {
         return Ok(false);
-    }
-
-    let mut result = String::new();
-    let mut skipping = false;
-
-    for line in contents.lines() {
-        if line.trim() == MARKER_START.trim() {
-            skipping = true;
-            continue;
-        }
-        if line.trim() == MARKER_END.trim() {
-            skipping = false;
-            continue;
-        }
-        if !skipping {
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-
-    // Trim trailing blank lines that we may have added
-    let trimmed = result.trim_end().to_string() + "\n";
-    crate::safe_fs::write_home_path(path, trimmed.as_bytes(), 0o644)?;
+    };
+    crate::safe_fs::write_home_path(path, result.as_bytes(), 0o644)?;
 
     Ok(true)
 }
@@ -162,12 +213,27 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         .config_path()
         .ok_or("could not determine home directory")?;
 
-    if already_installed(&config_path) {
-        printer.info(&format!(
-            "{} Shell hooks already installed ({})",
-            printer.green("ok"),
-            config_path.display(),
-        ));
+    // Use absolute path to the treeship binary to prevent PATH hijacking
+    let bin_path = treeship_binary_path();
+
+    // An installed block from an older release is replaced with the current
+    // one (the 0.31.11 hooks pass the command to `hook post`); an identical
+    // block is left alone.
+    if let Some(block) = installed_block(&config_path) {
+        if block.replace("\r\n", "\n").trim() == shell.hook_text(&bin_path).trim() {
+            printer.info(&format!(
+                "{} Shell hooks already installed ({})",
+                printer.green("ok"),
+                config_path.display(),
+            ));
+            return Ok(());
+        }
+        // Only the bytes between the markers change.
+        let contents = std::fs::read_to_string(&config_path)?;
+        let replaced = replace_block(&contents, &shell.hook_text(&bin_path))
+            .ok_or("the installed hook block has no end marker")?;
+        crate::safe_fs::write_home_path(&config_path, replaced.as_bytes(), 0o644)?;
+        print_installed(true, shell, &config_path, printer);
         return Ok(());
     }
 
@@ -175,9 +241,6 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-
-    // Use absolute path to the treeship binary to prevent PATH hijacking
-    let bin_path = treeship_binary_path();
 
     // Append hook to shell config
     let mut contents = if config_path.exists() {
@@ -196,8 +259,17 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     crate::safe_fs::write_home_path(&config_path, contents.as_bytes(), 0o644)?;
 
     printer.blank();
+    print_installed(false, shell, &config_path, printer);
+    Ok(())
+}
+
+fn print_installed(updated: bool, shell: Shell, config_path: &Path, printer: &Printer) {
     printer.success(
-        "Shell hooks installed",
+        if updated {
+            "Shell hooks updated"
+        } else {
+            "Shell hooks installed"
+        },
         &[(
             "shell",
             &format!(
@@ -216,8 +288,6 @@ pub fn install(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     printer.blank();
     printer.hint("treeship log --follow  to watch receipts as they're created");
     printer.blank();
-
-    Ok(())
 }
 
 pub fn uninstall(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {

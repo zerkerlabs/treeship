@@ -41,7 +41,7 @@ GET /v1/agents?agent=agent://deployer
 | `cards` | array | All matching card envelopes (each: `artifact_id`, `envelope_json`, `signer_keyid`, `signed_at`) |
 | `certs` | array | `agent_cert.v1` chain envelopes for this agent |
 | `revocations` | array | Only revocations referencing one of this agent's card IDs |
-| `transparency` | object \| null | The current card's Merkle proof file, verbatim; `null` when not anchored |
+| `transparency` | object \| null | The current card's Merkle proof file, verbatim; `null` when not anchored {/* claims:transparency-log-client-reverified */} |
 
 Errors: `400` `{"error":"missing agent query parameter"}` · `500` `{"error":"query failed"}`.
 
@@ -58,7 +58,7 @@ GET /v1/agents/log?agent=agent://deployer
 | Entry field | Description |
 |-------------|-------------|
 | `artifact_id`, `kind`, `actor`, `signed_at`, `digest` | Entry metadata (`kind` is `"action"` or `"agent_card.v1"`; actions also carry `action`) |
-| `merkle_anchor` | `{"checkpoint_id","leaf_index"}`, or `null` when unanchored |
+| `merkle_anchor` | `{"checkpoint_id","leaf_index"}`, or `null` when unanchored {/* claims:transparency-log-client-reverified */} |
 
 `committed_anchor` is the latest card's `evidence_anchor` — what the agent *committed to* in its signed card, which `treeship audit` compares against what the log actually shows.
 
@@ -70,6 +70,7 @@ The transparency log filtered to the agent's signed `session.v1` work records, a
 GET /v1/agents/history?agent=agent://deployer
 ```
 
+{/* claims:transparency-log-client-reverified */}
 **200 response:** `{ "agent", "entries": [ … ], "count", "note" }` — each entry: `artifact_id`, `envelope_json` (full signed envelope), `signer` (keyid), `signed_at`, `merkle_anchor`. Newest first. The client re-verifies every envelope and re-proves anchored entries' inclusion offline; see [`treeship history`](/docs/cli/history).
 
 ## GET /v1/agents/match — evidence matching

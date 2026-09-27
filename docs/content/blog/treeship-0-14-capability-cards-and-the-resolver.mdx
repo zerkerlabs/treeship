@@ -54,9 +54,9 @@ treeship revoke-capability <card> --reason <reason>
 
 `verify-capability` treats a card as key-bound only when its `keyid` is the envelope signer pinned under `AgentCert`. Otherwise it reports `self-asserted`. It then lists in-scope and out-of-scope actions, matched exactly or by `family.*` glob, checks an optional `evidence_anchor`, and reports the provenance breakdown.
 
-`publish` pushes the agent's current card and any revocations through the authenticated `hub push` path. `resolve --hub` fetches that bundle and re-verifies it against your own trust roots with an Ed25519 check. It reports `signature: verified | UNVERIFIED`, `key-bound`, the revocation status, and the captured-capability mix. When the card has been anchored, the hub includes its Merkle inclusion proof, and `resolve` reports `transparency: anchored & verified (checkpoint #N)` or `not anchored`.
+`publish` pushes the agent's current card and any revocations through the authenticated `hub push` path. `resolve --hub` fetches that bundle and re-verifies it against your own trust roots with an Ed25519 check. It reports `signature: verified | UNVERIFIED`, `key-bound`, the revocation status, and the captured-capability mix. {/* claims:transparency-log-client-reverified */} When the card has been anchored, the hub includes its Merkle inclusion proof, and `resolve` reports `transparency: anchored & verified (checkpoint #N)` or `not anchored`.
 
-`audit --hub` pulls the agent's history, re-verifies each anchored entry's inclusion offline, and compares the observed entries against the card's committed `evidence_anchor`. A shortfall reports `OMISSION` with the committed and observed counts.
+`audit --hub` pulls the agent's history, re-verifies each anchored entry's inclusion offline, and compares the observed entries against the card's committed `evidence_anchor`. A shortfall reports `OMISSION` with the committed and observed counts. {/* claims:transparency-log-client-reverified */}
 
 A revocation is honored only when its signer is the card's own key or a `Ship` trust root, and then `verify-capability` reports `status: REVOKED`. An unauthorized revocation is ignored.
 

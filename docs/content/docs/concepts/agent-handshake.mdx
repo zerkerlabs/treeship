@@ -71,6 +71,7 @@ is stating it on every verdict line.
 
 ## Challenge: prove it is really you
 
+{/* claims:transparency-log-client-reverified */}
 A presentation file is **replayable**. Anyone who obtains it can show it around, which is fine for what it proves: this identity exists, holds this card, has this anchored history. It does *not* prove the party across the wire is that agent. Both commands print this caveat so nobody mistakes a document for a handshake.
 
 For that, challenge the bearer:
@@ -103,7 +104,7 @@ Fail-closed rules worth knowing:
 ## When to use which
 
 - **`resolve --hub`**, when you want the registry's convenience and the latest state (freshness bound: the hub's log).
-- **`verify-presentation`**, when the agent hands you its proof: air-gapped verification, CI checks, attaching proof to a PR or an A2A AgentCard (freshness bound: the staple).
+- **`verify-presentation`**, when the agent hands you its proof: fully offline verification, CI checks, attaching proof to a PR or an A2A AgentCard (freshness bound: the staple).
 - **`--challenge`**, whenever you are about to *act* on the verification: releasing a tool call, accepting a handoff, joining a room. If the next step has consequences, demand liveness.
 
 ## The honest contract

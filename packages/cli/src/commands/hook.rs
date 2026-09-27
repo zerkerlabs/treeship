@@ -103,12 +103,15 @@ pub fn pre(command: &str, printer: &Printer) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// Pending state older than this, from a hook that names no command, is dropped.
+const STALE_PENDING_MS: u64 = 24 * 60 * 60 * 1000;
+
 /// Post-hook: called after a command completes.
 ///
 /// Reads .pending_hook, creates a receipt, writes .last, cleans up.
 pub fn post(
     exit_code: i32,
-    _command: Option<&str>,
+    command_arg: Option<&str>,
     config_override: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -131,6 +134,18 @@ pub fn post(
     let _ = std::fs::remove_file(&pending_path);
 
     let command = pending["command"].as_str().unwrap_or("unknown").to_string();
+    // The pending state belongs to the command `pre` matched. A `post` that
+    // names a different command has found a stale `pre` whose own `post`
+    // never ran; recording it would attribute the old command to this run.
+    // The state was removed above, and nothing is recorded.
+    if let Some(given) = command_arg {
+        if crate::redact::redact_command(given) != command {
+            printer.note(&format!(
+                "  stale hook state for `{command}` dropped; `{given}` was not matched by a pre-hook"
+            ));
+            return Ok(());
+        }
+    }
     let label = pending["label"].as_str().unwrap_or("action").to_string();
     let start_ms = pending["start_ms"].as_u64().unwrap_or(0);
     let git_before = pending["git_head"].as_str().map(|s| s.to_string());
@@ -138,6 +153,16 @@ pub fn post(
     // Elapsed time
     let now_ms = epoch_ms();
     let elapsed_ms = now_ms.saturating_sub(start_ms);
+
+    // A hook installed before 0.31.11 passes no command. Without one the
+    // only tell for stale state is age: a `pre` a day old whose `post`
+    // never ran belongs to a shell that is gone.
+    if command_arg.is_none() && elapsed_ms > STALE_PENDING_MS {
+        printer.note(&format!(
+            "  stale hook state for `{command}` dropped (older than 24h); run `treeship install` to update the shell hook"
+        ));
+        return Ok(());
+    }
 
     // Which workspace records this hook? An explicit --config wins. Else,
     // when a session is active in the project the hook found (session.json

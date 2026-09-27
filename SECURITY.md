@@ -38,12 +38,12 @@ We will acknowledge your report within 48 hours and aim to release a fix within 
 
 Full detail: [`docs/security/threat-model.md`](docs/security/threat-model.md) (canonical, in-repo). Rendered at [docs.treeship.dev/concepts/security](https://docs.treeship.dev/concepts/security).
 
-<!-- claims:keystore-at-rest -->
-<!-- claims:rekor-artifact-anchoring -->
 Key properties:
 - Ed25519 signatures via ed25519-dalek
+<!-- claims:keystore-at-rest -->
 - AES-256-GCM encrypted keystore, under a key derived from a secret seed file stored alongside it -- not machine-bound, and not passphrase-protected. Losing the seed file makes the keystore unrecoverable (see [TS-2026-001](docs/security/TS-2026-001.md) for migration from prior construction)
 - `.treeship` packages carry every sealed artifact's signed envelope and the signing keys; `package verify` checks the signatures, not only the tree (see [TS-2026-002](docs/security/TS-2026-002.md) for packages built before 0.31.2)
+<!-- claims:rekor-artifact-anchoring -->
 - Rekor anchors count as witnessed time only when the stapled log entry verifies offline against a pinned transparency-log key; local anchor records never do (see [TS-2026-003](docs/security/TS-2026-003.md))
 <!-- claims:package-verify-binds-receipt -->
 - A package's close record must name that session's own chained `session.close`, signed by the same key as the chain-root `session.start` (or a record key that close names); it is not enough for the record to merely verify under some key the package carries (see [TS-2026-004](docs/security/TS-2026-004.md) for packages built before 0.31.10)

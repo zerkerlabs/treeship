@@ -26,7 +26,7 @@ The receipt is the trust anchor. The report is a view. The package is a transpor
 A session flows through three states:
 
 1. **Active.** Started by [`treeship session start`](/docs/cli/session#treeship-session-start) or by a registered agent. Events are appended to `.treeship/sessions/<session_id>/events.jsonl` in real time. The artifact chain grows under `.treeship/artifacts/`.
-2. **Closed.** [`treeship session close`](/docs/cli/session#treeship-session-close) composes the receipt, writes a `.treeship` package, and seals the chain with a `session.close` attestation. The package is self-contained and immutable from this point forward.
+2. **Closed.** [`treeship session close`](/docs/cli/session#treeship-session-close) composes the receipt, writes a `.treeship` package, and seals the chain with a `session.close` attestation. The package is self-contained and tamper-evident from this point forward {/* claims:receipt-tamper-evidence */} — `package verify` catches an edit made after close.
 3. **Published.** [`treeship session report`](/docs/cli/session#treeship-session-report) uploads the receipt to the configured hub. The hub serves it at a permanent public URL: `https://treeship.dev/receipt/<session_id>`.
 
 Publishing is optional. A session is equally valid sitting on disk as a `.treeship` directory that you `treeship package verify` locally.

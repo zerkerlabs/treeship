@@ -51,7 +51,7 @@ This is the release where the ZK story is stated plainly, so here is the plain v
 - `zk-setup` and `zk-tls-setup` are scaffolding. They do not produce a proof that a Treeship verifier treats as authoritative.
 - The quarantined Groth16 path is gone from the shipping surface, not repaired. There is no trusted-setup ceremony and no statement binding in any shipped ZK proof.
 - Selective disclosure is not zero-knowledge. It hides withheld entries behind commitments in a signed card. It is the SD-JWT shape, not a ZK proof.
-- Per the CLI's own help text, a disclosed presentation is an ephemeral re-sign and is not transparency-anchored, so it omits the Merkle staple.
+- Per the CLI's own help text, a disclosed presentation is an ephemeral re-sign and is not transparency-anchored, so it omits the Merkle staple. {/* claims:transparency-log-client-reverified */}
 
 ## Where to go next
 
