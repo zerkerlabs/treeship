@@ -51,6 +51,11 @@ BANNED_PHRASES = [
     "anchored",
     "witnessed",
     "air-gapped",
+    # The key is not bound to a machine: it is protected by the seed file
+    # beside the keystore and travels with .treeship/ (claims.yml). `init
+    # --help` said "tied to this machine's identity" through 0.31.10.
+    "tied to this machine",
+    "machine's identity",
 ]
 # `<!-- claims:some-id -->` (markdown) or `{/* claims:some-id */}` (mdx).
 MARKER = re.compile(r"(?:<!--\s*claims:([a-z0-9-]+)\s*-->|\{/\*\s*claims:([a-z0-9-]+)\s*\*/\})")
@@ -58,6 +63,9 @@ MARKER = re.compile(r"(?:<!--\s*claims:([a-z0-9-]+)\s*-->|\{/\*\s*claims:([a-z0-
 
 SCAN_ROOTS = [ROOT / "docs" / "content", ROOT / "skills"]
 ROOT_MD = sorted(ROOT.glob("*.md"))
+# The CLI's own help text is documentation the user reads first; its `///`
+# doc comments are what `--help` prints.
+EXTRA_FILES = [ROOT / "packages" / "cli" / "src" / "main.rs"]
 
 
 def wider_files() -> list[str]:
@@ -68,6 +76,7 @@ def wider_files() -> list[str]:
             if p.suffix in (".md", ".mdx") and "node_modules" not in p.parts:
                 out.append(str(p.relative_to(ROOT)))
     out.extend(str(p.relative_to(ROOT)) for p in ROOT_MD)
+    out.extend(str(p.relative_to(ROOT)) for p in EXTRA_FILES if p.is_file())
     return out
 
 
