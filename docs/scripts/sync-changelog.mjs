@@ -106,16 +106,32 @@ Read the [complete release history](https://github.com/zerkerlabs/treeship/blob/
 `;
 const rendered = FRONTMATTER + "\n" + body + archive;
 
+// Strip the "## Unreleased" section (heading through the line before the
+// next "## " heading, or end of string) so --check never compares it.
+// Unreleased is exactly as many changelog.d/ fragments as happen to be on
+// main *right now* -- a moving target every fragment-adding PR shares. If
+// --check compared it, landing PR B would make PR A's already-open,
+// already-correct branch fail for a reason that has nothing to do with
+// PR A, forcing a resync-and-repush on every PR every time any other PR's
+// fragment merges -- the exact per-PR churn changelog.d/ was built to
+// remove (see changelog.d/README.md). Released sections (the actual
+// content that caused the drift this check exists to catch) are still
+// compared in full.
+function stripUnreleased(text) {
+  return text.replace(/## Unreleased[ \t]*\n[\s\S]*?(?=\n## |\n?$)/, "");
+}
+
 if (process.argv.includes("--check")) {
   const current = await readFile(OUT, "utf8").catch(() => "");
-  if (current !== rendered) {
+  if (stripUnreleased(current) !== stripUnreleased(rendered)) {
     console.error(
-      "about/changelog.mdx is out of date with CHANGELOG.md.\n" +
+      "about/changelog.mdx is out of date with CHANGELOG.md (outside Unreleased, " +
+        "which --check deliberately ignores -- see the comment above stripUnreleased()).\n" +
         "Run: cd docs && npm run sync:changelog",
     );
     process.exit(1);
   }
-  console.log(`sync-changelog: about/changelog.mdx current with ${SRC}`);
+  console.log(`sync-changelog: about/changelog.mdx current with ${SRC} (Unreleased excluded from the check)`);
   process.exit(0);
 }
 

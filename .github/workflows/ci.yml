@@ -261,8 +261,13 @@ jobs:
       # missing an entire release section and, separately, the underlying
       # CHANGELOG.md source still carrying repo-relative links that had
       # already 404'd once and been "fixed" only in a later summary bullet,
-      # not the original entries. This closes both: it fails if the
-      # committed page and a fresh render of CHANGELOG.md disagree at all.
+      # not the original entries. This closes both: it fails if a *released*
+      # section and a fresh render disagree. The Unreleased section is
+      # deliberately excluded from the comparison -- it's exactly whatever
+      # changelog.d/ fragments happen to be on main right now, a moving
+      # target every fragment-adding PR shares, so comparing it would make
+      # every open PR go stale the moment any *other* PR's fragment lands,
+      # the same per-PR churn changelog.d/ was built to remove.
       - name: Generated changelog page matches CHANGELOG.md
         run: cd docs && node scripts/sync-changelog.mjs --check
 
