@@ -71,7 +71,11 @@ impl Printer {
         fields: &[(&str, &str)],
         extra: &[(&str, serde_json::Value)],
     ) {
-        if self.quiet {
+        // `extra` is output the caller asked for by name (`--out -`), so in
+        // JSON mode it is printed even under `--quiet`: quiet silences
+        // commentary, not requested output. Text mode under quiet stays
+        // silent (the caller printed the raw envelope itself).
+        if self.quiet && (self.format != Format::Json || extra.is_empty()) {
             return;
         }
         if self.format == Format::Json {

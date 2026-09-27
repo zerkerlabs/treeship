@@ -187,6 +187,66 @@ fn attest_out_stdout_in_json_mode_is_one_document_with_the_envelope() {
     );
 }
 
+// `--quiet` silences commentary, not output that was asked for: with
+// `--out -` the envelope still arrives, inside the one JSON document.
+#[test]
+fn quiet_json_attest_out_stdout_still_prints_the_envelope_document() {
+    let ship = Ship::init();
+    let action = ship.run(&[
+        "--quiet",
+        "--format",
+        "json",
+        "attest",
+        "action",
+        "--actor",
+        "agent://a",
+        "--action",
+        "x",
+        "--out",
+        "-",
+    ]);
+    assert!(action.status.success(), "{}", text(&action));
+    let doc = one_document(&action);
+    assert!(doc["envelope"]["payload"].is_string(), "{doc}");
+    let id = doc["id"].as_str().unwrap().to_string();
+
+    let out = ship.run(&[
+        "--quiet",
+        "--format",
+        "json",
+        "attest",
+        "endorsement",
+        "--endorser",
+        "agent://b",
+        "--subject",
+        &id,
+        "--kind",
+        "review",
+        "--out",
+        "-",
+    ]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(one_document(&out)["envelope"]["signatures"].is_array());
+
+    // Without --out, quiet JSON stays silent as before.
+    let out = ship.run(&[
+        "--quiet",
+        "--format",
+        "json",
+        "attest",
+        "action",
+        "--actor",
+        "agent://a",
+        "--action",
+        "y",
+    ]);
+    assert!(
+        out.status.success() && out.stdout.is_empty(),
+        "{}",
+        text(&out)
+    );
+}
+
 // R3: no hub in JSON mode is an error on stderr, not a report on stdout.
 #[test]
 fn session_report_without_a_hub_in_json_mode_errors_on_stderr() {

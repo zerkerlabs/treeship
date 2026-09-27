@@ -2940,10 +2940,8 @@ pub fn report(
             // and exited nonzero; errors go to stderr, and the local verdict
             // is one flag away.
             if format == "json" {
-                return Err(format!(
-                    "{e}: run `treeship hub attach` to publish, or `treeship session report --no-upload` for the local verdict"
-                )
-                .into());
+                let _ = e;
+                return Err("hub not attached: run `treeship hub attach` to publish, or `treeship session report --no-upload` for the local verdict".into());
             }
             return Err(format!(
                 "{e}\n\n  \
