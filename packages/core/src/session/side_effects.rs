@@ -117,7 +117,7 @@ impl SideEffects {
             match &event.event_type {
                 EventType::AgentReadFile { file_path, digest } => {
                     se.files_read.push(FileAccess {
-                        file_path: file_path.clone(),
+                        file_path: crate::session::redact_home_path(file_path),
                         agent_instance_id: event.agent_instance_id.clone(),
                         timestamp: event.timestamp.clone(),
                         digest: digest.clone(),
@@ -136,7 +136,7 @@ impl SideEffects {
                     deletions,
                 } => {
                     se.files_written.push(FileAccess {
-                        file_path: file_path.clone(),
+                        file_path: crate::session::redact_home_path(file_path),
                         agent_instance_id: event.agent_instance_id.clone(),
                         timestamp: event.timestamp.clone(),
                         digest: digest.clone(),
@@ -422,7 +422,7 @@ fn promote_mcp_called_tool(event: &SessionEvent, tool_name: &str, se: &mut SideE
     match (category, file_path, command) {
         (ToolCategory::Read, Some(p), _) => {
             se.files_read.push(FileAccess {
-                file_path: p,
+                file_path: crate::session::redact_home_path(&p),
                 agent_instance_id: event.agent_instance_id.clone(),
                 timestamp: event.timestamp.clone(),
                 digest: None,

@@ -528,6 +528,53 @@ paths:
           description: The receipt JSON, verbatim
         '404':
           description: No receipt uploaded for this session
+        '410':
+          description: The publishing dock took this receipt down; the body is gone and the id is retired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:         { type: string, example: "receipt removed by its publisher" }
+                  session_id:    { type: string }
+                  tombstoned_at: { type: integer }
+                  reason:        { type: string }
+    delete:
+      summary: Take a published receipt down
+      description: DPoP authenticated; only the dock that published the receipt. The body is removed and only the id, the dock and the tombstone time are kept. GET answers 410 Gone afterwards and PUT on the id is refused; the takedown is permanent.
+      operationId: deleteReceipt
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, description: A short public reason, at most 200 characters }
+      responses:
+        '200':
+          description: Taken down
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:    { type: string }
+                  status:        { type: string, example: tombstoned }
+                  tombstoned_at: { type: integer }
+        '401':
+          description: DPoP authentication failed
+        '403':
+          description: Another dock published this receipt
+        '404':
+          description: No such session
+        '410':
+          description: Already taken down
 
   /v1/ship/agents:
     get:

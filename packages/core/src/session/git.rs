@@ -293,7 +293,7 @@ pub fn reconcile_changes_with_options(
             return;
         }
         by_path.entry(path.clone()).or_insert(GitChange {
-            file_path: path,
+            file_path: crate::session::redact_home_path(&path),
             operation: op.to_string(),
             additions: None,
             deletions: None,

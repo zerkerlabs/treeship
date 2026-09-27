@@ -99,7 +99,7 @@ pub fn pre(command: &str, printer: &Printer) -> Result<(), Box<dyn std::error::E
 /// Reads .pending_hook, creates a receipt, writes .last, cleans up.
 pub fn post(
     exit_code: i32,
-    _command: Option<&str>,
+    command_arg: Option<&str>,
     config_override: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -122,6 +122,18 @@ pub fn post(
     let _ = std::fs::remove_file(&pending_path);
 
     let command = pending["command"].as_str().unwrap_or("unknown").to_string();
+    // The pending state belongs to the command `pre` matched. A `post` that
+    // names a different command has found a stale `pre` whose own `post`
+    // never ran; recording it would attribute the old command to this run.
+    // The state was removed above, and nothing is recorded.
+    if let Some(given) = command_arg {
+        if crate::redact::redact_command(given) != command {
+            printer.dim_info(&format!(
+                "  stale hook state for `{command}` dropped; `{given}` was not matched by a pre-hook"
+            ));
+            return Ok(());
+        }
+    }
     let label = pending["label"].as_str().unwrap_or("action").to_string();
     let start_ms = pending["start_ms"].as_u64().unwrap_or(0);
     let git_before = pending["git_head"].as_str().map(|s| s.to_string());

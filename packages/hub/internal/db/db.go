@@ -248,6 +248,11 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE artifacts ADD COLUMN rekor_status TEXT`,
 		`ALTER TABLE artifacts ADD COLUMN rekor_reason TEXT`,
 		`ALTER TABLE artifacts ADD COLUMN rekor_entry TEXT`,
+		// A published receipt its dock took down (DELETE /v1/receipt/{id}).
+		// The body is removed; the row keeps the id, the dock and when.
+		// GetReceipt answers 410 Gone for such a row, never the old bytes.
+		`ALTER TABLE sessions ADD COLUMN tombstoned_at INTEGER`,
+		`ALTER TABLE sessions ADD COLUMN tombstone_reason TEXT`,
 	}
 	for _, stmt := range addColumns {
 		if _, err := db.Exec(stmt); err != nil {
@@ -955,6 +960,43 @@ type Session struct {
 	ActionCount int
 	ReceiptJSON *string
 	UploadedAt  *int64
+	// Set when the dock took the receipt down; the body is gone for good.
+	TombstonedAt    *int64
+	TombstoneReason *string
+}
+
+// TombstoneSession removes a published receipt's body at its dock's request
+// and records the takedown. Outcomes: "ok", "not_found", "owned_by_other"
+// (another dock published it), "already" (already taken down). The body is
+// overwritten with NULL in the same statement that records the tombstone,
+// so no row ever carries both.
+func TombstoneSession(database *sql.DB, sessionID, dockID, reason string, now int64) (string, error) {
+	existing, err := GetSession(database, sessionID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "not_found", nil
+		}
+		return "", err
+	}
+	if existing.DockID != dockID {
+		return "owned_by_other", nil
+	}
+	if existing.TombstonedAt != nil {
+		return "already", nil
+	}
+	res, err := database.Exec(
+		`UPDATE sessions SET receipt_json = NULL, status = 'tombstoned',
+		   tombstoned_at = ?, tombstone_reason = ?
+		 WHERE session_id = ? AND dock_id = ? AND tombstoned_at IS NULL`,
+		now, reason, sessionID, dockID,
+	)
+	if err != nil {
+		return "", err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return "already", nil
+	}
+	return "ok", nil
 }
 
 // InsertSessionWriteOnce atomically inserts a session with its receipt.
@@ -995,6 +1037,11 @@ func InsertSessionWriteOnce(database *sql.DB, s *Session) (string, error) {
 	}
 	if existing.DockID != s.DockID {
 		return "owned_by_other", nil
+	}
+	// A taken-down receipt is not an open session: its body is gone on
+	// purpose and nothing is written into the slot again.
+	if existing.TombstonedAt != nil {
+		return "tombstoned", nil
 	}
 	if existing.ReceiptJSON != nil && *existing.ReceiptJSON != "" {
 		// Already sealed. Accept only byte-identical replays.
@@ -1040,13 +1087,14 @@ func InsertSessionWriteOnce(database *sql.DB, s *Session) (string, error) {
 // GetSession returns a session row by session_id, or nil + sql.ErrNoRows if not found.
 func GetSession(database *sql.DB, sessionID string) (*Session, error) {
 	row := database.QueryRow(
-		`SELECT session_id, dock_id, name, started_at, ended_at, duration_ms, status, agent_count, action_count, receipt_json, uploaded_at
+		`SELECT session_id, dock_id, name, started_at, ended_at, duration_ms, status, agent_count, action_count, receipt_json, uploaded_at, tombstoned_at, tombstone_reason
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	)
 	s := &Session{}
 	if err := row.Scan(
 		&s.SessionID, &s.DockID, &s.Name, &s.StartedAt, &s.EndedAt, &s.DurationMS,
 		&s.Status, &s.AgentCount, &s.ActionCount, &s.ReceiptJSON, &s.UploadedAt,
+		&s.TombstonedAt, &s.TombstoneReason,
 	); err != nil {
 		return nil, err
 	}

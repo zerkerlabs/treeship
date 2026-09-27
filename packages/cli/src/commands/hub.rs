@@ -709,6 +709,90 @@ pub fn open(
 }
 
 // ---------------------------------------------------------------------------
+// unpublish
+// ---------------------------------------------------------------------------
+
+/// `treeship hub unpublish <session_id>`: DELETE /v1/receipt/{id} on the
+/// attached hub, signed with this dock's DPoP key. The hub tombstones the
+/// receipt (body removed, 410 Gone from then on); only the publishing dock
+/// is allowed, so a 403 means another dock published it. Nothing local is
+/// touched.
+pub fn unpublish(
+    session_id: &str,
+    hub: Option<&str>,
+    reason: Option<&str>,
+    config: Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !session_id.starts_with("ssn_") || session_id.len() > 128 {
+        return Err(crate::exit::usage(format!(
+            "{session_id:?} is not a session id (ssn_<hex>)"
+        )));
+    }
+    let ctx = ctx::open(config)?;
+    let (_name, entry) = ctx
+        .config
+        .resolve_hub(hub)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let hub_secret_hex = resolve_dpop_secret_hex(entry, &ctx.keys)?;
+    let url = format!(
+        "{}/v1/receipt/{session_id}",
+        entry.endpoint.trim_end_matches('/')
+    );
+    let dpop_jwt = build_dpop_jwt(&hub_secret_hex, "DELETE", &url)?;
+    let body = serde_json::json!({ "reason": reason.unwrap_or("") });
+    let response = ureq::delete(&url)
+        .set("Authorization", &format!("DPoP {}", entry.hub_id))
+        .set("DPoP", &dpop_jwt)
+        .send_json(body);
+    let doc: serde_json::Value = match response {
+        Ok(resp) => resp.into_json().unwrap_or(serde_json::Value::Null),
+        Err(ureq::Error::Status(code, resp)) => {
+            let detail: serde_json::Value = resp.into_json().unwrap_or(serde_json::Value::Null);
+            let msg = detail["error"].as_str().unwrap_or("").to_string();
+            let what = match code {
+                403 => "another dock published this receipt; only the publisher can take it down",
+                404 => "the hub has no session with this id",
+                410 => "this receipt was already taken down",
+                401 => "the hub refused this dock's DPoP proof",
+                _ => "the hub refused the takedown",
+            };
+            return Err(format!(
+                "{what} (HTTP {code}{})",
+                if msg.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {msg}")
+                }
+            )
+            .into());
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let tombstoned_at = doc["tombstoned_at"].as_i64();
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "session_id": session_id,
+            "hub": entry.hub_id,
+            "receipt_url": share_url(&entry.endpoint, None, &format!("/v1/receipt/{session_id}")),
+            "tombstoned_at": tombstoned_at,
+        }));
+        return Ok(());
+    }
+    printer.success(
+        "receipt taken down",
+        &[
+            ("session", session_id),
+            ("hub", &entry.hub_id),
+            ("now answers", "410 Gone at its receipt URL"),
+        ],
+    );
+    printer.hint("local copies of the receipt are untouched; the session id cannot be re-uploaded");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // kill
 // ---------------------------------------------------------------------------
 

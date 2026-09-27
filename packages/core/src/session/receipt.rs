@@ -1049,8 +1049,16 @@ fn event_summary(et: &super::event::EventType) -> Option<String> {
         )),
         AgentNote { text } => text.clone(),
         AgentCalledTool { tool_name, .. } => Some(format!("Called {tool_name}")),
-        AgentReadFile { file_path, .. } => Some(format!("Read {file_path}")),
-        AgentWroteFile { file_path, .. } => Some(format!("Wrote {file_path}")),
+        // The same `~/` form the file ledger uses: a summary is published
+        // with the receipt too.
+        AgentReadFile { file_path, .. } => Some(format!(
+            "Read {}",
+            crate::session::redact_home_path(file_path)
+        )),
+        AgentWroteFile { file_path, .. } => Some(format!(
+            "Wrote {}",
+            crate::session::redact_home_path(file_path)
+        )),
         AgentOpenedPort { port, .. } => Some(format!("Opened port {port}")),
         AgentConnectedNetwork { destination, .. } => Some(format!("Connected to {destination}")),
         AgentStartedProcess { process_name, .. } => Some(format!("Started {process_name}")),
