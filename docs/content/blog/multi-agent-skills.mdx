@@ -77,12 +77,12 @@ The agent didn't guess. The skill told it that `treeship wrap` is the right shap
 
 When you ask "can you also have someone approve this first?", the skill knows the answer:
 
-> **Correction (2026-08-18, v0.24).** The snippet below no longer runs as
-> written. `expires_in` is passed straight through to `--expires`, so it must be
-> an RFC 3339 string, not seconds — `expires_in=3600` raises `TypeError:
-> expected str, bytes or os.PathLike object, not int`. And the Python SDK's
-> `attest_approval()` sends no scope flag, which CLI 0.24 refuses outright.
-> Mint approvals through the CLI for now; see the
+> **Correction (2026-09-27, v0.31.10).** The snippet below is now current.
+> An earlier version of this post passed `expires_in` (not a real parameter;
+> the SDK takes `expires_at`) and no scope at all; the SDK has required and
+> sent a scope since v0.25.1. `attest_approval()` needs at least one of
+> `allowed_actions`, `allowed_actors`, `allowed_subjects` or `max_uses` (or
+> `unscoped=True` to say you meant an unscoped approval) — see the
 > [Python SDK page](/docs/sdk/python#attest_approvalapprover-description-allowed_actionsnone-allowed_actorsnone-allowed_subjectsnone-max_usesnone-unscopedfalse-expires_atnone).
 
 ```python
@@ -90,7 +90,8 @@ When you ask "can you also have someone approve this first?", the skill knows th
 approval = ts.attest_approval(
     approver="human://alice",
     description="approve staging deploy",
-    expires_in="2026-05-02T12:00:00Z",   # RFC 3339, not seconds
+    allowed_actions=["deploy.staging"],
+    expires_at="2026-05-02T12:00:00Z",   # RFC 3339, not seconds
 )
 
 # 2. Agent uses the approval nonce
@@ -139,8 +140,8 @@ See the [coverage levels guide](https://docs.treeship.dev/guides/coverage-levels
 ## What's in the Skill
 
 - **Every Treeship CLI command** — `wrap`, `verify`, `session report`, `approve`, `hub push`, `setup`, `add --discover`, `harness list`, and more.
-- **Python SDK shape** — `Treeship().attest_action()`, `attest_approval()`, `attest_decision()`, `verify()`, `dock_push()`, `session_report()`.
-- **TypeScript SDK shape** — `Ship.init()`, `attestAction()`, `attestHandoff()`, `createCheckpoint()`, `createBundle()`.
+- **Python SDK shape** — `Treeship().attest_action()`, `attest_approval()`, `attest_decision()`, `verify()`, `hub_push()`, `session_report()`.
+- **TypeScript SDK shape** — `ship()` (four modules: `attest`, `verify`, `hub`, `session`) — `s.attest.action()`, `s.attest.handoff()`, `s.hub.push()`, `s.verify.verify()`.
 - **Approval-gated workflows** — the create-approval / consume-with-nonce / verify-with-replay-checks pattern.
 - **Chained workflows** — multi-agent handoffs linked by `parent_id`, the chain walk that `treeship verify` runs.
 - **MCP bridge wiring per agent** — exact `claude mcp add`, `kimi mcp add`, Cursor `mcp.json`, Codex `config.toml` snippets.

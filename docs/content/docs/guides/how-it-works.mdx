@@ -12,7 +12,8 @@ This page explains the mechanics behind Treeship. If you have not run the [quick
 
 Every artifact Treeship produces is an Ed25519 signature over a structured payload.
 
-When you run `treeship init`, a new Ed25519 keypair — the **ship key** — is generated and encrypted at rest on your machine. Private keys never leave your device. The ship key is the default signer, and agents you register with their own key (`treeship onboard`, or `treeship agent register --own-key`) sign with **per-agent keys**, each bound to its `agent://` URI by a ship-signed certificate. Anyone holding the matching public key (or a certificate chain to a key they pinned) can verify any artifact you have ever created.
+{/* claims:keystore-at-rest */}
+When you run `treeship init`, a new Ed25519 keypair — the **ship key** — is generated and AES-256-GCM encrypted under a key derived from a secret seed file stored beside it, not a passphrase and not bound to this machine. Private keys never leave your device; `keys export` prints only the public half. The ship key is the default signer, and agents you register with their own key (`treeship onboard`, or `treeship agent register --own-key`) sign with **per-agent keys**, each bound to its `agent://` URI by a ship-signed certificate. Anyone holding the matching public key (or a certificate chain to a key they pinned) can verify any artifact you have ever created.
 
 The signature format follows [DSSE (Dead Simple Signing Envelope)](https://github.com/secure-systems-lab/dsse):
 
