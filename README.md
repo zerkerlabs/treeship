@@ -29,7 +29,7 @@ Treeship produces evidence: every **captured** action becomes a signed, timestam
 
 ## The 60-second local demo
 
-No account, no server — and after the install, no network. Every output block below is real, captured from v0.24.
+No account, no server — and after the install, no network. Every output block below is real CLI output, captured against a real release; exact artifact ids and digests will differ on yours.
 
 ```bash
 npm install -g treeship
@@ -289,7 +289,7 @@ The CLI is distributed via npm + [GitHub Releases](https://github.com/zerkerlabs
 
 ## SDK examples
 
-Both SDKs shell out to the `treeship` binary for signing — install the CLI and run `treeship init` first. These examples run as written against v0.24.
+Both SDKs shell out to the `treeship` binary for signing — install the CLI and run `treeship init` first.
 
 ### TypeScript (`@treeship/sdk`)
 

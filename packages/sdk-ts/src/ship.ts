@@ -38,7 +38,7 @@ export class Ship {
       if (msg.includes("ENOENT") || msg.includes("not found")) {
         throw new Error(
           "treeship CLI binary not found on PATH. " +
-          "Install it from https://treeship.dev/docs/install before using the SDK.",
+          "Install it from https://docs.treeship.dev/guides/install before using the SDK.",
         );
       }
       throw new Error(`Failed to run 'treeship version': ${msg}`);

@@ -19,7 +19,7 @@ cargo build --release --bin treeship
 # binary is at ./target/release/treeship
 ```
 
-> Do NOT `cargo install treeship-cli` from crates.io. The published `treeship-cli` crate is orphaned at v0.4.0 and the CLI no longer ships through it -- the live distribution is the npm wrapper and the install script above. The Rust crate that IS live is `treeship-core` (the library, used by the SDKs and verifier).
+> Do NOT `cargo install treeship-cli` from crates.io. The published `treeship-cli` crate has every version yanked -- `cargo install treeship-cli` fails outright -- and the CLI no longer ships through it -- the live distribution is the npm wrapper and the install script above. The Rust crate that IS live is `treeship-core` (the library, used by the SDKs and verifier).
 
 After install, run `treeship init` once to generate a keypair and config in `~/.treeship/`.
 

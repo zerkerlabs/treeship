@@ -81,7 +81,7 @@ hermes mcp add treeship --command npx \
   --args -y @treeship/mcp
 ```
 
-`--args` must come last in the Hermes CLI command.
+`--args` must come last in the Hermes CLI command. `TREESHIP_HUB_ENDPOINT` is what `treeship add` writes into every generated config, matching this one, but nothing currently reads it -- it's harmless to keep or drop.
 </Step>
 </Steps>
 
@@ -105,12 +105,12 @@ mcp_servers:
 This is the minimal offline check for the released CLI and Hermes skill install path:
 
 ```bash
-TMP=$(mktemp -d /tmp/treeship-v015-smoke.XXXXXX)
+TMP=$(mktemp -d /tmp/treeship-smoke.XXXXXX)
 TMP_REAL=$(cd "$TMP" && pwd -P)
 HOME_TMP="$TMP_REAL/home"
 mkdir -p "$HOME_TMP" "$TMP_REAL/work"
 
-curl -fsSL https://github.com/zerkerlabs/treeship/releases/download/v0.15.0/treeship-darwin-aarch64 \
+curl -fsSL https://github.com/zerkerlabs/treeship/releases/latest/download/treeship-darwin-aarch64 \
   -o "$TMP_REAL/treeship"
 chmod +x "$TMP_REAL/treeship"
 

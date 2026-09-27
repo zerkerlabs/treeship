@@ -65,4 +65,4 @@ cargo test
 cargo run --example attested_agent
 ```
 
-Built and tested against `rig-core 0.41.0` and `treeship-core 0.23.0` on Rust 1.91.
+Built and tested against `rig-core 0.41.0` and `treeship-core 0.31.10` on Rust 1.91 (see this crate's `Cargo.toml` for the pin currently in effect).
