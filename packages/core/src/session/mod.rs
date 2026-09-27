@@ -40,19 +40,30 @@ pub use side_effects::{FileAccess, SideEffects};
 ///
 /// Works on a bare path and on free text such as a command line: every
 /// occurrence of `$HOME` that starts at a path boundary (start of text,
-/// whitespace, a quote, `=`, `:` and the like) and ends at one (end of text,
-/// `/`, or a non-path character) becomes `~`. `/Users/someoneelse/x` is not
-/// touched: the home must end where the path component ends.
+/// whitespace, a quote, `=`, `:`, `file://` and the like) and ends at one
+/// (end of text, `/`, or a non-path character) becomes `~`.
+/// `/Users/someoneelse/x` is not touched: the home must end where the path
+/// component ends. The resolved form of `$HOME` is redacted too, so a home
+/// reached through a link (`/tmp/h` for `/private/tmp/h` on macOS) does not
+/// leak as its real path.
 pub fn redact_home_path(text: &str) -> String {
     let Some(home) = std::env::var_os("HOME") else {
         return text.to_string();
     };
-    let home = home.to_string_lossy();
-    let home = home.trim_end_matches('/');
-    if home.is_empty() {
+    let literal = home.to_string_lossy();
+    let literal = literal.trim_end_matches('/');
+    if literal.is_empty() {
         return text.to_string();
     }
-    redact_home_in(text, home)
+    let mut out = redact_home_in(text, literal);
+    if let Ok(real) = std::fs::canonicalize(&home) {
+        let real = real.to_string_lossy();
+        let real = real.trim_end_matches('/');
+        if !real.is_empty() && real != literal {
+            out = redact_home_in(&out, real);
+        }
+    }
+    out
 }
 
 fn is_path_char(c: char) -> bool {
@@ -66,10 +77,9 @@ fn redact_home_in(text: &str, home: &str) -> String {
     while let Some(off) = text[from..].find(home) {
         let at = from + off;
         let after = at + home.len();
-        let prev_ok = text[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !is_path_char(c));
+        let before = &text[..at];
+        let prev_ok = before.chars().next_back().is_none_or(|c| !is_path_char(c))
+            || before.ends_with("file://");
         let next_ok = text[after..]
             .chars()
             .next()
@@ -92,6 +102,7 @@ fn redact_home_in(text: &str, home: &str) -> String {
 mod redact_tests {
     use super::redact_home_in as r;
     const H: &str = "/Users/someone";
+    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn home_paths_become_tilde_and_others_are_untouched() {
@@ -121,7 +132,35 @@ mod redact_tests {
     }
 
     #[test]
+    fn a_file_url_is_a_boundary() {
+        assert_eq!(r("file:///Users/someone/a.txt", H), "file://~/a.txt");
+        assert_eq!(
+            r("open file:///Users/someone/a.txt now", H),
+            "open file://~/a.txt now"
+        );
+        assert_eq!(r("http://x/Users/someone/a", H), "http://x/Users/someone/a");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_resolved_home_is_redacted_too() {
+        let real = tempfile::tempdir().unwrap();
+        let link = real.path().parent().unwrap().join(format!(
+            "home-link-{}",
+            real.path().file_name().unwrap().to_string_lossy()
+        ));
+        std::os::unix::fs::symlink(real.path(), &link).unwrap();
+        let _guard = HOME_LOCK.lock().unwrap();
+        std::env::set_var("HOME", &link);
+        let real_path = std::fs::canonicalize(real.path()).unwrap();
+        let text = format!("cat {}/a.txt {}/b.txt", link.display(), real_path.display());
+        assert_eq!(super::redact_home_path(&text), "cat ~/a.txt ~/b.txt");
+        let _ = std::fs::remove_file(&link);
+    }
+
+    #[test]
     fn env_home_drives_the_public_function() {
+        let _guard = HOME_LOCK.lock().unwrap();
         // A home that cannot be a prefix of this test's strings keeps them intact.
         std::env::set_var("HOME", "/nonexistent/home/for/redaction/test");
         assert_eq!(super::redact_home_path("/opt/x"), "/opt/x");

@@ -158,7 +158,7 @@ impl SideEffects {
 
                 EventType::AgentConnectedNetwork { destination, port } => {
                     se.network_connections.push(NetworkConnection {
-                        destination: destination.clone(),
+                        destination: crate::session::redact_home_path(destination),
                         port: *port,
                         agent_instance_id: event.agent_instance_id.clone(),
                         timestamp: event.timestamp.clone(),

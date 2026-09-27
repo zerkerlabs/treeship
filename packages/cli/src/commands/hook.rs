@@ -131,7 +131,7 @@ pub fn post(
     // The state was removed above, and nothing is recorded.
     if let Some(given) = command_arg {
         if crate::redact::redact_command(given) != command {
-            printer.dim_info(&format!(
+            printer.note(&format!(
                 "  stale hook state for `{command}` dropped; `{given}` was not matched by a pre-hook"
             ));
             return Ok(());
@@ -149,7 +149,7 @@ pub fn post(
     // only tell for stale state is age: a `pre` a day old whose `post`
     // never ran belongs to a shell that is gone.
     if command_arg.is_none() && elapsed_ms > STALE_PENDING_MS {
-        printer.dim_info(&format!(
+        printer.note(&format!(
             "  stale hook state for `{command}` dropped (older than 24h); run `treeship install` to update the shell hook"
         ));
         return Ok(());

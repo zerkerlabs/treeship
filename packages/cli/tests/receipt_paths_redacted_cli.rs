@@ -167,3 +167,140 @@ fn the_receipt_names_home_files_with_a_tilde() {
     let out = run(&["package", "verify", pkg.to_str().unwrap()]);
     assert!(out.status.success(), "{}", text(&out));
 }
+
+/// The home reached through a link (`/tmp/h` for `/private/tmp/h` on macOS)
+/// is redacted in its resolved form too, and so are `file://` URLs, network
+/// destinations and note text.
+#[cfg(unix)]
+#[test]
+fn the_resolved_home_file_urls_destinations_and_notes_are_redacted() {
+    let real = tempfile::tempdir().unwrap();
+    let link = real.path().parent().unwrap().join(format!(
+        "home-link-{}",
+        real.path().file_name().unwrap().to_string_lossy()
+    ));
+    std::os::unix::fs::symlink(real.path(), &link).unwrap();
+    let real_home = std::fs::canonicalize(real.path()).unwrap();
+    let project = real_home.join("proj");
+    std::fs::create_dir_all(&project).unwrap();
+    let cfg = project.join(".treeship/config.json");
+    let run = |args: &[&str]| -> Output {
+        Command::new(cli_path())
+            .current_dir(&project)
+            .env("HOME", &link)
+            .env_remove("TREESHIP_CONFIG")
+            .args(args)
+            .arg("--config")
+            .arg(&cfg)
+            .output()
+            .expect("run treeship")
+    };
+    assert!(run(&["init", "--name", "t"]).status.success());
+    assert!(
+        run(&["session", "start", "--name", "s", "--actor", "agent://a"])
+            .status
+            .success()
+    );
+    let notes = project.join("notes.txt");
+    std::fs::write(&notes, b"hello").unwrap();
+    // A file under the real path (what the OS reports), and the link path.
+    for path in [
+        notes.to_string_lossy().to_string(),
+        format!("{}/proj/notes.txt", link.display()),
+    ] {
+        let out = run(&[
+            "session",
+            "event",
+            "--type",
+            "agent.wrote_file",
+            "--actor",
+            "agent://a",
+            "--file",
+            &path,
+        ]);
+        assert!(out.status.success(), "{}", text(&out));
+    }
+    let meta = format!(
+        r#"{{"tool_input":{{"command":"open file://{} && curl file://{}/x"}}}}"#,
+        notes.display(),
+        link.display()
+    );
+    let out = run(&[
+        "session",
+        "event",
+        "--type",
+        "agent.called_tool",
+        "--tool",
+        "Bash",
+        "--actor",
+        "agent://a",
+        "--meta",
+        &meta,
+    ]);
+    assert!(out.status.success(), "{}", text(&out));
+    let out = run(&[
+        "session",
+        "event",
+        "--type",
+        "agent.connected_network",
+        "--actor",
+        "agent://a",
+        "--destination",
+        &format!("unix:{}/proj/agent.sock", real_home.display()),
+    ]);
+    assert!(out.status.success(), "{}", text(&out));
+    let meta = format!(
+        r#"{{"text":"see {}/proj/notes.txt for details"}}"#,
+        real_home.display()
+    );
+    let out = run(&[
+        "session",
+        "event",
+        "--type",
+        "agent.note",
+        "--actor",
+        "agent://a",
+        "--meta",
+        &meta,
+    ]);
+    assert!(out.status.success(), "{}", text(&out));
+    let out = run(&[
+        "session",
+        "close",
+        "--receipt-dir",
+        project.join("r").to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert!(out.status.success(), "{}", text(&out));
+    let pkg = std::fs::read_dir(project.join("r"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().map(|x| x == "treeship").unwrap_or(false))
+        .expect("no package written");
+    let receipt = std::fs::read_to_string(pkg.join("receipt.json")).unwrap();
+    let preview = std::fs::read_to_string(pkg.join("preview.html")).unwrap();
+    for (name, doc) in [("receipt.json", &receipt), ("preview.html", &preview)] {
+        for leak in [
+            real_home.to_string_lossy().to_string(),
+            link.to_string_lossy().to_string(),
+            "/Users/".into(),
+            "/home/".into(),
+        ] {
+            assert!(!doc.contains(&leak), "{name} carries {leak}:\n{doc}");
+        }
+    }
+    for want in [
+        "\"~/proj/notes.txt\"",
+        "open file://~/proj/notes.txt && curl file://~/x",
+        "unix:~/proj/agent.sock",
+        "see ~/proj/notes.txt for details",
+    ] {
+        assert!(
+            receipt.contains(want),
+            "{want} missing from the receipt:\n{receipt}"
+        );
+    }
+    let _ = std::fs::remove_file(&link);
+}

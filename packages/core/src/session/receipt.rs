@@ -1047,7 +1047,10 @@ fn event_summary(et: &super::event::EventType) -> Option<String> {
         } => Some(format!(
             "{from_agent_instance_id} -> {to_agent_instance_id}"
         )),
-        AgentNote { text } => text.clone(),
+        // A note is free text an agent wrote; a path in it is redacted like
+        // any other. `session close --summary` is the operator's own words
+        // and is published as written.
+        AgentNote { text } => text.as_ref().map(|t| crate::session::redact_home_path(t)),
         AgentCalledTool { tool_name, .. } => Some(format!("Called {tool_name}")),
         // The same `~/` form the file ledger uses: a summary is published
         // with the receipt too.
@@ -1060,7 +1063,10 @@ fn event_summary(et: &super::event::EventType) -> Option<String> {
             crate::session::redact_home_path(file_path)
         )),
         AgentOpenedPort { port, .. } => Some(format!("Opened port {port}")),
-        AgentConnectedNetwork { destination, .. } => Some(format!("Connected to {destination}")),
+        AgentConnectedNetwork { destination, .. } => Some(format!(
+            "Connected to {}",
+            crate::session::redact_home_path(destination)
+        )),
         AgentStartedProcess { process_name, .. } => Some(format!(
             "Started {}",
             crate::session::redact_home_path(process_name)
