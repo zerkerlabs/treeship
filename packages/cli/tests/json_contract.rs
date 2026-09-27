@@ -388,6 +388,59 @@ fn every_json_capable_command_emits_json() {
     check("vi keygen", &["vi", "keygen"]);
     check("vi keys list", &["vi", "keys", "list"]);
 
+    // Last, so `verify last` above still saw an honest artifact: the two paths that printed a warning document before the result in
+    // 0.31.10 (`json.load(stdout)` failed with "Extra data"): a v2 action
+    // outside its grant's scope, and a pin replaced with --replace. The
+    // harness rejects anything but one document, so these rows are the test.
+    let scoped = ship.run_json(&[
+        "grant",
+        "issue",
+        "--scope",
+        "payments.*",
+        "--audience",
+        "agent://a",
+        "--expiry",
+        "30d",
+        "--grantee-self",
+    ]);
+    let scoped_id = scoped["grant_id"].as_str().unwrap().to_string();
+    check(
+        "attest action (v2 out of scope warns on stderr)",
+        &[
+            "attest",
+            "action",
+            "--v2",
+            "--actor",
+            "agent://a",
+            "--action",
+            "admin.delete",
+            "--grant",
+            &scoped_id,
+        ],
+    );
+    ship.must(&[
+        "trust",
+        "add",
+        "key_1234567890abcdef",
+        "ed25519:AkeP0YomPIIOnZi0xG6MOxlgp3kHdL_R-cQ_heeDWLA",
+        "--kind",
+        "cert_issuer",
+        "--yes",
+    ]);
+    check(
+        "trust add --replace (warns on stderr)",
+        &[
+            "trust",
+            "add",
+            "key_1234567890abcdef",
+            "ed25519:9PfbpAhWYgo81lyzCcdeYbcdSJzOIIfNNiqnbXgZrnM",
+            "--kind",
+            "cert_issuer",
+            "--replace",
+            "--yes",
+        ],
+    );
+
     assert!(
         wrong.is_empty(),
         "JSON contract broken ({} of {} commands):\n{}",

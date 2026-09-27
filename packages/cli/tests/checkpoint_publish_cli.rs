@@ -181,6 +181,44 @@ fn publish_to_a_hub_that_accepts_exits_zero_and_one_that_fails_exits_nonzero() {
     );
 }
 
+/// One JSON document per command, and the publish result inside it:
+/// 0.31.10 wrote 0 bytes for `--format json merkle publish` and gave
+/// `checkpoint --publish` the same document as a plain `checkpoint`.
+#[test]
+fn publish_and_checkpoint_publish_report_the_publish_in_json() {
+    let ship = Ship::init();
+    let (hub, hits) = serve("200 OK", r#"{"id":41}"#);
+    ship.attach_fake_hub(&hub);
+    let out = ship.run(&["checkpoint", "--publish", "--format", "json"]);
+    assert!(out.status.success(), "{}", text(&out));
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("not one JSON document ({e}):\n{}", text(&out)));
+    assert_eq!(doc["status"], "ok");
+    assert!(doc["root"].as_str().unwrap().starts_with("sha256:"));
+    assert_eq!(doc["publish"]["status"], "ok", "{doc}");
+    assert_eq!(doc["publish"]["hub_checkpoint_id"], 41, "{doc}");
+    assert!(doc["publish"]["proofs_published"].is_u64(), "{doc}");
+    assert!(doc["publish"]["consistency"]["status"].is_string(), "{doc}");
+    assert!(hits.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+
+    let out = ship.run(&["merkle", "publish", "--format", "json"]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(
+        !out.stdout.is_empty(),
+        "merkle publish wrote nothing on success"
+    );
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("not one JSON document ({e}):\n{}", text(&out)));
+    assert_eq!(doc["status"], "ok");
+    assert_eq!(doc["hub_checkpoint_id"], 41);
+    assert_eq!(doc["index"], 1);
+
+    // A plain checkpoint carries no publish result.
+    let out = ship.run(&["checkpoint", "--format", "json"]);
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(doc.get("publish").is_none(), "{doc}");
+}
+
 #[test]
 fn doctor_reports_the_cadence_only_as_it_runs() {
     let ship = Ship::init();

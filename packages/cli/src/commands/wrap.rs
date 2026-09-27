@@ -468,6 +468,11 @@ pub fn run(
             "files_changed": files_changed_count,
             "hub_url": hub_url,
         }));
+        // The exit code is part of the contract in every format: `--format
+        // json wrap -- npm test && deploy` used to deploy after failing
+        // tests, because this branch returned Ok(()) with the code only in
+        // the document (W1-6: every failure exits nonzero).
+        propagate_exit(&status);
         return Ok(());
     }
 
@@ -520,17 +525,24 @@ pub fn run(
     // code (the receipt meanwhile records exitCode -1/failed). Exit non-zero
     // in every non-success case: propagate the real code, or map a signal to
     // the conventional 128 + signum.
+    propagate_exit(&status);
+
+    Ok(())
+}
+
+/// Exit with the wrapped command's own status when it did not succeed:
+/// its code, or 128 + signal for a signal death, or 1 when the status
+/// could not be collected. Returns only on success.
+fn propagate_exit(status: &std::io::Result<std::process::ExitStatus>) {
     match status {
         Ok(s) if s.success() => {}
         Ok(s) => {
-            let code = s.code().unwrap_or_else(|| signal_exit_code(&s));
+            let code = s.code().unwrap_or_else(|| signal_exit_code(s));
             process::exit(code);
         }
         // We failed to even collect the child's status; treat as failure.
         Err(_) => process::exit(1),
     }
-
-    Ok(())
 }
 
 /// Map a signal-terminated child to the conventional `128 + signum` exit code
