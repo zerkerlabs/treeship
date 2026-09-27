@@ -52,7 +52,7 @@ treeship hub attach
 treeship hub push <artifact-id>
 ```
 
-**Note:** the `treeship-cli` crate on crates.io is orphaned at v0.4.0; the live Rust crate is `treeship-core` (the library). The CLI ships via the `treeship` npm wrapper, which auto-fetches the right platform binary. Don't `cargo install treeship-cli`.
+**Note:** the `treeship-cli` crate on crates.io has every version yanked; `cargo install treeship-cli` fails outright now, not just installs something stale. The live Rust crate is `treeship-core` (the library). The CLI ships via the `treeship` npm wrapper, which auto-fetches the right platform binary. Don't `cargo install treeship-cli`.
 
 ## Repo Structure
 
@@ -235,7 +235,7 @@ treeship keys list               # List signing keys
 | POST | /v1/dock/authorize | Public | Complete auth with keys |
 | POST | /v1/artifacts | DPoP | Push artifact |
 | GET | /v1/artifacts/:id | Public | Pull artifact |
-| GET | /v1/workspace/:dockId | Public | List dock's artifacts |
+| GET | /v1/workspace/:dockId | DPoP or `?session=TOKEN` | List dock's artifacts. Reader resolution accepts either; the resolved dock id must match the path's |
 | GET | /v1/verify/:id | Public | Retired -- returns `410`. Verify locally; there is no server-side verdict. |
 | POST | /v1/merkle/checkpoint | DPoP | Publish checkpoint |
 | GET | /v1/merkle/checkpoint/:id | Public | Get checkpoint |
