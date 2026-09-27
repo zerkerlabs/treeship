@@ -44,13 +44,13 @@ treeship verify last
 treeship merkle
 ```
 
-`init` creates the ship identity and the encrypted keystore. The keystore is machine-bound, so a copied key file does not decrypt elsewhere. `wrap` runs a command and signs a receipt for it: the output digest, the files that changed, the git state at the time. Each receipt chains to the previous one without the user naming it.
+`init` creates the ship identity and the encrypted keystore. {/* claims:keystore-at-rest */} The keystore is AES-256-GCM encrypted under a key derived from a secret seed file stored alongside it -- not machine-bound, and copying `.treeship/` is enough to decrypt and sign elsewhere. `wrap` runs a command and signs a receipt for it: the output digest, the files that changed, the git state at the time. Each receipt chains to the previous one without the user naming it.
 
 `attest` signs one of the six statement types directly. The signed bytes go through DSSE pre-authentication encoding, and the artifact id is derived from those PAE bytes. That is what content-addressed means here: the id is a function of exactly what was signed.
 
 `verify` checks the envelope signature against the key, recomputes the id from the bytes, and checks the Merkle inclusion proof against a checkpoint. `merkle` manages those checkpoints. A verifier needs the artifact, the proof, and the public key. It does not need the hub.
 
-The hub authenticates with a device flow and DPoP, so no session token is stored on disk. Pushed artifacts are anchored in Rekor. Security baseline in the same release: PID file locking, `0600` and `0700` file permissions, command sanitization that redacts secrets, untrusted config detection, and shell hooks pinned to absolute paths so PATH cannot be hijacked.
+The hub authenticates with a device flow and DPoP, so no session token is stored on disk. Pushed artifacts are anchored in Rekor. {/* claims:rekor-artifact-anchoring */} Security baseline in the same release: PID file locking, `0600` and `0700` file permissions, command sanitization that redacts secrets, untrusted config detection, and shell hooks pinned to absolute paths so PATH cannot be hijacked.
 
 ## What it does not do
 

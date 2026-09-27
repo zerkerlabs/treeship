@@ -139,9 +139,12 @@ jobs:
       # machine-bound, tamper-proof, immutable, anchored, witnessed,
       # air-gapped) in the docs it covers unless a claims.yml id backs it.
       # All of docs/content, the root *.md and skills/ under the per-line
-      # marker rule warn until `--strict` is added here.
+      # marker rule warned until the drift they surfaced was fixed
+      # (2026-09-27 retest wave: 124 findings, cut to 76 by a false-positive
+      # fix -- the rule matched banned phrases inside code spans and fenced
+      # blocks -- then fixed file by file down to 0).
       - name: Security claims have a status and a proof
-        run: python3 scripts/check-claims.py
+        run: python3 scripts/check-claims.py --strict
 
       # The mechanical half of the capability index. feature-inventory.yml is
       # curated (what we ship and how stable); this is derived (what is

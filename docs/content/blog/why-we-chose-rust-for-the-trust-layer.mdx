@@ -72,7 +72,7 @@ This is not something you can get from a garbage-collected language without care
 
 ## Single static binary for the CLI
 
-The Treeship CLI compiles to a single static binary with no runtime dependencies. No JVM, no Node, no Python interpreter. This matters for CI integration (copy one binary, done), for air-gapped environments (one file to transfer), and for distribution (one artifact to sign and publish).
+The Treeship CLI compiles to a single static binary with no runtime dependencies. No JVM, no Node, no Python interpreter. This matters for CI integration (copy one binary, done), for offline or network-isolated environments (one file to transfer), and for distribution (one artifact to sign and publish).
 
 ```bash
 # Cross-compile for Linux from macOS

@@ -333,7 +333,7 @@ treeship resolve --hub https://api.treeship.dev agent://deployer
 ### Audit (with omission detection)
 `Since 0.14.0`  ·  network
 
-**What:** `audit --hub` pulls an agent's history and re-verifies each anchored entry's inclusion offline, then checks completeness against the agent's committed anchor: it reports `OMISSION` if the hub dropped committed receipts.
+**What:** `audit --hub` pulls an agent's history and re-verifies each anchored entry's inclusion offline, then checks completeness against the agent's committed anchor: it reports `OMISSION` if the hub dropped committed receipts. {/* claims:transparency-log-client-reverified */}
 
 **Use / Test:**
 ```bash
@@ -448,7 +448,7 @@ treeship session start --name test && treeship session close --headline "test"
 ### History (the sortable projection)
 `Since 0.18.0`  ·  network optional
 
-**What:** `history <agent>` lists the agent's session records, filterable by `--class` and `--since`. Each envelope is re-verified on your machine; anchored entries' inclusion is re-proved offline.
+**What:** `history <agent>` lists the agent's session records, filterable by `--class` and `--since`. Each envelope is re-verified on your machine; anchored entries' inclusion is re-proved offline. {/* claims:transparency-log-client-reverified */}
 
 **Use / Test:**
 ```bash
