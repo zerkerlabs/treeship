@@ -286,6 +286,8 @@ TREESHIP_HOST_ID=host_...
 
 Tools should treat these values as context, not trust roots. Signed artifacts and verifier checks remain authoritative.
 
+`host_id` never carries the machine name. Unset, it is `host_` plus the first 16 hex characters of a SHA-256 digest of the hostname, stable on one machine so a receipt's hosts group and not readable back into the name. Set `TREESHIP_HOST_ID` to name the host yourself.
+
 ## Hub API sketch
 
 ```http

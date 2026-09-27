@@ -264,15 +264,35 @@ pub(crate) fn count_chain_artifacts(ctx: &ctx::Ctx, root_id: &str) -> u64 {
 
 /// Get the host ID for the current machine.
 pub(crate) fn local_host_id() -> String {
-    // Use PropagationContext's approach: read from env or derive from hostname
-    std::env::var("TREESHIP_HOST_ID").unwrap_or_else(|_| {
-        std::process::Command::new("hostname")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|h| format!("host_{}", h.trim().replace('.', "_")))
-            .unwrap_or_else(|| "host_unknown".into())
-    })
+    // TREESHIP_HOST_ID names the host outright. Otherwise the id is a
+    // digest of the hostname, stable on one machine so a receipt's hosts
+    // group, and not the hostname itself: receipts are published, and the
+    // machine name is nobody's business (0.31.11 re-test, N-41; it appeared
+    // eleven times per receipt).
+    std::env::var("TREESHIP_HOST_ID")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| {
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|h| host_id_for(h.trim()))
+                .unwrap_or_else(|| "host_unknown".into())
+        })
+}
+
+/// `host_` + the first 16 hex characters of SHA-256 over a domain-separated
+/// hostname. A digest, not an encryption: a guessable hostname is still
+/// guessable by someone who can run the same digest, which TREESHIP_HOST_ID
+/// avoids entirely.
+pub(crate) fn host_id_for(hostname: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"treeship/host-id/v1\n");
+    h.update(hostname.as_bytes());
+    let digest = h.finalize();
+    format!("host_{}", hex::encode(&digest[..8]))
 }
 
 /// Create a base SessionEvent for this session.
