@@ -204,12 +204,14 @@ Takes a published [Session Receipt](/docs/concepts/session-receipts) down. Signs
 treeship hub unpublish ssn_a9993133572ca758
 treeship hub unpublish ssn_a9993133572ca758 --reason "leaked local paths"
 treeship hub unpublish ssn_a9993133572ca758 --hub acme-corp
+treeship hub unpublish ssn_a9993133572ca758 --yes --format json
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--hub <name\|id>` | Hub connection to use (default: the active one) |
 | `--reason <text>` | A short public reason (at most 200 characters), shown with the `410` |
+| `--yes` | Skip the confirmation. On a terminal the command otherwise asks you to type the session id back; off a terminal, or with `--format json`, `--yes` is required and its absence is a usage error (exit 4) |
 
 <Callout type="warn">
 Permanent. The hub removes the receipt body for good and answers `410 Gone` at its URL from then on; the session id is retired, so it cannot be re-uploaded. Local copies of the receipt are untouched, but a copy a browser or proxy cached while it was public can persist for up to 24 hours.

@@ -128,6 +128,7 @@ fn unpublish_sends_a_dpop_signed_delete_and_reports_the_tombstone() {
         "hub",
         "unpublish",
         "ssn_0123456789abcdef",
+        "--yes",
         "--reason",
         "leaked paths",
         "--format",
@@ -162,9 +163,49 @@ fn unpublish_by_another_dock_is_refused_and_exits_nonzero() {
     );
     ship.attach_fake_hub(&hub);
     let cfg = ship.config();
-    let out = ship.run(&["hub", "unpublish", "ssn_0123456789abcdef", "--config", &cfg]);
+    let out = ship.run(&[
+        "hub",
+        "unpublish",
+        "ssn_0123456789abcdef",
+        "--yes",
+        "--config",
+        &cfg,
+    ]);
     assert!(!out.status.success(), "{}", text(&out));
     assert!(text(&out).contains("only the publisher"), "{}", text(&out));
-    let out = ship.run(&["hub", "unpublish", "not-a-session", "--config", &cfg]);
+    let out = ship.run(&[
+        "hub",
+        "unpublish",
+        "not-a-session",
+        "--yes",
+        "--config",
+        &cfg,
+    ]);
     assert_eq!(out.status.code(), Some(4), "{}", text(&out));
+}
+
+/// Off a terminal, and in JSON mode, `--yes` is the confirmation: without it
+/// nothing reaches the hub and the exit is the usage code.
+#[test]
+fn unpublish_without_yes_off_a_terminal_takes_nothing_down() {
+    let ship = Ship::init();
+    let (hub, seen) = serve(
+        "200 OK",
+        r#"{"session_id":"ssn_0123456789abcdef","status":"tombstoned","tombstoned_at":1759000000}"#,
+    );
+    ship.attach_fake_hub(&hub);
+    let cfg = ship.config();
+    for extra in [&[][..], &["--format", "json"][..]] {
+        let mut args = vec!["hub", "unpublish", "ssn_0123456789abcdef", "--config", &cfg];
+        args.extend_from_slice(extra);
+        let out = ship.run(&args);
+        assert_eq!(out.status.code(), Some(4), "{}", text(&out));
+        assert!(text(&out).contains("--yes"), "{}", text(&out));
+        assert!(out.stdout.is_empty(), "{}", text(&out));
+    }
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "a request reached the hub without confirmation: {:?}",
+        seen.lock().unwrap()
+    );
 }
