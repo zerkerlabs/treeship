@@ -88,10 +88,33 @@ pub fn run(
             .map(|g| g == config_path)
             .unwrap_or(false);
         if from_global_fallback {
+            // The global workspace may live right here (cwd is the home
+            // directory, or TREESHIP_CONFIG points into it): then this
+            // directory is initialized, and saying otherwise is wrong.
+            let global_lives_here = config_path
+                .parent()
+                .and_then(|d| d.parent())
+                .and_then(|d| d.canonicalize().ok())
+                .zip(
+                    std::env::current_dir()
+                        .ok()
+                        .and_then(|c| c.canonicalize().ok()),
+                )
+                .map(|(g, c)| g == c)
+                .unwrap_or(false);
+            if global_lives_here {
+                return Err(format!(
+                    "already initialized: the global workspace lives in this directory ({}).\n\n  Use --force to regenerate it (this replaces its identity and keys).",
+                    config_path.display()
+                )
+                .into());
+            }
             return Err(format!(
-                "no Treeship workspace here, and the global one at {} is not this \
-                 directory's.\n\n                   Create a project-local workspace:  treeship init --config .treeship/config.json\n                   Or use the global workspace:       treeship init --global\n\n                   Commands run here would otherwise use the global workspace, so \
-                 receipts from unrelated projects share one store.",
+                "no Treeship workspace of its own in this directory; the global workspace at {} already exists, so nothing was changed.\n\n  \
+                 Create one here:                 treeship init --config .treeship/config.json\n  \
+                 Or keep using the global one:    nothing to run; commands here already use it (`treeship init --global` confirms it is set up, `treeship status` shows which store is in use)\n\n  \
+                 Until this directory has its own workspace, commands run here use the global one, \
+                 so receipts from unrelated projects share one store.",
                 config_path.display()
             )
             .into());

@@ -155,8 +155,23 @@ pub fn post(
         return Ok(());
     }
 
-    // Open treeship context (loads keys + storage)
-    let ctx = ctx::open(config_override)?;
+    // Which workspace records this hook? An explicit --config wins. Else,
+    // when a session is active in the project the hook found (session.json
+    // beside its config.yaml), that project's own config: the session was
+    // started there, and an exported TREESHIP_CONFIG used to send the
+    // hook's receipt to another store. Otherwise the normal resolution
+    // (TREESHIP_CONFIG, then discovery). The project config is opened as
+    // DISCOVERED, never as explicit: the shell hook runs on every prompt,
+    // so a cloned repository's config.json gets every discovery check
+    // (stores inside its .treeship, no foreign extends, no links) before a
+    // key is touched.
+    let project_json = config_path.with_file_name("config.json");
+    let session_here = ts_dir.join("session.json").is_file();
+    let ctx = match config_override {
+        Some(explicit) => ctx::open(Some(explicit))?,
+        None if session_here && project_json.is_file() => ctx::open_discovered(&project_json)?,
+        None => ctx::open(None)?,
+    };
 
     let actor_uri = {
         // Try to get actor from project config

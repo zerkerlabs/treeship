@@ -17,12 +17,12 @@ Where an agent actually runs. `treeship add <id>` installs the skill.
 
 | Agent | Vendor | Actor URI | Skill | Plugin | Install |
 |---|---|---|---|---|---|
-| [Claude Code](./claude-code) | Anthropic | `agent://claude-code` | yes | yes | `treeship add claude-code` |
-| [Codex CLI](./codex) | OpenAI | `agent://codex` | yes | yes | `treeship add codex` |
-| [Cursor](./cursor) | Anysphere | `agent://cursor` | yes | no | `treeship add cursor` |
-| [Hermes](./hermes) | Nous Research | `agent://hermes` | yes | no | `treeship add hermes` |
+| [Claude Code](/integrations/claude-code) | Anthropic | `agent://claude-code` | yes | yes | `treeship add claude-code` |
+| [Codex CLI](/integrations/codex) | OpenAI | `agent://codex` | yes | yes | `treeship add codex` |
+| [Cursor](/integrations/cursor) | Anysphere | `agent://cursor` | yes | no | `treeship add cursor` |
+| [Hermes](/integrations/hermes) | Nous Research | `agent://hermes` | yes | no | `treeship add hermes` |
 | Kimi Code CLI <sup>no page yet</sup> | Moonshot AI | `agent://kimi-code` | yes | yes | `npx skills add zerkerlabs/treeship --skill treeship --agent kimi-cli -g -y` |
-| [OpenClaw](./openclaw) | OpenClaw | `agent://openclaw` | yes | yes | `treeship add openclaw` |
+| [OpenClaw](/integrations/openclaw) | OpenClaw | `agent://openclaw` | yes | yes | `treeship add openclaw` |
 
 ## Protocol bridges
 
@@ -30,8 +30,8 @@ Speak a protocol, get receipts.
 
 | Integration | What it is |
 |---|---|
-| [@treeship/a2a](./a2a) | Drop-in Treeship attestation for A2A (Agent2Agent) servers and clients. |
-| [@treeship/mcp](./mcp) | Drop-in MCP client replacement. Every tool call receipted automatically. |
+| [@treeship/a2a](/integrations/a2a) | Drop-in Treeship attestation for A2A (Agent2Agent) servers and clients. |
+| [@treeship/mcp](/integrations/mcp) | Drop-in MCP client replacement. Every tool call receipted automatically. |
 
 ## Skills
 
@@ -39,9 +39,9 @@ One skill file, any agent that reads skills.
 
 | Integration | What it is |
 |---|---|
-| [Agent Skills](./agent-skills) | Install the Treeship skill on any coding agent — Kimi, Claude, Codex, Cursor, OpenClaw, Hermes. One skill, every agent. |
-| [Grok Bot](./grok-bot) | Agent-to-agent verification on a Grok Bot cloud VM. A packaged skill that refuses work from another agent until it proves live control of a key you trust. |
-| [Install matrix](./install) | One-liner install command per agent, plus the bypass-proof plugin where available. |
+| [Agent Skills](/integrations/agent-skills) | Install the Treeship skill on any coding agent — Kimi, Claude, Codex, Cursor, OpenClaw, Hermes. One skill, every agent. |
+| [Grok Bot](/integrations/grok-bot) | Agent-to-agent verification on a Grok Bot cloud VM. A packaged skill that refuses work from another agent until it proves live control of a key you trust. |
+| [Install matrix](/integrations/install) | One-liner install command per agent, plus the bypass-proof plugin where available. |
 
 ## Frameworks
 
@@ -49,10 +49,10 @@ Wrap a framework's calls.
 
 | Integration | What it is |
 |---|---|
-| [Claude Commerce Agents](./commerce-agents) | Signed, offline-verifiable receipts for every tool call in anthropics/commerce-agents, on all three of its runtimes. |
-| [LangChain](./langchain) | Add Treeship to LangChain agents. Receipts for every chain and tool call. |
-| [Rig](./rig) | Ed25519-signed Treeship receipts for every tool call a Rig agent makes, in-process, with no CLI subprocess. The rig-treeship crate. |
-| [TypeSafe Jev](./typesafe-jev) | Jev, TypeSafe's System One decision model, in Treeship's judge slot: every answer signed as a judgement.v1 receipt, held to a threshold, chained onto the action it judged. |
+| [Claude Commerce Agents](/integrations/commerce-agents) | Signed, offline-verifiable receipts for every tool call in anthropics/commerce-agents, on all three of its runtimes. |
+| [LangChain](/integrations/langchain) | Add Treeship to LangChain agents. Receipts for every chain and tool call. |
+| [Rig](/integrations/rig) | Ed25519-signed Treeship receipts for every tool call a Rig agent makes, in-process, with no CLI subprocess. The rig-treeship crate. |
+| [TypeSafe Jev](/integrations/typesafe-jev) | Jev, TypeSafe's System One decision model, in Treeship's judge slot: every answer signed as a judgement.v1 receipt, held to a threshold, chained onto the action it judged. |
 
 ## Sibling products
 
@@ -60,8 +60,8 @@ Other Zerker systems that emit or consume Treeship evidence.
 
 | Integration | What it is |
 |---|---|
-| [Memory Providers](./memory-proofs) | Use Treeship as the portable proof layer for agent memory systems. |
-| [Zerker Reason authorization certificates](./zerker-reason) | Sign and chain an independently verifiable Zerker Reason action-authorization certificate as a Treeship receipt. |
+| [Memory Providers](/integrations/memory-proofs) | Use Treeship as the portable proof layer for agent memory systems. |
+| [Zerker Reason authorization certificates](/integrations/zerker-reason) | Sign and chain an independently verifiable Zerker Reason action-authorization certificate as a Treeship receipt. |
 
 ## Applied work
 
@@ -69,11 +69,11 @@ Shipped elsewhere, verifiable here.
 
 | Integration | What it is |
 |---|---|
-| [Buzz](./buzz) | Trusted Rooms for Buzz agents. A room is a Treeship session that other agents join by signed, single-use invitation, countersigned with a liveness challenge, with the roster derived from signatures rather than a list a host can edit. |
-| [Lobster Cash](./lobster-cash) | Cryptographic attestation for every Lobster Cash payment |
-| [NinjaTech / SuperNinja](./ninjatech) | Attach Treeship to NinjaTech surfaces — Ninja Dev locally, SuperNinja remote VMs through MCP / GitHub once invite/join lands. |
-| [Robinhood Agentic Trading](./robinhood-agentic-trading) | Local receipts, approvals, and audit trails for agents connected to Robinhood Trading MCP. |
-| [Verifiable Intent](./verifiable-intent) | Treeship as one agent_attestation scheme inside Verifiable Intent credentials, shipped as treeship vi |
+| [Buzz](/integrations/buzz) | Trusted Rooms for Buzz agents. A room is a Treeship session that other agents join by signed, single-use invitation, countersigned with a liveness challenge, with the roster derived from signatures rather than a list a host can edit. |
+| [Lobster Cash](/integrations/lobster-cash) | Cryptographic attestation for every Lobster Cash payment |
+| [NinjaTech / SuperNinja](/integrations/ninjatech) | Attach Treeship to NinjaTech surfaces — Ninja Dev locally, SuperNinja remote VMs through MCP / GitHub once invite/join lands. |
+| [Robinhood Agentic Trading](/integrations/robinhood-agentic-trading) | Local receipts, approvals, and audit trails for agents connected to Robinhood Trading MCP. |
+| [Verifiable Intent](/integrations/verifiable-intent) | Treeship as one agent_attestation scheme inside Verifiable Intent credentials, shipped as treeship vi |
 
 ## Partnership track
 

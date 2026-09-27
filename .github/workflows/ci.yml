@@ -255,6 +255,22 @@ jobs:
           npm install --no-save --ignore-scripts --no-audit --no-fund yaml@^2.9.0
           node scripts/sync-feature-matrix.mjs --check
 
+      # about/changelog.mdx is generated from CHANGELOG.md at build time
+      # (prebuild), so the copy committed to git is only ever a snapshot --
+      # nothing enforced it stayed current. A retest found the committed page
+      # missing an entire release section and, separately, the underlying
+      # CHANGELOG.md source still carrying repo-relative links that had
+      # already 404'd once and been "fixed" only in a later summary bullet,
+      # not the original entries. This closes both: it fails if a *released*
+      # section and a fresh render disagree. The Unreleased section is
+      # deliberately excluded from the comparison -- it's exactly whatever
+      # changelog.d/ fragments happen to be on main right now, a moving
+      # target every fragment-adding PR shares, so comparing it would make
+      # every open PR go stale the moment any *other* PR's fragment lands,
+      # the same per-PR churn changelog.d/ was built to remove.
+      - name: Generated changelog page matches CHANGELOG.md
+        run: cd docs && node scripts/sync-changelog.mjs --check
+
       # The 2026-08 docs audit found five internal links that 404'd live, three
       # hub endpoints with no page at all, a predicate registry half
       # undocumented, and an event table where only three of seventeen names
@@ -418,11 +434,17 @@ jobs:
           - name: core-wasm wasm32-unknown-unknown
             run: cargo check -p treeship-core-wasm --target wasm32-unknown-unknown
             targets: wasm32-unknown-unknown
+          # PKG-3: the lints differ by target (std::fs::File has no Drop on
+          # wasm32, so a `drop(file)` that is fine on the host fails here).
+          - name: core-wasm wasm32-unknown-unknown clippy
+            run: cargo clippy -p treeship-core-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
+            targets: wasm32-unknown-unknown
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving branch; pinned to current tip)
         with:
           targets: ${{ matrix.targets }}
+          components: clippy
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
         with:
           key: feature-matrix-${{ matrix.name }}

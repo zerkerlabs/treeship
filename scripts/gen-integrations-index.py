@@ -113,7 +113,12 @@ def build() -> str:
         skill = a.get("skill") or {}
         install = skill.get("install") or f"treeship add {a['id']}"
         if (PAGES / f"{a['id']}.mdx").exists():
-            name = f"[{a['display_name']}](./{a['id']})"
+            # Absolute, not relative: this page has no trailing slash in its
+            # own URL (/integrations, not /integrations/), so a browser
+            # resolves a relative "./id" against the PARENT of /integrations,
+            # not against it -- every such link 404'd until this was caught
+            # live (2026-09-27).
+            name = f"[{a['display_name']}](/integrations/{a['id']})"
         else:
             # Ships, but has no page yet. Say so in the table rather than
             # linking into a 404 or dropping the row.
@@ -165,7 +170,7 @@ def build() -> str:
             lines += [blurbs[cat], ""]
         lines += ["| Integration | What it is |", "|---|---|"]
         for slug, title, desc in rows:
-            lines.append(f"| [{title}](./{slug}) | {desc} |")
+            lines.append(f"| [{title}](/integrations/{slug}) | {desc} |")
 
     if track:
         lines += [

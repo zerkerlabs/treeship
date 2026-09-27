@@ -112,6 +112,39 @@ class InFlightRelease(unittest.TestCase):
         self.assertEqual(self.run_check(lookup), 0)
 
 
+class RootVersion(unittest.TestCase):
+    """The lockfile's own version fields track package.json."""
+
+    def setUp(self):
+        self.mod = load_script()
+        self.mod.RELEASE_WINDOW = False
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_stale_root_version_fails(self):
+        make_tree(self.root, "0.31.10", "0.31.10", "0.31.10")
+        pkg = self.root / "packages" / "demo"
+        (pkg / "package.json").write_text(
+            json.dumps({"name": "demo", "version": "0.31.10", "dependencies": {"@treeship/verify": "0.31.10"}})
+        )
+        lock = json.loads((pkg / "package-lock.json").read_text())
+        lock["version"] = "0.10.3"
+        lock["packages"][""]["version"] = "0.10.3"
+        (pkg / "package-lock.json").write_text(json.dumps(lock))
+        self.assertEqual(self.mod.main(root=self.root, lookup=lambda n, v: False), 1)
+        lock["version"] = "0.31.10"
+        lock["packages"][""]["version"] = "0.31.10"
+        (pkg / "package-lock.json").write_text(json.dumps(lock))
+        self.assertEqual(self.mod.main(root=self.root, lookup=lambda n, v: False), 0)
+
+    def test_a_lockfile_without_root_versions_is_not_judged(self):
+        make_tree(self.root, "0.31.10", "0.31.10", "0.31.10")
+        self.assertEqual(self.mod.main(root=self.root, lookup=lambda n, v: False), 0)
+
+
 class RegistryAnswers(unittest.TestCase):
     """`npm view` output shapes, with subprocess stubbed."""
 
