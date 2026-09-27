@@ -246,7 +246,7 @@ fn room_create_delegated_with_delegate_succeeds() {
             "--invitation-authority",
             "delegated",
             "--delegate",
-            "ed25519:deadbeef",
+            "ed25519:AkeP0YomPIIOnZi0xG6MOxlgp3kHdL_R-cQ_heeDWLA",
         ])
         .args(["--format", "json", "--config"])
         .arg(ws.config())

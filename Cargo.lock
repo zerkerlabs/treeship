@@ -4348,6 +4348,7 @@ dependencies = [
  "treeship-zk-circom",
  "treeship-zk-risc0",
  "ureq",
+ "url",
 ]
 
 [[package]]

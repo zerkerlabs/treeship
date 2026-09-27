@@ -700,7 +700,7 @@ pub fn join(
             "joining_agent":      joiner_pk_b64,
             "joining_agent_fp":   joiner_fingerprint,
             "use_id":             use_id,
-            "countersign_hint":   format!("treeship session countersign {}", participant_id),
+            "countersign_hint":   countersign_hint(&participant_id, args.out.as_deref()),
         }));
         return Ok(());
     }
@@ -720,10 +720,26 @@ pub fn join(
         "participant event is PENDING the host's countersign",
         &[(
             "countersign_cmd",
-            &format!("treeship session countersign {participant_id}"),
+            &countersign_hint(&participant_id, args.out.as_deref()),
         )],
     );
     Ok(())
+}
+
+/// The countersign command the host runs, complete: the flags the flow
+/// requires are named, not left for the host to discover from exit 4.
+/// With `--out` (a join for a host on another machine) the pending
+/// envelope file replaces the participant id, and the liveness window
+/// needs the challenge's issue time.
+fn countersign_hint(participant_id: &str, pending_file: Option<&str>) -> String {
+    match pending_file {
+        Some(file) => format!(
+            "treeship session countersign --pending {file} --challenge <nonce> --challenge-issued-at <RFC3339 from mint-challenge> --challenge-response <answer.json>"
+        ),
+        None => format!(
+            "treeship session countersign {participant_id} --challenge <nonce> --challenge-issued-at <RFC3339 from mint-challenge> --challenge-response <answer.json>"
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1309,9 +1325,17 @@ pub fn answer_challenge(
             ("file", out_path),
         ],
     );
+    // Complete, so the host does not learn the missing flags from exit 4:
+    // across machines the host holds the pending envelope (`--pending`),
+    // not the participant id, and the liveness window needs the instant
+    // the challenge was minted.
     printer.hint(&format!(
-        "hand this file to the host: treeship session countersign {} --challenge {} --challenge-response {out_path}",
+        "hand this file to the host: treeship session countersign {} --challenge {} --challenge-issued-at <RFC3339 from mint-challenge> --challenge-response {out_path}",
         args.participant_id, args.challenge,
+    ));
+    printer.hint(&format!(
+        "host on another machine: treeship session countersign --pending <participant envelope from join --out> --challenge {} --challenge-issued-at <RFC3339 from mint-challenge> --challenge-response {out_path}",
+        args.challenge,
     ));
     Ok(())
 }
@@ -1623,5 +1647,40 @@ mod tests {
         assert!(blob.contains(BLOB_FOOTER));
         let back = decode_bootstrap_blob(&blob).unwrap();
         assert_eq!(back.invitation_id, "art_test");
+    }
+}
+
+#[cfg(test)]
+mod hint_tests {
+    use super::countersign_hint;
+
+    #[test]
+    fn the_countersign_hint_names_every_flag_the_flow_needs() {
+        let same = countersign_hint("art_1", None);
+        assert!(
+            same.starts_with("treeship session countersign art_1 "),
+            "{same}"
+        );
+        for flag in [
+            "--challenge ",
+            "--challenge-issued-at ",
+            "--challenge-response ",
+        ] {
+            assert!(same.contains(flag), "{same}");
+        }
+        assert!(!same.contains("--pending"), "{same}");
+        let cross = countersign_hint("art_1", Some("pending.json"));
+        assert!(cross.contains("--pending pending.json"), "{cross}");
+        assert!(
+            !cross.contains("art_1"),
+            "a host on another machine has the file, not the id: {cross}"
+        );
+        for flag in [
+            "--challenge ",
+            "--challenge-issued-at ",
+            "--challenge-response ",
+        ] {
+            assert!(cross.contains(flag), "{cross}");
+        }
     }
 }

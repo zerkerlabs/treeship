@@ -33,6 +33,7 @@ base64 = "0.22"
 hex = "0.4"
 fs2 = "0.4"
 ureq = { version = "2", features = ["json"] }
+url = "2"
 sha2 = "0.10"
 treeship-zk-circom = { version = "0.5.0", path = "../zk-circom", optional = true }
 treeship-zk-risc0 = { version = "0.5.0", path = "../zk-risc0", optional = true }

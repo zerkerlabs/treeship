@@ -61,7 +61,7 @@ fn init_in_a_fresh_dir_does_not_claim_the_global_workspace_is_this_one() {
     // It must say what is actually true and give both ways forward, or the
     // reader is left where the old message left them.
     assert!(
-        msg.contains("no Treeship workspace here"),
+        msg.contains("no Treeship workspace of its own"),
         "the message must say the directory has no workspace: {msg}"
     );
     assert!(

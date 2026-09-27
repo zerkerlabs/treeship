@@ -77,8 +77,9 @@ enum Command {
 
     /// Set up a new Treeship -- generates a keypair and config
     ///
-    /// Run this once on each machine. Your signing key is encrypted at
-    /// rest and tied to this machine's identity.
+    /// Run this once per workspace. Your signing key is encrypted at rest
+    /// with a seed file kept beside the keystore; the two travel together
+    /// with `.treeship/` (see SECURITY.md).
     ///
     /// Examples:
     ///   treeship init
@@ -1522,7 +1523,7 @@ enum AgentsCommand {
     /// Promote a Draft or NeedsReview card to Active.
     Approve { agent_id: String },
 
-    /// Delete an Agent Card from the store. Idempotent.
+    /// Delete an Agent Card from the store. Exits 1 when no such card exists.
     Remove { agent_id: String },
 }
 
