@@ -37,6 +37,7 @@ impl Ws {
     }
     fn cmd(&self) -> Command {
         let mut c = Command::new(cli_path());
+        c.env_remove("TREESHIP_CONFIG");
         c.env("HOME", &self.root)
             .env("TREESHIP_ALLOW_INSECURE_KEY_PERMS", "1")
             .current_dir(&self.root);

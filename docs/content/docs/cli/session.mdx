@@ -314,7 +314,7 @@ The receipt URL is public and needs no token, expiry, or auth to fetch. A2A clie
 
 ### Exit code
 
-`0` when the package's own local verify passed or warned and, if an upload was attempted, it succeeded. Nonzero when the local verify **failed** (`verification_status: fail`), on every path including `--no-upload` and no hub attached, and nonzero on an upload error. The JSON document is emitted either way; a script can branch on the exit code or on `verification_status` and `error`.
+`0` when the package's own local verify passed or warned and, if an upload was attempted, it succeeded. Nonzero when the local verify **failed** (`verification_status: fail`), on every path including `--no-upload`, and nonzero on an upload error; the JSON document is emitted in those cases, so a script can branch on the exit code or on `verification_status` and `error`. No hub attached without `--no-upload` is an error on stderr with nothing on stdout: attach a hub, or pass `--no-upload` for the local verdict.
 
 ## What gets sealed in a receipt
 

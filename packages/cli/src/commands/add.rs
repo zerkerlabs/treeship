@@ -571,8 +571,31 @@ pub fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let env = Env::current();
     let candidates = install_candidates(&env);
+    let json = printer.format == Format::Json;
+    // In JSON mode the helpers stay silent (they print once per harness);
+    // their outcomes are collected into the one document below.
+    let quiet = Printer::new(printer.format, true, printer.no_color);
+    let sub: &Printer = if json { &quiet } else { printer };
 
     if candidates.is_empty() {
+        if json {
+            let available: Vec<&str> = harnesses::HARNESSES
+                .iter()
+                .filter(|m| m.install.is_some())
+                .map(|m| m.harness_id)
+                .collect();
+            printer.json(&serde_json::json!({
+                "status": "ok",
+                "message": "no agent frameworks detected on this machine that Treeship can instrument",
+                "detected": [],
+                "configured": [],
+                "skipped": [],
+                "failed": [],
+                "available": available,
+                "dry_run": dry_run,
+            }));
+            return Ok(());
+        }
         printer.blank();
         printer.dim_info(
             "  No agent frameworks detected on this machine that Treeship can instrument.",
@@ -602,6 +625,20 @@ pub fn run(
     };
 
     if targets.is_empty() && !specific_agents.is_empty() {
+        if json {
+            let detected: Vec<&str> = candidates.iter().map(|c| c.manifest.harness_id).collect();
+            printer.json(&serde_json::json!({
+                "status": "ok",
+                "message": "none of the specified agents were detected on this machine",
+                "requested": specific_agents,
+                "detected": detected,
+                "configured": [],
+                "skipped": [],
+                "failed": [],
+                "dry_run": dry_run,
+            }));
+            return Ok(());
+        }
         printer.blank();
         printer.warn(
             "None of the specified agents were detected on this machine.",
@@ -618,7 +655,8 @@ pub fn run(
 
     printer.blank();
 
-    if !all && specific_agents.is_empty() && crossterm::tty::IsTty::is_tty(&io::stdin()) {
+    // A JSON consumer cannot answer a prompt; it gets the plain run.
+    if !all && !json && specific_agents.is_empty() && crossterm::tty::IsTty::is_tty(&io::stdin()) {
         printer.info("  Detected:");
         for (i, c) in targets.iter().enumerate() {
             printer.info(&format!(
@@ -644,22 +682,53 @@ pub fn run(
     };
 
     let mut installed = 0usize;
+    let mut configured: Vec<&str> = Vec::new();
+    let mut skipped: Vec<&str> = Vec::new();
+    let mut failed: Vec<serde_json::Value> = Vec::new();
     for c in &targets {
-        match install_via_manifest(c.manifest, &home, dry_run, all, printer) {
-            Ok(true) => installed += 1,
-            Ok(false) => {}
-            Err(e) => printer.warn(
-                &format!("Failed to configure {}: {}", c.manifest.display_name, e),
-                &[],
-            ),
+        match install_via_manifest(c.manifest, &home, dry_run, all, sub) {
+            Ok(true) => {
+                installed += 1;
+                configured.push(c.manifest.harness_id);
+            }
+            Ok(false) => skipped.push(c.manifest.harness_id),
+            Err(e) => {
+                failed.push(serde_json::json!({
+                    "harness_id": c.manifest.harness_id,
+                    "error": e.to_string(),
+                }));
+                printer.warn(
+                    &format!("Failed to configure {}: {}", c.manifest.display_name, e),
+                    &[],
+                );
+            }
         }
     }
 
-    if let Err(e) = install_treeship_md_in_cwd(dry_run, printer) {
-        printer.warn(
-            "  Could not write project TREESHIP.md",
-            &[("error", &e.to_string())],
-        );
+    let treeship_md = match install_treeship_md_in_cwd(dry_run, sub) {
+        Ok(true) if dry_run => "would_write",
+        Ok(true) => "written",
+        Ok(false) => "skipped",
+        Err(e) => {
+            printer.warn(
+                "  Could not write project TREESHIP.md",
+                &[("error", &e.to_string())],
+            );
+            "error"
+        }
+    };
+
+    if json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "dry_run": dry_run,
+            "detected": targets.iter().map(|c| c.manifest.harness_id).collect::<Vec<_>>(),
+            "configured": configured,
+            "skipped": skipped,
+            "failed": failed,
+            "treeship_md": treeship_md,
+        }));
+        return Ok(());
     }
 
     printer.blank();

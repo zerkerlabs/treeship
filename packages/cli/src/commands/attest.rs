@@ -364,12 +364,16 @@ fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     }
 
     // Optional: write raw DSSE envelope to file or stdout.
+    let mut envelope_out: Option<(&str, serde_json::Value)> = None;
     if let Some(path) = &args.out {
         let json = result.envelope.to_json()?;
-        if path == "-" {
-            println!("{}", String::from_utf8_lossy(&json));
-        } else {
+        if path != "-" {
             crate::safe_fs::write_user_path(std::path::Path::new(path), &json)?;
+        } else if printer.format == crate::printer::Format::Json {
+            // One document on stdout: the envelope rides inside the result.
+            envelope_out = Some(("envelope", serde_json::from_slice(&json)?));
+        } else {
+            println!("{}", String::from_utf8_lossy(&json));
         }
     }
 
@@ -389,7 +393,7 @@ fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     }
 
     let field_refs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    printer.success("action attested", &field_refs);
+    printer.success_with("action attested", &field_refs, envelope_out.as_slice());
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     if args.parent_id.is_none() && crate::commands::session::load_session().is_some() {
         // --no-parent inside a session: sealed at close, marked unchained
@@ -545,12 +549,16 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
         }
     }
 
+    let mut envelope_out: Option<(&str, serde_json::Value)> = None;
     if let Some(path) = &args.out {
         let json = result.envelope.to_json()?;
-        if path == "-" {
-            println!("{}", String::from_utf8_lossy(&json));
-        } else {
+        if path != "-" {
             crate::safe_fs::write_user_path(std::path::Path::new(path), &json)?;
+        } else if printer.format == crate::printer::Format::Json {
+            // One document on stdout: the envelope rides inside the result.
+            envelope_out = Some(("envelope", serde_json::from_slice(&json)?));
+        } else {
+            println!("{}", String::from_utf8_lossy(&json));
         }
     }
 
@@ -574,7 +582,7 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     }
 
     let field_refs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    printer.success("action/v2 attested", &field_refs);
+    printer.success_with("action/v2 attested", &field_refs, envelope_out.as_slice());
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     printer.blank();
     Ok(result.artifact_id)
@@ -2085,16 +2093,20 @@ pub fn endorsement(
     // Write .last for auto-chaining
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
+    let mut envelope_out: Option<(&str, serde_json::Value)> = None;
     if let Some(path) = &args.out {
         let json = result.envelope.to_json()?;
-        if path == "-" {
-            println!("{}", String::from_utf8_lossy(&json));
-        } else {
+        if path != "-" {
             crate::safe_fs::write_user_path(std::path::Path::new(path), &json)?;
+        } else if printer.format == crate::printer::Format::Json {
+            // One document on stdout: the envelope rides inside the result.
+            envelope_out = Some(("envelope", serde_json::from_slice(&json)?));
+        } else {
+            println!("{}", String::from_utf8_lossy(&json));
         }
     }
 
-    printer.success(
+    printer.success_with(
         "endorsement attested",
         &[
             ("id", &result.artifact_id),
@@ -2102,6 +2114,7 @@ pub fn endorsement(
             ("subject", &args.subject_id),
             ("kind", &args.kind),
         ],
+        envelope_out.as_slice(),
     );
     if let Some(ref rationale) = args.rationale {
         printer.dim_info(&format!("  rationale: {}", rationale));

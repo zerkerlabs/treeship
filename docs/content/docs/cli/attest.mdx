@@ -36,7 +36,7 @@ treeship attest action \
 | `--output-digest <sha256:hex>` | SHA-256 digest of the output produced |
 | `--content-uri <uri>` | URI to referenced content |
 | `--meta <json>` | Arbitrary JSON metadata |
-| `--out <path>` | Write raw DSSE envelope to file (use `-` for stdout) |
+| `--out <path>` | Write raw DSSE envelope to file (use `-` for stdout; with `--format json` the envelope is the `envelope` field of the one result document) |
 
 <Callout type="info">
 Use `--input-digest` to attest that an action occurred on specific content without revealing the content itself. The digest proves which data was processed. The content never enters the artifact.
@@ -232,7 +232,7 @@ treeship attest endorsement \
 | `--policy-ref <uri>` | URI to the governing policy document |
 | `--meta <json>` | Extra metadata as a JSON object |
 | `--parent <id>` | Parent artifact ID for chain linking |
-| `--out <path>` | Write raw DSSE envelope to file (use `-` for stdout) |
+| `--out <path>` | Write raw DSSE envelope to file (use `-` for stdout; with `--format json` the envelope is the `envelope` field of the one result document) |
 
 <Callout type="info">
 Endorsements are separate artifacts that reference the subject via `--subject`. They form their own chain and can be verified independently. Use `--policy-ref` to link to the policy or checklist that was followed during review.

@@ -25,6 +25,7 @@ fn present_reports_a_checkpoint_store_mismatch_instead_of_panicking() {
 
     let command = |args: &[&str]| {
         let mut cmd = Command::new(cli_path());
+        cmd.env_remove("TREESHIP_CONFIG");
         // HOME is redirected so the checkpoint store is this test's, not the
         // developer's -- the bug itself is that those can differ.
         cmd.current_dir(root).env("HOME", root).args(args);

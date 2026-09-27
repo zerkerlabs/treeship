@@ -78,7 +78,12 @@ pub fn run(
         .stdin(process::Stdio::inherit())
         .stdout(process::Stdio::piped())
         .stderr(process::Stdio::piped())
-        .spawn()?;
+        .spawn()
+        .map_err(|e| {
+            // 127, as a shell says it: the command never ran, so there is
+            // nothing to attest and no child status to propagate.
+            crate::exit::command_not_started(format!("could not start `{}`: {e}", args[0]))
+        })?;
 
     // Accumulate output in a shared buffer while printing in real time
     let stdout_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
@@ -152,8 +157,14 @@ pub fn run(
     let elapsed = start.elapsed();
     let elapsed_ms = elapsed.as_millis() as u64;
 
+    // A signal death has no exit code; it is reported as 128 + signal, the
+    // shell convention, with the signal named beside it.
+    let signal = match &status {
+        Ok(s) => child_signal(s),
+        Err(_) => None,
+    };
     let (exit_code, succeeded) = match &status {
-        Ok(s) => (s.code().unwrap_or(-1), s.success()),
+        Ok(s) => (s.code().unwrap_or_else(|| signal_exit_code(s)), s.success()),
         Err(_) => (-1, false),
     };
 
@@ -233,6 +244,9 @@ pub fn run(
         "output_digest":  output_hash,
         "output_lines":   output_lines,
     });
+    if let Some(sig) = signal {
+        meta["signal"] = serde_json::json!(sig);
+    }
 
     // Program output is recorded as a digest, not text. `output_digest` above
     // already proves what the command produced, so the raw line adds nothing a
@@ -463,6 +477,7 @@ pub fn run(
             "digest": result.digest,
             "command": args,
             "exit_code": exit_code,
+            "signal": signal,
             "succeeded": succeeded,
             "elapsed_ms": elapsed_ms,
             "files_changed": files_changed_count,
@@ -542,6 +557,20 @@ fn propagate_exit(status: &std::io::Result<std::process::ExitStatus>) {
         }
         // We failed to even collect the child's status; treat as failure.
         Err(_) => process::exit(1),
+    }
+}
+
+/// The signal that ended the child, when one did.
+fn child_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        None
     }
 }
 
