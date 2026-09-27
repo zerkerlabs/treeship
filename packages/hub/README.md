@@ -25,6 +25,10 @@ go run .
 
 Configure the database path with `TREESHIP_HUB_DB` (checked first) or `DATABASE_PATH` (what Railway sets); with neither set, it defaults to `/var/lib/treeship/hub.db`. The server starts on `http://localhost:8080` by default (`PORT` env var to change it).
 
+## Deploying
+
+Production runs on Railway. Deploy with `scripts/hub-deploy.sh` from the repository root (`RAILWAY_SERVICE=<service id>`); it sets `HUB_VERSION`, `HUB_COMMIT` and `HUB_BUILT_AT` on the service, which the Dockerfile takes as build args, then runs `railway up`. A plain `railway up` has no `.git` and reports `commit: unknown` at `/v1/version`. See `RELEASING.md`.
+
 ## API overview
 
 See the full endpoint reference at [docs.treeship.dev/api/overview](https://docs.treeship.dev/api/overview).
