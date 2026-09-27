@@ -27,7 +27,7 @@ Configure the database path with `TREESHIP_HUB_DB` (checked first) or `DATABASE_
 
 ## Deploying
 
-Production runs on Railway. Deploy with `scripts/hub-deploy.sh` from the repository root (`RAILWAY_SERVICE=<service id>`); it sets `HUB_VERSION`, `HUB_COMMIT` and `HUB_BUILT_AT` on the service, which the Dockerfile takes as build args, then runs `railway up`. A plain `railway up` has no `.git` and reports `commit: unknown` at `/v1/version`. See `RELEASING.md`.
+Production runs on Railway. Deploy with `scripts/hub-deploy.sh` from the repository root (`RAILWAY_SERVICE=<service id>`); it sets `HUB_VERSION`, `HUB_COMMIT` and `HUB_BUILT_AT` on the service, which the Dockerfile takes as build args, then runs `railway up`. A plain `railway up` has no `.git`, so without those variables `/v1/version` reports `commit: unknown`; with them left from an earlier run it would report that run's commit, which is why the script sets them fresh every time. A deploy from the connected repository takes its commit from `RAILWAY_GIT_COMMIT_SHA` regardless. See `RELEASING.md`.
 
 ## API overview
 
