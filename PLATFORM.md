@@ -126,7 +126,7 @@ All release-train packages share a single version (enforced by `scripts/check-re
 | `@treeship/cli-linux-arm64` | [npm](https://www.npmjs.com/package/@treeship/cli-linux-arm64) | (auto-installed) | Binary for Linux arm64 |
 | `@treeship/cli-linux-x64` | [npm](https://www.npmjs.com/package/@treeship/cli-linux-x64) | (auto-installed) | Binary for Linux x86_64 |
 
-**Note:** the `treeship-cli` crate on crates.io is orphaned at v0.4.0. It is no longer the canonical install path; use the `treeship` npm wrapper instead. The crate name is preserved on crates.io to avoid squatting and to keep download counters meaningful for historical references.
+**Note:** the `treeship-cli` crate on crates.io has every version yanked (`cargo install treeship-cli` fails outright). It is no longer the canonical install path; use the `treeship` npm wrapper instead. The crate name is preserved on crates.io to avoid squatting and to keep download counters meaningful for historical references.
 
 **Plugin marketplace:** the treeship monorepo also ships `.claude-plugin/marketplace.json` at the root, so `claude plugin marketplace add zerkerlabs/treeship` registers the Treeship plugin marketplace. `claude plugin install treeship@treeship` then installs the official Claude Code plugin from `integrations/claude-code-plugin/`.
 
@@ -155,7 +155,7 @@ npm install -g treeship
 curl -fsSL https://www.treeship.dev/install | sh
 ```
 
-The `treeship-cli` cargo install path is no longer available; that crate is orphaned at v0.4.0. The CLI ships exclusively via the npm wrapper / shell installers above (which fetch a prebuilt platform binary, no Rust toolchain required).
+The `treeship-cli` cargo install path is no longer available; that crate has every version yanked (`cargo install` fails outright). The CLI ships exclusively via the npm wrapper / shell installers above (which fetch a prebuilt platform binary, no Rust toolchain required).
 
 ### Quickstart
 
@@ -219,7 +219,7 @@ treeship checkpoint                     # seal a signed Merkle root
 treeship merkle status                  # show Merkle tree state
 treeship merkle proof <id>              # generate inclusion proof
 treeship merkle verify <file.json>      # verify proof offline
-treeship merkle publish                 # publish to Hub + Rekor
+treeship merkle publish                 # publish checkpoint + proofs to Hub (Rekor anchoring is separate, per-artifact, via `hub push`)
 
 # Templates
 treeship templates                      # list bundled templates
@@ -336,7 +336,7 @@ const check = await s.verify.verify('art_xxx');
 await s.hub.push('art_xxx');
 await s.hub.pull('art_xxx');
 const status = await s.hub.status();
-// { attached: boolean, endpoint: string, hubId: string }
+// current shape (sdk-ts/src/hub.ts): { connected: boolean, endpoint?: string, hubId?: string }
 ```
 
 ### Exports
@@ -375,7 +375,8 @@ print(result.artifact_id)  # art_xxx
 # Verify
 ts.verify(result.artifact_id)
 
-# Push to Hub
+# Push to Hub (current SDK: ts.hub_push(artifact_id) -- a method directly
+# on Treeship, no .hub sub-namespace)
 ts.hub.push(result.artifact_id)
 ```
 
@@ -390,11 +391,13 @@ ts.hub.push(result.artifact_id)
 Drop-in replacement for `@modelcontextprotocol/sdk` Client that auto-attests every MCP tool call.
 
 ```typescript
-import { TreeshipMCPClient } from '@treeship/mcp';
+// Current SDK: the export is named `Client` (an alias for the
+// TreeshipMCPClient class), it takes the standard MCP SDK Client
+// constructor args (clientInfo, options), and the actor comes from the
+// TREESHIP_ACTOR env var, not a constructor option.
+import { Client } from '@treeship/mcp';
 
-const client = new TreeshipMCPClient({
-  actor: 'agent://my-agent'
-});
+const client = new Client({ name: 'my-agent', version: '1.0.0' });
 
 const result = await client.callTool({
   name: 'search',
@@ -549,7 +552,7 @@ Platform packages:
 - `@treeship/cli-linux-arm64` -- Linux arm64
 - `@treeship/cli-linux-x64` -- Linux x86_64
 
-If the binary download fails, postinstall prints a fallback message pointing the user to the shell installer (`curl -fsSL https://www.treeship.dev/install | sh`) or the one-liner setup (`curl -fsSL https://www.treeship.dev/setup | sh`). The `cargo install treeship-cli` fallback is no longer offered (that crate is orphaned at v0.4.0).
+If the binary download fails, postinstall prints a fallback message pointing the user to the shell installer (`curl -fsSL https://www.treeship.dev/install | sh`) or the one-liner setup (`curl -fsSL https://www.treeship.dev/setup | sh`). The `cargo install treeship-cli` fallback is no longer offered (that crate has every version yanked).
 
 ---
 
@@ -672,7 +675,7 @@ SDK:
 - `treeship attest endorsement` subcommand implemented
 - Auto-chain all attest commands via `write_last()`
 - `~/.treeship/` directory permissions set to 0700
-- Hub Dockerfile with treeship CLI for `/v1/verify`
+- Hub Dockerfile with treeship CLI for `/v1/verify` (that server-side verdict is retired now -- see the retired-endpoint row above)
 - Full release pipeline: npm, crates.io, PyPI, GitHub Releases
 - Automated PyPI publishing in CI
 
@@ -684,13 +687,7 @@ SDK:
 
 **Threat model and operational guidance:** [docs: Security (concepts)](https://docs.treeship.dev/concepts/security) -- see *Hub connection model: enrollment and operation*.
 
-**Supported versions:**
-
-| Version | Status |
-|---------|--------|
-| 0.9.x | Supported (current) |
-| 0.8.x | Security fixes only |
-| < 0.8 | No longer supported |
+**Supported versions:** this table is historical (0.9.x was never "current" past its own era, and the repo is at 0.31.x now); see [SECURITY.md](SECURITY.md) for the live table.
 
 Report vulnerabilities to security@treeship.dev or via GitHub Security Advisories.
 

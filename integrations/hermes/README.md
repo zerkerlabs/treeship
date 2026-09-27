@@ -92,12 +92,12 @@ treeship session start --name "hermes-test"
 ## Release smoke test
 
 ```bash
-TMP=$(mktemp -d /tmp/treeship-v015-smoke.XXXXXX)
+TMP=$(mktemp -d /tmp/treeship-smoke.XXXXXX)
 TMP_REAL=$(cd "$TMP" && pwd -P)
 HOME_TMP="$TMP_REAL/home"
 mkdir -p "$HOME_TMP" "$TMP_REAL/work"
 
-curl -fsSL https://github.com/zerkerlabs/treeship/releases/download/v0.15.0/treeship-darwin-aarch64 \
+curl -fsSL https://github.com/zerkerlabs/treeship/releases/latest/download/treeship-darwin-aarch64 \
   -o "$TMP_REAL/treeship"
 chmod +x "$TMP_REAL/treeship"
 

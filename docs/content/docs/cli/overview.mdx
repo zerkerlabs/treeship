@@ -92,7 +92,7 @@ treeship trust add <key> <pub> --kind <kind>  # pin one power (agent_cert, cert_
 treeship trust remove <key>             # remove a pin (all kinds)
 
 # Agent identity, provenance, and discovery
-treeship onboard <agent>                # register agent + mint card + trust bundle, one command
+treeship onboard <agent> --tools <list> # register agent + mint card + trust bundle, one command (or --from-harness/--tools-json/--from-a2a)
 treeship resolve <agent> [--hub URL]    # resolve to a verifiable bundle, re-derived verdicts
 treeship publish <agent>                # push cards + cert chain + revocations to the hub
 treeship audit <agent> --hub <url>      # re-verify a hub's transparency log offline
@@ -132,15 +132,13 @@ treeship doctor                         # run 9 health checks
 
 | Variable | Description |
 |----------|-------------|
-| `TREESHIP_ACTOR` | Default actor URI for all attestations |
-| `TREESHIP_PARENT` | Default parent artifact ID for chain linking |
-| `TREESHIP_LAST` | Most recent artifact ID, set after every operation |
-| `TREESHIP_DISABLE` | Set to `1` to disable all attestation (passthrough) |
-| `TREESHIP_DEBUG` | Set to `1` to log all activity to stderr |
+| `TREESHIP_PARENT` | Default parent artifact ID for chain linking (`wrap`, `session`, `attest`, `hook`). Priority: explicit `--parent` flag > `TREESHIP_PARENT` > the `.last` file |
 | `NO_COLOR` | Disable color output |
 
+`TREESHIP_ACTOR` and `TREESHIP_DISABLE` are read by the `@treeship/mcp` bridge, not by this CLI; `TREESHIP_DEBUG` isn't read anywhere in the codebase. There is no `TREESHIP_LAST` env var -- the CLI tracks the most recent artifact id itself in a local `.last` file, and the literal string `last` works as an artifact-id argument wherever one is expected (`treeship verify last`, `treeship hub push last`, `treeship prove last`, and so on).
+
 <Callout type="info">
-`TREESHIP_LAST` is updated after every operation. Use it to chain commands without manually tracking artifact IDs.
+`wrap` auto-chains to the previous artifact with no flag or env var needed: it resolves the parent in priority order (explicit `--parent` > `TREESHIP_PARENT` > the `.last` file), so a plain `treeship wrap -- <cmd>` after another attestation already chains onto it.
 </Callout>
 
 ## Exit codes
@@ -151,7 +149,7 @@ treeship doctor                         # run 9 health checks
 | 1 | Error, or the verdict is fail. The default for anything that went wrong |
 | 2 | The argument parser rejected the call (unknown command, missing argument). Also `judge --enforce` when the judge said deny, and `verify --certificate` when the receipt and certificate do not agree (cross-verification failed) |
 | 3 | Not initialized: run `treeship init` first. Also `judge --enforce` when the judge said ask, and `verify <url>` when the fetch failed (a network error) |
-| 4 | The command itself refused the call as written (a missing value such as `wrap` with no command, `grant issue` with no `--scope`, an impossible combination) |
+| 4 | The command itself refused the call as written (a missing value such as `judge --resolve <id>` with no `--by`, or an impossible combination such as `session countersign` with neither a participant id nor `--pending`). Distinct from 2: this is the command's own check, after argument parsing already succeeded |
 | 5 | Not compiled into this build: `prove`, `prove-chain` and `verify-proof` without `--features zk`; `otel` without the `otel` feature |
 | 6 | The signature verifies, but its signer is not a pinned trust root here: `merkle verify` on a checkpoint whose signer you have not pinned as `hub_checkpoint`. A trust decision, not a broken signature; confirm the key out of band before pinning it. An invalid signature is still 1 |
 

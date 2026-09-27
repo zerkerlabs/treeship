@@ -52,7 +52,7 @@ treeship hub attach
 treeship hub push <artifact-id>
 ```
 
-**Note:** the `treeship-cli` crate on crates.io is orphaned at v0.4.0; the live Rust crate is `treeship-core` (the library). The CLI ships via the `treeship` npm wrapper, which auto-fetches the right platform binary. Don't `cargo install treeship-cli`.
+**Note:** the `treeship-cli` crate on crates.io has every version yanked; `cargo install treeship-cli` fails outright now, not just installs something stale. The live Rust crate is `treeship-core` (the library). The CLI ships via the `treeship` npm wrapper, which auto-fetches the right platform binary. Don't `cargo install treeship-cli`.
 
 ## Repo Structure
 
@@ -217,7 +217,8 @@ treeship hub status              # Check hub connection state
 treeship bundle create|export    # Create portable bundles
 treeship checkpoint              # Create Merkle checkpoint
 treeship merkle proof|verify     # Merkle operations
-treeship trust-template <name>   # Apply trust template
+treeship init --template <name>  # Start a project from a template
+treeship template apply <name>   # Apply a template to the current project
 treeship ui                      # Interactive TUI dashboard
 treeship otel enable|test        # OpenTelemetry export
 treeship doctor                  # Run diagnostic checks
@@ -234,7 +235,7 @@ treeship keys list               # List signing keys
 | POST | /v1/dock/authorize | Public | Complete auth with keys |
 | POST | /v1/artifacts | DPoP | Push artifact |
 | GET | /v1/artifacts/:id | Public | Pull artifact |
-| GET | /v1/workspace/:dockId | Public | List dock's artifacts |
+| GET | /v1/workspace/:dockId | DPoP or `?session=TOKEN` | List dock's artifacts. Reader resolution accepts either; the resolved dock id must match the path's |
 | GET | /v1/verify/:id | Public | Retired -- returns `410`. Verify locally; there is no server-side verdict. |
 | POST | /v1/merkle/checkpoint | DPoP | Publish checkpoint |
 | GET | /v1/merkle/checkpoint/:id | Public | Get checkpoint |
@@ -284,19 +285,20 @@ pip install -e .
 
 Style: `cargo fmt`, `cargo clippy`, `go fmt`. No em dashes in copy. Direct language, real CLI examples.
 
-## Trust Templates
+## Templates
 
-Built-in templates for common workflows:
+Built-in templates for common workflows. Start a new project with `treeship init --template <name>`, or apply one to the current project with `treeship template apply <name>`; `treeship templates` lists them and `treeship template preview <name>` shows what applying one would change:
 
-| Template | Command | Use Case |
-|----------|---------|----------|
-| github-contributor | `treeship trust-template github-contributor` | OSS commit provenance |
-| ci-cd-pipeline | `treeship trust-template ci-cd-pipeline` | Build/deploy chains |
-| openclaw-agent | `treeship trust-template openclaw-agent` | OpenClaw legal workflows |
-| hermes-agent | `treeship trust-template hermes-agent` | Hermes autonomous agent |
-| claude-code-session | `treeship trust-template claude-code-session` | AI coding audit trail |
-| mcp-agent | `treeship trust-template mcp-agent` | MCP tool attestation |
-| research-agent | `treeship trust-template research-agent` | Multi-step research provenance |
+| Template | Use Case |
+|----------|----------|
+| github-contributor | OSS commit provenance |
+| ci-cd-pipeline | Build/deploy chains |
+| openclaw-agent | OpenClaw legal workflows |
+| hermes-agent | Hermes autonomous agent |
+| claude-code-session | AI coding audit trail |
+| mcp-agent | MCP tool attestation |
+| research-agent | Multi-step research provenance |
+| robinhood-agentic-trading | Receipts and approvals for Robinhood Trading MCP agents |
 
 ## Architecture Principles
 
