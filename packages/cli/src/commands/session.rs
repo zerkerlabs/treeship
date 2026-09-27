@@ -1593,6 +1593,16 @@ pub fn close(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = match load_session() {
+        Some(m) => m,
+        None => {
+            return Err(
+                "no active session to close\n\n  Fix: treeship session start --name \"my task\""
+                    .into(),
+            );
+        }
+    };
+
     // The operator's narrative is free text and lands in the signed receipt;
     // a home path in it is rewritten as `~/...` like every other field, and
     // the person is told, since these are their own words (0.31.11 re-test,
@@ -1618,15 +1628,6 @@ pub fn close(
             &[],
         );
     }
-    let mut manifest = match load_session() {
-        Some(m) => m,
-        None => {
-            return Err(
-                "no active session to close\n\n  Fix: treeship session start --name \"my task\""
-                    .into(),
-            );
-        }
-    };
 
     let ctx = ctx::open(config)?;
 
