@@ -58,17 +58,17 @@ Command artifacts deliberately reuse the DSSE envelope so:
 
 A separate transport for control-plane messages would have meant a second crypto path, a second audit trail, and a second class of regressions. DSSE keeps them on the main road.
 
-## What's not in v0.9.0
+## What's not in the CLI, still, as of 0.31.10
 
-Schemas only. v0.9.0 does not ship:
+Schemas only; neither of these ever landed (they were slated for v0.10.0 and v1.0 respectively -- both released long ago):
 
-- `treeship approver add / list / remove` — those are v0.10.0 (approval loop release).
-- `--require-approval` flag on `treeship wrap` — v0.10.0.
-- Hub endpoints that accept and serve approval-required artifacts — v0.10.0.
-- A CLI for emitting a `KillCommand` or `TerminateSession` — v1.0; the Hub-level kill switch is Witness territory until then.
+- `treeship approver add / list / remove` does not exist. There is `treeship approval` (`status`, `uses`, `journal verify`) and the top-level `approve`/`deny`/`pending`, a different, narrower surface than the command-artifact approval loop described here.
+- No `--require-approval` flag on `treeship wrap`.
+- No Hub endpoints that accept and serve approval-required command artifacts.
+- No CLI for emitting a `KillCommand` or `TerminateSession`. The Hub-level kill switch (`treeship halt`) stops the ship's own hooks/bridges from acting under a halted actor; it is not this page's signed `KillCommand`/`TerminateSession` schema.
 
-The schemas are stable in v0.9.0 because Witness needs to start consuming them now without waiting for the CLI surface to land. If the schema needs to evolve before v1.0, it gets bumped via the `schema_version` field on the parent artifact and the verifier branches accordingly. See [schema versioning](/docs/reference/schema).
+The schemas shipped early so Witness could start consuming them via the library without waiting for a CLI surface that, so far, hasn't arrived. If the schema needs to evolve, it gets bumped via the `schema_version` field on the parent artifact and the verifier branches accordingly. See [schema versioning](/docs/reference/schema).
 
 <Callout type="info">
-If you're building a supervisor (Witness or otherwise) that needs to issue commands to a Treeship ship today, depend on `treeship_core::artifacts` and produce DSSE envelopes signed with a key the ship has already added to its authorized issuer registry. The CLI catches up in v0.10.0; the wire format does not change.
+If you're building a supervisor (Witness or otherwise) that needs to issue commands to a Treeship ship today, depend on `treeship_core::artifacts` and produce DSSE envelopes signed with a key the ship has already added to its authorized issuer registry. There is still no CLI surface for this; the wire format has not changed since v0.9.0.
 </Callout>

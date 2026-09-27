@@ -92,7 +92,7 @@ treeship trust add <key> <pub> --kind <kind>  # pin one power (agent_cert, cert_
 treeship trust remove <key>             # remove a pin (all kinds)
 
 # Agent identity, provenance, and discovery
-treeship onboard <agent>                # register agent + mint card + trust bundle, one command
+treeship onboard <agent> --tools <list> # register agent + mint card + trust bundle, one command (or --from-harness/--tools-json/--from-a2a)
 treeship resolve <agent> [--hub URL]    # resolve to a verifiable bundle, re-derived verdicts
 treeship publish <agent>                # push cards + cert chain + revocations to the hub
 treeship audit <agent> --hub <url>      # re-verify a hub's transparency log offline
@@ -151,7 +151,7 @@ treeship doctor                         # run 9 health checks
 | 1 | Error, or the verdict is fail. The default for anything that went wrong |
 | 2 | The argument parser rejected the call (unknown command, missing argument). Also `judge --enforce` when the judge said deny, and `verify --certificate` when the receipt and certificate do not agree (cross-verification failed) |
 | 3 | Not initialized: run `treeship init` first. Also `judge --enforce` when the judge said ask, and `verify <url>` when the fetch failed (a network error) |
-| 4 | The command itself refused the call as written (a missing value such as `wrap` with no command, `grant issue` with no `--scope`, an impossible combination) |
+| 4 | The command itself refused the call as written (a missing value such as `judge --resolve <id>` with no `--by`, or an impossible combination such as `session countersign` with neither a participant id nor `--pending`). Distinct from 2: this is the command's own check, after argument parsing already succeeded |
 | 5 | Not compiled into this build: `prove`, `prove-chain` and `verify-proof` without `--features zk`; `otel` without the `otel` feature |
 | 6 | The signature verifies, but its signer is not a pinned trust root here: `merkle verify` on a checkpoint whose signer you have not pinned as `hub_checkpoint`. A trust decision, not a broken signature; confirm the key out of band before pinning it. An invalid signature is still 1 |
 

@@ -63,7 +63,7 @@
       "plugin": {
         "available": true,
         "type": "hook",
-        "install": "cd integrations/openclaw-plugin && npm install && npm run build && openclaw plugins install --local ./",
+        "install": "cd integrations/openclaw-plugin && npm install && npm run build && openclaw plugins install ./",
         "source_path": "integrations/openclaw-plugin",
         "release_status": "candidate",
         "marketplace_url": null,

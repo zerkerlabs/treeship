@@ -235,9 +235,11 @@ treeship verify-proof art_xxx.policy-checker.zkproof
 This is the quarantined Circom/Groth16 path from the section above: with the
 non-default `zk` feature built, `verify-proof` runs but fails closed with a
 pointer to the rebuild, because the underlying proving keys were never
-generated under a real ceremony. Release binaries don't build the `zk`
-feature at all, so this command isn't present in what you install by
-default. The published `@treeship/core-wasm` build (what
+generated under a real ceremony. `verify-proof` (like `prove` and
+`prove-chain`) is a real subcommand in the release binary, hidden from
+`--help`, but release binaries don't build the `zk` feature: running it
+exits 5 with "ZK features are not compiled into this build" rather than
+producing a proof. The published `@treeship/core-wasm` build (what
 `treeship.dev/verify` runs) does not enable the `zk` feature either -- there
 is no browser-side Groth16 check today. Once the transparent, statement-first
 rebuild lands (RISC Zero, see Layer 4 above), offline and browser
