@@ -1,6 +1,6 @@
 ---
 title: audit
-description: Audit an agent's transparency log from a Hub — re-verify every anchored entry's inclusion offline, check completeness against the committed anchor, and detect forks, regressions, and rewrites.
+description: Audit an agent's transparency log from a Hub — re-verify every logged entry's Merkle inclusion offline, check completeness against the committed anchor, and detect forks, regressions, and rewrites.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -22,10 +22,10 @@ treeship audit <agent-uri> --hub <url> [--watch] [--interval <secs>]
 
 ## The four checks
 
-1. **Inclusion** — every anchored entry's Merkle proof is re-verified offline; the checkpoint signature must chase to a signer you pinned under `hub_checkpoint`. Marks: `anchored ✓` / `anchored ✗ INVALID` / `anchored (proof unavailable)`.
+1. **Inclusion** — every anchored entry's Merkle proof is re-verified offline; the checkpoint signature must chase to a signer you pinned under `hub_checkpoint`. Marks: `anchored ✓` / `anchored ✗ INVALID` / `anchored (proof unavailable)`. {/* claims:transparency-log-client-reverified */}
 2. **Completeness** — the entry count is compared against the `evidence_anchor` the agent **committed to in its own signed card**: `complete (committed C, observed O)` or `OMISSION — committed C, observed O`.
-3. **Witnessing** — each observed checkpoint is persisted under `~/.treeship/merkle/witnessed/` and compared across runs: `FORK DETECTED` (equivocation — different roots for the same index), `REGRESSION`, or `consistent`.
-4. **Append-only** — the Hub's [consistency-proof chain](/docs/api/merkle-consistency) is fetched and re-verified to prove the current tree extends the last witnessed one: `append-only VERIFIED` / `INVALID` / `NOT PROVEN`.
+3. **Witnessing** — each observed checkpoint is persisted under `~/.treeship/merkle/witnessed/` and compared across runs: `FORK DETECTED` (equivocation — different roots for the same index), `REGRESSION`, or `consistent`. {/* claims:transparency-log-client-reverified */}
+4. **Append-only** — the Hub's [consistency-proof chain](/docs/api/merkle-consistency) is fetched and re-verified to prove the current tree extends the last witnessed one: `append-only VERIFIED` / `INVALID` / `NOT PROVEN`. {/* claims:transparency-log-client-reverified */}
 
 ## JSON output
 

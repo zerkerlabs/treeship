@@ -171,7 +171,7 @@ These are the outputs that *do* mean a problem, and what they mean:
 | `MAC verification failed — wrong machine` | The keystore cannot be decrypted (rare; a hostname or username change on older versions). | Update to the latest CLI, which self-heals this. If it persists, the message prints a nondestructive recovery command. |
 | `signature: UNVERIFIED (key not in your trust roots)` | You have not pinned the signer's key. | Run the `trust add` line the other party gave you (or `keys export` to get yours). |
 | `status: REVOKED` on a card | The card was revoked by an authorized party. | Do not honor it. This is the system working. |
-| `append-only INVALID — possible history rewrite` on `audit` | A hub's log contradicts what you witnessed before. | The hub may have lost or rewritten data. Investigate before trusting further receipts from it. |
+| `append-only INVALID — possible history rewrite` on `audit` | A hub's log contradicts what you witnessed before. {/* claims:transparency-log-client-reverified */} | The hub may have lost or rewritten data. Investigate before trusting further receipts from it. |
 | A command exits non-zero on a verification | The verdict was hostile (revoked, violation, omission, invalid proof). | The exit code is the point: gate your scripts on it. Read the printed reason. |
 
 Anything not in this table, and not a hostile verdict, is almost certainly the normal path. When in doubt, `treeship verify <id>` and read the top line.

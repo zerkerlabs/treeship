@@ -79,7 +79,7 @@ A push whose anchoring did not succeed still returns `200`, with the reason:
 | `artifact_id` | string | Echoed artifact ID |
 | `hub_url` | string | Public verification URL |
 | `rekor_index` | integer or null | Sigstore Rekor global log index. Kept for older clients; read `rekor` instead |
-| `rekor` | object | `status` (`anchored`, `failed`, `skipped`), `reason` when not anchored, `log_index`, and `entry`: the full Rekor log entry, which the CLI stores and `treeship verify` checks offline |
+| `rekor` | object | `status` (`anchored`, `failed`, `skipped`), `reason` when not anchored, `log_index`, and `entry`: the full Rekor log entry, which the CLI stores and `treeship verify` checks offline | {/* claims:rekor-artifact-anchoring */}
 
 ## Errors
 
@@ -95,6 +95,7 @@ The hub submits each pushed artifact to [Sigstore Rekor](https://rekor.sigstore.
 
 The hub does not ask you to trust it about the result. It returns Rekor's own entry, and `treeship verify` checks the signed entry timestamp, the inclusion proof, the signed checkpoint, and that the entry is for this artifact, all offline. A Rekor outage never fails the push: `rekor.status` is `failed` with the reason. Pushing the same artifact again retries anchoring when it has no entry yet.
 
+{/* claims:rekor-artifact-anchoring */}
 Before TS-2026-003 every submission was rejected and the failure was hidden; no artifact pushed before the fix is anchored until it is pushed again.
 
 ## Example
