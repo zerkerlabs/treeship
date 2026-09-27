@@ -1450,7 +1450,7 @@ fn mint_coverage_receipt(
     payload: serde_json::Value,
 ) -> Result<String, Box<dyn std::error::Error>> {
     treeship_core::predicates::validate("coverage.v1", Some(&payload))
-        .map_err(|e| format!("predicate validation failed: {e}"))?;
+        .map_err(|e| crate::exit::usage(format!("predicate validation failed: {e}")))?;
 
     let mut stmt = ReceiptStatement::new("system://treeship-session", "coverage.v1");
     stmt.parent_id = Some(close_artifact_id.to_string());
@@ -1488,7 +1488,7 @@ fn mint_session_record(
     payload: serde_json::Value,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
     treeship_core::predicates::validate("session.v1", Some(&payload))
-        .map_err(|e| format!("predicate validation failed: {e}"))?;
+        .map_err(|e| crate::exit::usage(format!("predicate validation failed: {e}")))?;
 
     let class = payload
         .get("attestation_class")
