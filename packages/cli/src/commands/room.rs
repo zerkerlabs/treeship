@@ -94,6 +94,15 @@ fn parse_invitation_authority(
                         .into(),
                 );
             }
+            // A delegate that is not a key can never sign an invitation; a
+            // typo here used to be accepted and sealed into the room.
+            for d in delegates {
+                if let Err(e) = treeship_core::trust::decode_ed25519_pubkey(d) {
+                    return Err(format!(
+                        "--delegate {d:?} is not an Ed25519 public key ({e}); pass the delegate's key as `treeship keys export` prints it (ed25519:<base64url>)"
+                    ));
+                }
+            }
             Ok(InvitationAuthority::DelegatedTo {
                 delegates: delegates.to_vec(),
             })
@@ -142,7 +151,8 @@ pub fn create(
     // `invitation::invite`'s restriction parsing: operator typos surface
     // before we touch the keystore or filesystem.
     let invitation_authority =
-        parse_invitation_authority(args.invitation_authority.as_deref(), &args.delegate)?;
+        parse_invitation_authority(args.invitation_authority.as_deref(), &args.delegate)
+            .map_err(crate::exit::usage)?;
     let checkpoint_every_actions = match args.checkpoint_every.as_deref() {
         Some(s) => Some(parse_checkpoint_every(s)?),
         None => None,
@@ -443,11 +453,15 @@ mod tests {
 
     #[test]
     fn invitation_authority_delegated_with_delegates() {
-        let a =
-            parse_invitation_authority(Some("delegated"), &["pk1".into(), "pk2".into()]).unwrap();
+        // Delegates are keys now; a placeholder like "pk1" is refused.
+        let pk1 = "ed25519:AkeP0YomPIIOnZi0xG6MOxlgp3kHdL_R-cQ_heeDWLA";
+        let pk2 = "ed25519:9PfbpAhWYgo81lyzCcdeYbcdSJzOIIfNNiqnbXgZrnM";
+        let err = parse_invitation_authority(Some("delegated"), &["pk1".into()]).unwrap_err();
+        assert!(err.contains("not an Ed25519 public key"), "{err}");
+        let a = parse_invitation_authority(Some("delegated"), &[pk1.into(), pk2.into()]).unwrap();
         match a {
             InvitationAuthority::DelegatedTo { delegates } => {
-                assert_eq!(delegates, vec!["pk1".to_string(), "pk2".to_string()]);
+                assert_eq!(delegates, vec![pk1.to_string(), pk2.to_string()]);
             }
             other => panic!("expected DelegatedTo, got {other:?}"),
         }

@@ -89,9 +89,11 @@ pub fn run(
             .unwrap_or(false);
         if from_global_fallback {
             return Err(format!(
-                "no Treeship workspace here, and the global one at {} is not this \
-                 directory's.\n\n                   Create a project-local workspace:  treeship init --config .treeship/config.json\n                   Or use the global workspace:       treeship init --global\n\n                   Commands run here would otherwise use the global workspace, so \
-                 receipts from unrelated projects share one store.",
+                "no Treeship workspace of its own in this directory; the global workspace at {} already exists, so nothing was changed.\n\n  \
+                 Create one here:              treeship init --config .treeship/config.json\n  \
+                 Regenerate the global one:    treeship init --global --force\n\n  \
+                 Until this directory has its own workspace, commands run here use the global one, \
+                 so receipts from unrelated projects share one store.",
                 config_path.display()
             )
             .into());

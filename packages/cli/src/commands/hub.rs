@@ -682,12 +682,12 @@ pub fn open(
         .as_str()
         .ok_or("hub did not return a session token")?;
 
-    // 2. Build the browser URL. The workspace UI lives on treeship.dev
-    //    regardless of which Hub endpoint minted the token.
-    let url = format!(
-        "https://treeship.dev/workspace/{}?session={}",
-        entry.hub_id, token,
-    );
+    // 2. Build the browser URL: the workspace UI on treeship.dev for the
+    //    hosted hub, the hub's own origin for a self-hosted one. The token
+    //    is minted by the hub that answered, so it never travels to another
+    //    origin (CLI-12): a local hub's token used to be pasted into a
+    //    treeship.dev URL, a page that does not exist for that hub.
+    let url = workspace_url(&entry.endpoint, &entry.hub_id, token);
 
     printer.blank();
     printer.info(&url);
@@ -798,6 +798,20 @@ pub(crate) fn share_url(endpoint: &str, returned: Option<&str>, api_path: &str) 
         return own;
     }
     returned.to_string()
+}
+
+/// Where the browser opens a hub's workspace. The hosted hub's UI is the
+/// treeship.dev workspace page; any other hub serves its own, at
+/// `<endpoint>/workspace/<hub id>`, so its session token stays on the
+/// origin that minted it.
+pub(crate) fn workspace_url(endpoint: &str, hub_id: &str, token: &str) -> String {
+    if is_treeship_host(host_of(endpoint)) {
+        return format!("https://treeship.dev/workspace/{hub_id}?session={token}");
+    }
+    format!(
+        "{}/workspace/{hub_id}?session={token}",
+        endpoint.trim_end_matches('/')
+    )
 }
 
 fn host_of(url: &str) -> &str {
@@ -1304,5 +1318,23 @@ mod tests {
         let secret_hex = "ef".repeat(32);
         let entry = conn("hub_legacy", Some(secret_hex.clone()));
         assert_eq!(resolve_dpop_secret_hex(&entry, &keys).unwrap(), secret_hex);
+    }
+
+    #[test]
+    fn workspace_url_keeps_the_token_on_the_minting_origin() {
+        // Hosted: the treeship.dev workspace page.
+        assert_eq!(
+            workspace_url("https://api.treeship.dev", "dck_1", "tok"),
+            "https://treeship.dev/workspace/dck_1?session=tok"
+        );
+        // Self-hosted: the hub's own origin, never treeship.dev.
+        assert_eq!(
+            workspace_url("http://127.0.0.1:8080/", "dck_1", "tok"),
+            "http://127.0.0.1:8080/workspace/dck_1?session=tok"
+        );
+        assert_eq!(
+            workspace_url("https://hub.example.internal", "dck_2", "t2"),
+            "https://hub.example.internal/workspace/dck_2?session=t2"
+        );
     }
 }
