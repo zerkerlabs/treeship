@@ -737,12 +737,17 @@ impl Store {
         // try-with-bounded-retry pattern in here would buy us nothing:
         // the second writer's re-read after the lock releases would
         // observe the now-v2 entry and short-circuit.
-        let lock_file = open_migration_lock_file(&lock_path).map_err(KeyError::Io)?;
+        // Bound to the end of this function: the flock is held across
+        // write_entry and the sentinel unlink below, and released when the
+        // handle goes out of scope. (Not dropped explicitly: on wasm32
+        // `std::fs::File` has no Drop, and clippy's drop_non_drop failed the
+        // PKG-3 wasm32 lint on that call.)
+        let _lock_file = open_migration_lock_file(&lock_path).map_err(KeyError::Io)?;
 
         #[cfg(not(target_family = "wasm"))]
         {
             use fs2::FileExt;
-            lock_file.lock_exclusive().map_err(KeyError::Io)?;
+            _lock_file.lock_exclusive().map_err(KeyError::Io)?;
         }
 
         // Under the lock: did a peer already complete the migration
@@ -812,11 +817,6 @@ impl Store {
         // also harmless; on Unix removing a flocked file is allowed
         // and the lock is released on fd drop regardless.
         let _ = std::fs::remove_file(&lock_path);
-
-        // Keep the lock_file binding alive to function exit so the
-        // flock is held across write_entry + remove_file. Explicit
-        // drop makes the intent obvious to readers.
-        drop(lock_file);
         Ok(())
     }
 

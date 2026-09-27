@@ -130,8 +130,15 @@ pub fn post(
     let now_ms = epoch_ms();
     let elapsed_ms = now_ms.saturating_sub(start_ms);
 
-    // Open treeship context (loads keys + storage)
-    let ctx = ctx::open(config_override)?;
+    // Open the workspace this hook belongs to. The hook found the project's
+    // .treeship/config.yaml by walking up from the cwd, so the config
+    // beside it is the store the session in this project uses. An exported
+    // TREESHIP_CONFIG used to win here and send the receipt to another
+    // store than the one `session start --config` named; an explicit
+    // --config still wins over both.
+    let project_json = config_path.with_file_name("config.json");
+    let project_json = project_json.to_string_lossy().into_owned();
+    let ctx = ctx::open(Some(config_override.unwrap_or(project_json.as_str())))?;
 
     let actor_uri = {
         // Try to get actor from project config
