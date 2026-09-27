@@ -178,22 +178,38 @@ claims:
   - id: hub-storage-write-once
     status: shipped
     says: >
-      The Hub's own storage is write-once, not just the artifacts it
-      stores: a pushed artifact is inserted `ON CONFLICT(artifact_id) DO
-      NOTHING` (content-addressed, so a re-push of the same bytes is a
-      no-op, never an overwrite), and a session's receipt can be filled
-      exactly once -- a second upload for the same session_id is refused
-      with 409, not replaced. This is a property of the Hub's database
-      constraints, distinct from receipt-tamper-evidence (which holds even
-      with no Hub involved at all): a Hub operator with direct database
-      access could still edit a row, but the Hub's own API never offers a
-      path to silently overwrite what it already stored.
+      The Hub's own storage is write-once and edit-free, not immutable:
+      a pushed artifact is inserted `ON CONFLICT(artifact_id) DO NOTHING`
+      (content-addressed, so a re-push of the same bytes is a no-op,
+      never an overwrite), and a session's receipt can be filled exactly
+      once -- a second upload for the same session_id is refused with
+      409, not replaced. Nothing the Hub's API exposes can silently
+      change a stored artifact or receipt in place. But the publishing
+      dock can withdraw its own session receipt: `DELETE
+      /v1/receipt/{session_id}` (`treeship hub unpublish`) clears the
+      receipt body, name, timing and counts and sets the row to
+      `status = 'tombstoned'` permanently -- the hub answers `410 Gone`
+      from then on and the session id can never be refilled or
+      re-published. A tombstone is not a silent edit: it is a one-shot,
+      publisher-only, publicly-visible withdrawal, distinct from an
+      overwrite or an in-place edit. This is a property of the Hub's
+      database constraints, distinct from receipt-tamper-evidence (which
+      holds even with no Hub involved at all): a Hub operator with direct
+      database access could still edit a row, but the Hub's own API never
+      offers a path to silently overwrite -- or un-tombstone -- what it
+      already stored.
     proof: packages/hub/internal/receipts/receipts.go
     not: ["immutable"]
     notes: >
       Content-addressing (packages/hub/internal/db/db.go's `ON
       CONFLICT(artifact_id) DO NOTHING`) covers artifacts; receipts are
-      write-once per session_id via InsertSessionWriteOnce, same file.
+      write-once per session_id via InsertSessionWriteOnce. The tombstone
+      path is `db.TombstoneSession` (same file): publisher-owned check,
+      `WHERE tombstoned_at IS NULL` makes it one-shot, and the UPDATE
+      clears the receipt fields rather than deleting the row, so a later
+      PUT for the same session_id still finds a row and is refused
+      (merged to main in #533, on `main` ahead of the 0.31.10 release
+      tag as of this entry).
 
   - id: receipt-tamper-evidence
     status: shipped

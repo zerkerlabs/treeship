@@ -181,6 +181,6 @@ A `.treeship` package is a directory containing:
 
 You can share a `.treeship` package in three ways:
 
-1. **Upload to a hub** via [`treeship session report`](/docs/cli/session#treeship-session-report), which prints a permanent public URL like `https://treeship.dev/receipt/<session_id>`.
+1. **Upload to a hub** via [`treeship session report`](/docs/cli/session#treeship-session-report), which prints a public URL like `https://treeship.dev/receipt/<session_id>` that stays up until you [`treeship hub unpublish`](/docs/cli/hub#treeship-hub-unpublish) it.
 2. **Tar and send** the directory directly: `tar czf ssn_xxx.treeship.tar.gz .treeship/sessions/ssn_xxx.treeship/`. Recipients extract and run `treeship package verify`.
 3. **Commit the directory** to git or upload to any object store. The format is deterministic so two identical inputs produce byte-identical packages.

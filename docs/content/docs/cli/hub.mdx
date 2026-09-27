@@ -22,6 +22,7 @@ Most developers need exactly one hub connection. Multiple hub connections exist 
 | `treeship hub push <id>` | Push artifact to active hub connection |
 | `treeship hub pull <id>` | Pull artifact from Hub |
 | `treeship hub open` | Open workspace in browser |
+| `treeship hub unpublish <session_id>` | Take a published session receipt down |
 | `treeship hub kill <name>` | Remove a hub connection |
 
 ## treeship hub attach
@@ -194,6 +195,25 @@ treeship hub open
 treeship hub open --hub acme-corp
 treeship hub open --no-open
 ```
+
+## treeship hub unpublish
+
+Takes a published [Session Receipt](/docs/concepts/session-receipts) down. Signs a [`DELETE /v1/receipt/{session_id}`](/docs/api/receipt-delete) request. Only the dock that published it can take it down.
+
+```bash
+treeship hub unpublish ssn_a9993133572ca758
+treeship hub unpublish ssn_a9993133572ca758 --reason "leaked local paths"
+treeship hub unpublish ssn_a9993133572ca758 --hub acme-corp
+```
+
+| Option | Description |
+|--------|-------------|
+| `--hub <name\|id>` | Hub connection to use (default: the active one) |
+| `--reason <text>` | A short public reason (at most 200 characters), shown with the `410` |
+
+<Callout type="warn">
+Permanent. The hub removes the receipt body for good and answers `410 Gone` at its URL from then on; the session id is retired, so it cannot be re-uploaded. Local copies of the receipt are untouched, but a copy a browser or proxy cached while it was public can persist for up to 24 hours.
+</Callout>
 
 ## treeship hub kill
 

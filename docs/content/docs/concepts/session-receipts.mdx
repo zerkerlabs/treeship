@@ -27,7 +27,7 @@ A session flows through three states:
 
 1. **Active.** Started by [`treeship session start`](/docs/cli/session#treeship-session-start) or by a registered agent. Events are appended to `.treeship/sessions/<session_id>/events.jsonl` in real time. The artifact chain grows under `.treeship/artifacts/`.
 2. **Closed.** [`treeship session close`](/docs/cli/session#treeship-session-close) composes the receipt, writes a `.treeship` package, and seals the chain with a `session.close` attestation. The package is self-contained and tamper-evident from this point forward {/* claims:receipt-tamper-evidence */} — `package verify` catches an edit made after close.
-3. **Published.** [`treeship session report`](/docs/cli/session#treeship-session-report) uploads the receipt to the configured hub. The hub serves it at a permanent public URL: `https://treeship.dev/receipt/<session_id>`.
+3. **Published.** [`treeship session report`](/docs/cli/session#treeship-session-report) uploads the receipt to the configured hub. The hub serves it at a public URL, `https://treeship.dev/receipt/<session_id>`, until the publishing dock takes it down with [`treeship hub unpublish`](/docs/cli/hub#treeship-hub-unpublish).
 
 Publishing is optional. A session is equally valid sitting on disk as a `.treeship` directory that you `treeship package verify` locally.
 
@@ -176,7 +176,7 @@ Hubs are convenience. The receipt itself is the trust anchor. A hub serving the 
 
 ## Public receipt URLs
 
-When you run [`treeship session report`](/docs/cli/session#treeship-session-report), the receipt is uploaded via DPoP-authenticated PUT to the configured hub. The hub then serves it at a permanent public URL:
+When you run [`treeship session report`](/docs/cli/session#treeship-session-report), the receipt is uploaded via DPoP-authenticated PUT to the configured hub. The hub then serves it at a public URL:
 
 ```
 https://treeship.dev/receipt/ssn_42e740bd9eb238f6
@@ -185,13 +185,13 @@ https://treeship.dev/receipt/ssn_42e740bd9eb238f6
 The URL:
 
 - Requires no authentication to fetch
-- Never expires
+- Does not expire on its own
 - Returns the raw receipt JSON verbatim
 - Is cached immutably (`Cache-Control: public, max-age=86400, immutable`)
 
 A2A agents, dashboards, and automated verifiers can fetch this URL programmatically and make pre-delegation trust decisions.
 
-See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) for the API reference.
+The publishing dock, and only that dock, can take a receipt down with [`treeship hub unpublish <session_id>`](/docs/cli/hub#treeship-hub-unpublish): the hub removes the receipt body for good and the URL answers `410 Gone` from then on, permanently -- the session id cannot be re-published. See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) and [`DELETE /v1/receipt/{session_id}`](/docs/api/receipt-delete) for the API reference.
 
 ## Honest limitations
 

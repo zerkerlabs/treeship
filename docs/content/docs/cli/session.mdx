@@ -5,7 +5,7 @@ description: Manage attestation sessions. Start, close, report, and share Sessio
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-A session groups related work into a single unit. When you close a session, Treeship composes a Session Receipt v1 and writes a portable `.treeship` package that can be inspected and verified offline, or uploaded to a hub for sharing at a permanent public URL.
+A session groups related work into a single unit. When you close a session, Treeship composes a Session Receipt v1 and writes a portable `.treeship` package that can be inspected and verified offline, or uploaded to a hub for sharing at a public URL.
 
 See the [Session Receipts concept page](/docs/concepts/session-receipts) for the full format and determinism rules.
 
@@ -272,7 +272,7 @@ The command moves `.treeship/session.json` or `.treeship/session.closing` plus t
 
 ## treeship session report
 
-Upload a closed session's receipt to the configured hub and print the permanent public URL.
+Upload a closed session's receipt to the configured hub and print the public URL.
 
 ```bash
 treeship session report
@@ -290,7 +290,7 @@ The command:
 1. Locates the `.treeship` package for the requested session (or the most recently modified one).
 2. Reads `receipt.json` verbatim so the digest signed by `session close` is preserved bit-for-bit.
 3. DPoP-signs a `PUT {hub_endpoint}/v1/receipt/{session_id}` request using the active hub connection's private key.
-4. Prints the permanent receipt URL.
+4. Prints the receipt URL.
 
 If a package directory exists but `receipt.json` was never written, `session report` reports the package as incomplete instead of treating it as a missing closed session.
 
@@ -305,11 +305,11 @@ Example output:
 
   receipt:  https://treeship.dev/receipt/ssn_42e740bd9eb238f6
 
-  → share this URL freely -- it never expires and needs no auth
+  → share these URLs freely -- they need no auth and stay up until you unpublish them
 ```
 
 <Callout type="info">
-The receipt URL is permanent and public. No token, no expiry, no auth required to fetch it. A2A clients, dashboards, and offline verifiers can all `curl` it programmatically. See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) for the API reference.
+The receipt URL is public and needs no token, expiry, or auth to fetch. A2A clients, dashboards, and offline verifiers can all `curl` it programmatically. It stays up until the publishing dock takes it down with [`treeship hub unpublish`](/docs/cli/hub#treeship-hub-unpublish), which is permanent: the receipt body is removed for good and the id cannot be re-published. See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) and [`DELETE /v1/receipt/{session_id}`](/docs/api/receipt-delete) for the API reference.
 </Callout>
 
 ### Exit code
