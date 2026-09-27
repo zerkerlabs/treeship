@@ -46,6 +46,14 @@ $ wasm-pack build packages/core-wasm --target bundler
 import { sign, verify } from '@treeship/core-wasm'
 ```
 
+> **Editor's note (2026-09-27).** `@treeship/core-wasm` shipped as
+> verification-only: its real export is `verify_envelope` (Ed25519
+> signature and Merkle proof verification), not `sign`/`verify`, and there
+> is no `init()` to await. The TypeScript SDK still shells out to the
+> `treeship` CLI binary for signing. See the
+> [core-wasm README](https://github.com/zerkerlabs/treeship/blob/main/packages/core-wasm/README.md)
+> for the shipped API.
+
 ## The audited cryptography argument
 
 The most important crate in our dependency tree is `ed25519-dalek`. It has been audited by NCC Group. It uses the `subtle` crate throughout for constant-time operations -- scalar multiplications, comparisons, and conditionals that don't leak timing information. The audit is public and the issues found were fixed before publication.
