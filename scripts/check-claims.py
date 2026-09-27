@@ -35,6 +35,20 @@ a code sample, not an unbacked claim about what Treeship does -- of the
 124 wider-scope findings the 2026-09-27 retest turned up, 27 were this:
 the banned word appeared only inside backticks or a fence, never in a
 sentence making a claim.
+
+A marker only backs a disclaimed word if the line negates it too
+(N-31, final 0.31.11 re-test): `hub-storage-write-once`'s `not:` list
+names `immutable` because that claim's own `says` field negates it
+("write-once ... not immutable") -- the whole point of the claim is
+that the Hub's storage ISN'T immutable, just write-once. A line marked
+with that claim that bare-asserts "immutable" anyway is unbacked for
+that word, same as no marker at all, even though the marker id is
+real and known and does cover the line. Which words are disclaimed,
+per claim, is derived from the claim's own `says` text, not just
+listed in `not:` -- a claim can legitimately use a banned-list word
+affirmatively, with its own qualifier (`rekor-artifact-anchoring`:
+"counts ... witnessed only if ..."), and a doc line it backs needs no
+negation for that word either.
 """
 
 from __future__ import annotations
@@ -64,15 +78,20 @@ BANNED_PHRASES = [
 MARKER = re.compile(r"(?:<!--\s*claims:([a-z0-9-]+)\s*-->|\{/\*\s*claims:([a-z0-9-]+)\s*\*/\})")
 INLINE_CODE = re.compile(r"`[^`]*`")
 FENCE_LINE = re.compile(r"^\s*```")
+LINK_URL = re.compile(r"\]\([^)]*\)")
 
 
 def prose_only(text: str) -> str:
-    """Drop fenced code blocks and inline code spans before a banned-phrase
-    scan. A flag literally named `--max-unwitnessed`, a JSON field named
-    `anchored`, or a curl one-liner is a real identifier or a code sample,
-    not an unbacked prose claim about what Treeship does -- the registry
-    exists to catch sentences, not to force a marker onto every doc page
-    that names a real flag or field."""
+    """Drop fenced code blocks, inline code spans, markdown link URLs and
+    the marker syntax itself before a banned-phrase scan. A flag literally
+    named `--max-unwitnessed`, a JSON field named `anchored`, a curl
+    one-liner, a link URL that is a never-renamed blog slug
+    (`/blog/agentic-commerce-tamper-proof-receipts`, whose title has long
+    since been corrected), or a claim id that happens to contain a banned
+    word as a name component (`{/* claims:checkpoint-not-witnessed */}`)
+    is a real identifier, not an unbacked prose claim about what Treeship
+    does -- the registry exists to catch sentences, not to force a marker
+    onto every doc page that names a real flag, field, link or id."""
     out_lines = []
     in_fence = False
     for line in text.splitlines():
@@ -80,7 +99,13 @@ def prose_only(text: str) -> str:
             in_fence = not in_fence
             out_lines.append("")
             continue
-        out_lines.append("" if in_fence else INLINE_CODE.sub("", line))
+        if in_fence:
+            out_lines.append("")
+            continue
+        clean = INLINE_CODE.sub("", line)
+        clean = MARKER.sub("", clean)
+        clean = LINK_URL.sub("]()", clean)
+        out_lines.append(clean)
     return "\n".join(out_lines)
 
 
@@ -118,14 +143,72 @@ def covered_lines(lines: list[str]) -> dict[int, set[str]]:
     return cover
 
 
-def line_findings(rel: str, text: str, valid_ids: set[str]) -> list[str]:
-    """The finer rule: each banned phrase must sit on a covered line."""
+NEGATORS = (
+    "not", "never", "no", "nothing", "isn't", "isnt", "aren't", "arent",
+    "doesn't", "doesnt", "cannot", "can't", "cant", "without",
+)
+
+
+def negated_nearby(text: str, phrase: str, window: int = 40) -> bool:
+    """Whether some occurrence of `phrase` in `text` (case-insensitive) has
+    a negator word within `window` characters before it -- "not
+    machine-bound" is negated, "machine-bound" bare is not. A negator
+    must not be hyphen-joined to what follows it: `checkpoint-not-
+    witnessed` is a single claim-id token citing another claim by name,
+    not this sentence negating "witnessed" -- `\b` alone doesn't catch
+    this, since a hyphen already counts as a word boundary."""
+    low = text.lower()
+    start = 0
+    while True:
+        idx = low.find(phrase, start)
+        if idx == -1:
+            return False
+        before = low[max(0, idx - window) : idx]
+        if any(
+            re.search(rf"(?<!-)\b{re.escape(n)}\b(?!-)", before) for n in NEGATORS
+        ):
+            return True
+        start = idx + len(phrase)
+
+
+def unbacked_phrases(
+    line: str, hits: list[str], known_ids: set[str], negation_required: dict[str, set[str]]
+) -> list[str]:
+    """Which of `hits` (found on `line`, already prose-only) no covering
+    claim actually backs. `negation_required[cid]` names the banned
+    phrases claim `cid`'s own `says` field itself negates -- for those,
+    the claim is disclaiming the word, so a line it marks must also
+    negate it, not bare-assert it (N-31: README.md's "stores immutable
+    bytes" bare-asserted the exact word `hub-storage-write-once`'s
+    `says` field negates, right next to that marker). A claim that uses
+    the word affirmatively instead, with its own qualifier
+    (`rekor-artifact-anchoring`: "counts ... witnessed only if ..."),
+    isn't disclaiming it, so a bare-sounding doc line backed by THAT
+    claim needs no negation either."""
+    out = []
+    for p in hits:
+        backed = any(
+            p not in negation_required.get(cid, set()) or negated_nearby(line, p)
+            for cid in known_ids
+        )
+        if not backed:
+            out.append(p)
+    return out
+
+
+def line_findings(
+    rel: str, text: str, valid_ids: set[str], negation_required: dict[str, set[str]]
+) -> list[str]:
+    """The finer rule: each banned phrase must sit on a covered line, and if
+    every covering claim disclaims that phrase (negates it in its own
+    `says`), the line must negate it too."""
     out = []
     lines = text.splitlines()
     cover = covered_lines(lines)
     clean_lines = prose_only(text).splitlines()
     for i, line in enumerate(lines):
-        low = clean_lines[i].lower() if i < len(clean_lines) else line.lower()
+        clean = clean_lines[i] if i < len(clean_lines) else line
+        low = clean.lower()
         hits = [p for p in BANNED_PHRASES if p in low]
         if not hits:
             continue
@@ -133,12 +216,22 @@ def line_findings(rel: str, text: str, valid_ids: set[str]) -> list[str]:
         unknown = ids - valid_ids
         for u in sorted(unknown):
             out.append(f"{rel}:{i + 1}: claims marker '{u}' is not a known claims.yml id")
+        known_ids = ids - unknown
         if not ids:
             out.append(
                 f"{rel}:{i + 1}: banned phrase(s) {hits} with no claims marker on this "
                 f"line (or alone on the line above). Add `<!-- claims:id -->` for the "
                 f"claims.yml entry that backs this sentence, or rewrite it."
             )
+        elif known_ids:
+            unbacked = unbacked_phrases(clean, hits, known_ids, negation_required)
+            if unbacked:
+                out.append(
+                    f"{rel}:{i + 1}: banned phrase(s) {unbacked} sit on a line marked "
+                    f"{sorted(known_ids)}, but every covering claim disclaims that exact "
+                    f"wording (its own `says` negates it) and this line doesn't -- "
+                    f"negate it, cite a claim that doesn't disclaim it, or reword."
+                )
     return out
 
 
@@ -173,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
 
     seen_ids: set[str] = set()
     valid_ids: set[str] = set()
+    negation_required: dict[str, set[str]] = {}
     for c in claims:
         cid = c.get("id")
         if not cid:
@@ -182,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
             errors.append(f"claim '{cid}': duplicate id")
         seen_ids.add(cid)
         valid_ids.add(cid)
+        says_text = c.get("says") or ""
+        negation_required[cid] = {p for p in (c.get("not") or []) if negated_nearby(says_text, p)}
 
         status = c.get("status")
         if status not in TAXONOMY:
@@ -207,7 +303,8 @@ def main(argv: list[str] | None = None) -> int:
         text = path.read_text()
         lower = text.lower()
         for start, para in paragraphs(text):
-            para_lower = prose_only(para).lower()
+            clean_para = prose_only(para)
+            para_lower = clean_para.lower()
             hits = [p for p in BANNED_PHRASES if p in para_lower]
             if not hits:
                 continue
@@ -217,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
             for u in unknown:
                 line_no = text.count("\n", 0, start) + 1
                 errors.append(f"{rel}:~{line_no}: claims marker '{u}' is not a known claims.yml id")
+            known_ids = marker_ids - unknown
             if not marker_ids:
                 line_no = text.count("\n", 0, start) + 1
                 errors.append(
@@ -225,13 +323,24 @@ def main(argv: list[str] | None = None) -> int:
                     f"marker naming the claims.yml entry that backs this "
                     f"wording, or rewrite the paragraph."
                 )
+            elif known_ids:
+                unbacked = unbacked_phrases(clean_para, hits, known_ids, negation_required)
+                if unbacked:
+                    line_no = text.count("\n", 0, start) + 1
+                    errors.append(
+                        f"{rel}:~{line_no}: paragraph uses banned phrase(s) {unbacked}, "
+                        f"but every covering claim ({sorted(known_ids)}) disclaims that "
+                        f"exact wording (its own `says` negates it) and the paragraph "
+                        f"doesn't -- negate it, cite a claim that doesn't disclaim it, "
+                        f"or reword."
+                    )
 
     # The finer rule over the wider scope: warnings until --strict.
     finer: list[str] = []
     for rel in wider_files():
         path = ROOT / rel
         try:
-            finer.extend(line_findings(rel, path.read_text(encoding="utf-8"), valid_ids))
+            finer.extend(line_findings(rel, path.read_text(encoding="utf-8"), valid_ids, negation_required))
         except OSError:
             continue
     if finer:

@@ -164,7 +164,8 @@ treeship-dev/
 | `hub.treeship.dev` | Workspace app (if it has a frontend, not in this repo) | Not this monorepo |
 | `api.treeship.dev` | Go Hub API | Server --packages/hub/ in monorepo |
 
-The `/verify/:id` public page lives at `treeship.dev/verify/:id` and calls `api.treeship.dev` for artifact data. The WASM verifier runs client-side in the browser --Hub cannot forge a passing result.
+<!-- claims:hub-cannot-forge-signed-verification -->
+The `/verify/:id` public page lives at `treeship.dev/verify/:id` and calls `api.treeship.dev` for artifact data. The WASM verifier runs client-side in the browser against the caller's own trust roots -- Hub cannot forge a passing result for that signed artifact. A bare Session Receipt fetch (`GET /v1/receipt/{session_id}`) carries no signature at all and does not get the same guarantee.
 
 ---
 

@@ -30,7 +30,7 @@ We will acknowledge your report within 48 hours and aim to release a fix within 
 
 | Version | Supported              |
 |---------|------------------------|
-| 0.31.x  | Yes (current: 0.31.10) |
+| 0.31.x  | Yes (current: 0.31.11) |
 | 0.30.x  | Security fixes only    |
 | < 0.30  | No longer supported    |
 
