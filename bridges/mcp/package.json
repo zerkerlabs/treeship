@@ -42,7 +42,10 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "hono": "^4.13.5"
   },
   "scripts": {
     "build": "tsc",
