@@ -92,7 +92,7 @@ treeship trust add <key> <pub> --kind <kind>  # pin one power (agent_cert, cert_
 treeship trust remove <key>             # remove a pin (all kinds)
 
 # Agent identity, provenance, and discovery
-treeship onboard <agent>                # register agent + mint card + trust bundle, one command
+treeship onboard <agent> --tools <list> # register agent + mint card + trust bundle, one command (or --from-harness/--tools-json/--from-a2a)
 treeship resolve <agent> [--hub URL]    # resolve to a verifiable bundle, re-derived verdicts
 treeship publish <agent>                # push cards + cert chain + revocations to the hub
 treeship audit <agent> --hub <url>      # re-verify a hub's transparency log offline

@@ -13,7 +13,7 @@ in `packages/cli/src/commands/cards.rs` (the `actor → key_id` lookup),
 ## Verifying it yourself
 
 ```
-treeship onboard my-agent
+treeship onboard my-agent --tools demo
 treeship attest action --actor agent://my-agent --action demo
 treeship verify <artifact-id>      # actor proof: proven (key-bound)
 ```
@@ -55,7 +55,7 @@ verify: action.signer == agent_key_A == cert.key, cert issued by a trusted ship 
 
 ## What changed
 
-1. **`treeship agent register --actor agent://deployer`** generates a *new* per-agent key (or adopts a named one), issues a ship-signed `AgentCertificate` binding the actor URI to that key, pins the agent key under `AgentCert`, and records the `actor → key_id` mapping on the agent card.
+1. **`treeship agent register --name deployer`** (the flag is `--name`, not `--actor`) generates a *new* per-agent key (or adopts a named one), issues a ship-signed `AgentCertificate` binding the actor URI to that key, pins the agent key under `AgentCert`, and records the `actor → key_id` mapping on the agent card.
 2. **`treeship attest action --actor agent://deployer`** resolves the actor URI to its registered key id and signs with `keys.signer(key_id)`. If the actor has no registered per-agent key, it signs with `default_signer()` exactly as today (backward compatible).
 3. **Verification** treats `actor` as **proven** when the action's signer is the actor's pinned `AgentCert` key, and as **asserted** otherwise (shared/default key). `verify-capability` already encodes this; it just starts returning `key-bound: yes` for properly-registered agents.
 
