@@ -767,6 +767,7 @@ pub fn unpublish(
     session_id: &str,
     hub: Option<&str>,
     reason: Option<&str>,
+    yes: bool,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -774,6 +775,33 @@ pub fn unpublish(
         return Err(crate::exit::usage(format!(
             "{session_id:?} is not a session id (ssn_<hex>)"
         )));
+    }
+    // Permanent, so it is confirmed: on a terminal the person types the id
+    // back; off a terminal, or in JSON mode, `--yes` is the confirmation
+    // and its absence is a usage error, never a takedown (0.31.11 re-test,
+    // N-42: it asked nothing, even without a TTY).
+    if !yes {
+        let interactive = printer.format != crate::printer::Format::Json
+            && std::io::IsTerminal::is_terminal(&std::io::stdin());
+        if !interactive {
+            return Err(crate::exit::usage(format!(
+                "hub unpublish is permanent: pass --yes to take {session_id} down without a prompt"
+            )));
+        }
+        printer.warn(
+            &format!(
+                "this takes {session_id} down for good: the hub keeps no body and answers 410 from then on, and the id cannot be re-uploaded"
+            ),
+            &[],
+        );
+        eprint!("  type the session id to confirm: ");
+        let mut typed = String::new();
+        std::io::stdin().read_line(&mut typed)?;
+        if typed.trim() != session_id {
+            return Err(crate::exit::usage(
+                "not confirmed; nothing was taken down".to_string(),
+            ));
+        }
     }
     let ctx = ctx::open(config)?;
     let (_name, entry) = ctx
