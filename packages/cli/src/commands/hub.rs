@@ -677,13 +677,25 @@ pub fn open(
         )));
     }
     if !is_hosted_endpoint(&entry.endpoint) {
-        printer.blank();
-        printer.info("this hub has no workspace UI; its workspace is JSON:");
-        printer.info(&format!(
-            "  {}/v1/workspace/{}",
+        let workspace = format!(
+            "{}/v1/workspace/{}",
             entry.endpoint.trim_end_matches('/'),
             entry.hub_id
-        ));
+        );
+        if printer.format == crate::printer::Format::Json {
+            printer.json(&serde_json::json!({
+                "status": "ok",
+                "hub": entry.hub_id,
+                "workspace_ui": serde_json::Value::Null,
+                "workspace_json": workspace,
+                "opened": false,
+                "message": "this hub has no workspace UI; its workspace is JSON",
+            }));
+            return Ok(());
+        }
+        printer.blank();
+        printer.info("this hub has no workspace UI; its workspace is JSON:");
+        printer.info(&format!("  {workspace}"));
         printer
             .hint("authenticate with your dock's DPoP key, or a share token from POST /v1/session");
         printer.blank();
@@ -713,10 +725,20 @@ pub fn open(
     //    hosted hub, the same origin family, so it travels nowhere else.
     let url = hosted_workspace_url(&entry.hub_id, token);
 
-    printer.blank();
-    printer.info(&url);
-    printer.hint("link is valid for 15 minutes");
-    printer.blank();
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "hub": entry.hub_id,
+            "workspace_ui": url,
+            "valid_for_s": 900,
+            "opened": !no_open,
+        }));
+    } else {
+        printer.blank();
+        printer.info(&url);
+        printer.hint("link is valid for 15 minutes");
+        printer.blank();
+    }
 
     if !no_open {
         #[cfg(target_os = "macos")]
@@ -745,6 +767,7 @@ pub fn unpublish(
     session_id: &str,
     hub: Option<&str>,
     reason: Option<&str>,
+    yes: bool,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -752,6 +775,33 @@ pub fn unpublish(
         return Err(crate::exit::usage(format!(
             "{session_id:?} is not a session id (ssn_<hex>)"
         )));
+    }
+    // Permanent, so it is confirmed: on a terminal the person types the id
+    // back; off a terminal, or in JSON mode, `--yes` is the confirmation
+    // and its absence is a usage error, never a takedown (0.31.11 re-test,
+    // N-42: it asked nothing, even without a TTY).
+    if !yes {
+        let interactive = printer.format != crate::printer::Format::Json
+            && std::io::IsTerminal::is_terminal(&std::io::stdin());
+        if !interactive {
+            return Err(crate::exit::usage(format!(
+                "hub unpublish is permanent: pass --yes to take {session_id} down without a prompt"
+            )));
+        }
+        printer.warn(
+            &format!(
+                "this takes {session_id} down for good: the hub keeps no body and answers 410 from then on, and the id cannot be re-uploaded"
+            ),
+            &[],
+        );
+        eprint!("  type the session id to confirm: ");
+        let mut typed = String::new();
+        std::io::stdin().read_line(&mut typed)?;
+        if typed.trim() != session_id {
+            return Err(crate::exit::usage(
+                "not confirmed; nothing was taken down".to_string(),
+            ));
+        }
     }
     let ctx = ctx::open(config)?;
     let (_name, entry) = ctx

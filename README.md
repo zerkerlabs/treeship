@@ -173,7 +173,7 @@ To put the receipt in the pull request instead of on a hub, close with `treeship
 Treeship sends no telemetry. Nothing phones home: not on install, not on first run, not weekly. Adoption is measured from signals the project already owns (hub activity, repository traffic, release and registry downloads) by [`scripts/adoption-report.py`](scripts/adoption-report.py), each number printed with what it counts and what inflates it.
 
 <!-- claims:hub-storage-write-once -->
-The Hub stores immutable bytes, serves lookup indices and proofs, and enforces write auth ([DPoP](https://docs.treeship.dev/docs/api/overview)) — it never supplies trust verdicts. Server-side verification was deliberately retired (the endpoint returns `410 Gone`): a verifier you don't run yourself is not a verifier.
+The Hub stores write-once bytes -- not immutable, since the publisher can withdraw a receipt -- serves lookup indices and proofs, and enforces write auth ([DPoP](https://docs.treeship.dev/docs/api/overview)) — it never supplies trust verdicts. Server-side verification was deliberately retired (the endpoint returns `410 Gone`): a verifier you don't run yourself is not a verifier.
 
 ## What Treeship proves — and what it cannot
 

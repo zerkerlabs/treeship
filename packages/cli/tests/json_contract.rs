@@ -51,6 +51,24 @@ impl Ship {
             .expect("run treeship")
     }
 
+    /// Attach a self-hosted hub entry without a network: `hub open` then has
+    /// no UI to open and answers with the workspace JSON pointer.
+    fn attach_local_hub(&self, endpoint: &str) {
+        let raw = std::fs::read_to_string(&self.config).unwrap();
+        let mut cfg: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let key_id = cfg["default_key_id"].as_str().unwrap().to_string();
+        cfg["hub_connections"]["local"] = serde_json::json!({
+            "hub_id": "dock_test0000000000",
+            "key_id": key_id,
+            "endpoint": endpoint,
+            "created_at": "2026-09-28T00:00:00Z",
+            "hub_public_key": "00".repeat(32),
+            "hub_secret_key": "11".repeat(32),
+        });
+        cfg["active_hub"] = serde_json::json!("local");
+        std::fs::write(&self.config, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+    }
+
     fn run_json(&self, args: &[&str]) -> serde_json::Value {
         self.try_json(args).unwrap_or_else(|e| panic!("{e}"))
     }
@@ -122,7 +140,6 @@ const SKIP: &[(&str, &str)] = &[
     ("bundle import", "file round-trip"),
     ("daemon start", "spawns a long-running process (W1-11)"),
     ("daemon status", "W1-11"),
-    ("daemon stop", "W1-11"),
     ("dashboard", "serves HTTP until stopped"),
     ("deny", "consumes a pending approval from a shell hook"),
     ("grant revoke", "signing path; issue/list/show are covered"),
@@ -133,7 +150,6 @@ const SKIP: &[(&str, &str)] = &[
     ("hub attach", "device-code flow against a hub"),
     ("hub detach", "needs a hub connection"),
     ("hub kill", "needs a hub connection"),
-    ("hub open", "opens a browser"),
     ("hub pull", "needs a hub"),
     (
         "hub unpublish",
@@ -153,9 +169,6 @@ const SKIP: &[(&str, &str)] = &[
         "merkle verify",
         "needs a proof file and a pinned signer; covered in merkle tests",
     ),
-    ("onboard", "signing path with optional hub publish"),
-    ("otel disable", "prints shell guidance only"),
-    ("otel enable", "prints shell guidance only"),
     ("otel export", "needs a collector"),
     ("otel test", "needs a collector"),
     ("present", "needs a checkpoint"),
@@ -163,7 +176,6 @@ const SKIP: &[(&str, &str)] = &[
     ("prove", "zk build only"),
     ("prove-chain", "zk build only"),
     ("publish", "needs a hub"),
-    ("quickstart", "interactive"),
     (
         "room create",
         "needs a session; room status/participants covered",
@@ -182,7 +194,6 @@ const SKIP: &[(&str, &str)] = &[
     ("session report", "uploads to a hub"),
     ("setup", "detects and instruments installed agents"),
     ("template apply", "writes config.yaml"),
-    ("template save", "interactive"),
     ("template validate", "needs a file; preview is covered"),
     ("ui", "needs a terminal"),
     ("verify-capability", "needs a card"),
@@ -196,8 +207,6 @@ const SKIP: &[(&str, &str)] = &[
     ("vi verify", "needs a VI credential set"),
     ("workflow verify", "needs a workflow declaration"),
     ("wrap", "covered in wrap_json_cli.rs"),
-    ("zk-setup", "informational, zk build"),
-    ("zk-tls-setup", "informational"),
     ("attest handoff", "needs artifacts to hand off"),
     ("history", "needs an agent with a transparency log"),
     ("resolve", "needs a card; error path covered in contract.rs"),
@@ -387,6 +396,26 @@ fn every_json_capable_command_emits_json() {
     );
     check("vi keygen", &["vi", "keygen"]);
     check("vi keys list", &["vi", "keys", "list"]);
+    // The 0.31.11 re-test's leftovers (N-2): three documents, prompt text
+    // mixed into JSON, and six success paths that wrote nothing.
+    check(
+        "onboard",
+        &["onboard", "json-onboarded", "--tools", "a2a.*"],
+    );
+    check("quickstart", &["quickstart"]);
+    check("otel enable", &["otel", "enable"]);
+    check("otel disable", &["otel", "disable"]);
+    check("zk-setup", &["zk-setup"]);
+    check("zk-tls-setup", &["zk-tls-setup"]);
+    check("daemon stop", &["daemon", "stop"]);
+    ship.attach_local_hub("http://127.0.0.1:9");
+    check("hub open", &["hub", "open", "--no-open"]);
+    // With --name there is nothing to prompt for; without it JSON mode is a
+    // usage error rather than a prompt.
+    check(
+        "template save",
+        &["template", "save", "--name", "json-contract-template"],
+    );
     // 0.31.10 printed one success document per detected harness; the run
     // is a dry run so nothing on this machine is configured.
     check("add", &["add", "--dry-run", "--all"]);

@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 
-use crate::printer::Printer;
+use crate::printer::{Format, Printer};
 
 fn prompt(msg: &str) -> String {
     print!("{}", msg);
@@ -12,7 +12,17 @@ fn prompt(msg: &str) -> String {
     input.trim().to_string()
 }
 
-pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+const DEFAULT_COMMAND: &str = "echo hello treeship";
+
+pub fn run(config: Option<&str>, outer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    // A JSON consumer cannot answer a prompt and wants one document: the
+    // sub-commands run silently with the default command, nothing is
+    // uploaded, and one document reports the run. (0.31.11 re-test, N-2:
+    // prompt text used to be mixed into the JSON.)
+    let json = outer.format == Format::Json;
+    let quiet = Printer::new(Format::Text, true, outer.no_color);
+    let printer: &Printer = if json { &quiet } else { outer };
+
     printer.blank();
     printer.info("  Welcome to Treeship.");
     printer.blank();
@@ -37,6 +47,7 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
     // Step 2: Start session
     printer.info("  Step 2/4  Starting a session...");
     // Close any existing session first
+    let mut closed_previous = false;
     if super::session::load_session().is_some() {
         printer.dim_info("  (closing previous session)");
         let _ = super::session::close(
@@ -47,6 +58,7 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
             config,
             printer,
         );
+        closed_previous = true;
     }
     super::session::start(
         Some("quickstart session".into()),
@@ -60,23 +72,32 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
 
     // Step 3: Wrap a command
     printer.info("  Step 3/4  Wrap a command to record it.");
-    let cmd = prompt("  Enter a command to run (e.g. \"ls -la\"): ");
-    let cmd = if cmd.is_empty() {
-        "echo hello treeship".to_string()
+    let cmd = if json {
+        DEFAULT_COMMAND.to_string()
     } else {
-        cmd
+        let typed = prompt("  Enter a command to run (e.g. \"ls -la\"): ");
+        if typed.is_empty() {
+            DEFAULT_COMMAND.to_string()
+        } else {
+            typed
+        }
     };
 
     let args: Vec<String> = cmd.split_whitespace().map(|s| s.to_string()).collect();
+    let mut wrap_report = serde_json::Value::Null;
     if !args.is_empty() {
-        let wrap_result = super::wrap::run(None, None, None, false, config, &args, printer);
-        match wrap_result {
-            Ok(_) => {
-                printer.blank();
-                printer.success(&format!("Wrapped: {}", cmd), &[]);
-            }
-            Err(e) => {
-                printer.warn(&format!("Wrap failed: {}", e), &[]);
+        if json {
+            wrap_report = wrap_as_json(config, &args);
+        } else {
+            let wrap_result = super::wrap::run(None, None, None, false, config, &args, printer);
+            match wrap_result {
+                Ok(_) => {
+                    printer.blank();
+                    printer.success(&format!("Wrapped: {}", cmd), &[]);
+                }
+                Err(e) => {
+                    printer.warn(&format!("Wrap failed: {}", e), &[]);
+                }
             }
         }
     }
@@ -94,6 +115,22 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
     )?;
 
     printer.blank();
+
+    if json {
+        outer.json(&serde_json::json!({
+            "status": "ok",
+            "ship_id": ctx.config.ship_id,
+            "session": "quickstart session",
+            "closed_previous_session": closed_previous,
+            "command": cmd,
+            "wrap": wrap_report,
+            "receipt": "sealed",
+            "uploaded": false,
+            "hub_attached": ctx.config.is_attached(),
+            "next": "treeship session report",
+        }));
+        return Ok(());
+    }
 
     // Ask about hub upload
     let upload = prompt("  Want to upload it and get a shareable URL? (y/n): ");
@@ -122,4 +159,33 @@ pub fn run(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::e
 
     printer.blank();
     Ok(())
+}
+
+/// Run the wrap step as `treeship --format json wrap -- <cmd>` and return its
+/// document. In-process `wrap` writes the child's output and its own JSON to
+/// this process's stdout, which must hold exactly one document here.
+fn wrap_as_json(config: Option<&str>, args: &[String]) -> serde_json::Value {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => return serde_json::json!({ "ok": false, "error": e.to_string() }),
+    };
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(["--format", "json"]);
+    if let Some(cfg) = config {
+        cmd.args(["--config", cfg]);
+    }
+    cmd.arg("wrap").arg("--").args(args);
+    match cmd.output() {
+        Ok(out) => match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+            Ok(mut doc) => {
+                doc["ok"] = serde_json::json!(out.status.success());
+                doc
+            }
+            Err(_) => serde_json::json!({
+                "ok": false,
+                "error": String::from_utf8_lossy(&out.stderr).trim(),
+            }),
+        },
+        Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+    }
 }

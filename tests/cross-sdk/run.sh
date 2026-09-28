@@ -100,7 +100,11 @@ fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 NODE
 
 echo "==> building TS SDK against local core-wasm" >&2
-(cd "$SDK_TS_DIR" && rm -f package-lock.json && rm -rf node_modules/@treeship/core-wasm && npm install --no-audit --no-fund --silent && npm run build --silent)
+# --legacy-peer-deps: with the lockfile removed, npm 10 (Node 22) re-resolves
+# vitest 4's optional peer dependencies and fails with no message under
+# --silent. `npm ci` from the committed lockfile is unaffected; this install
+# has to drop the lockfile to pick up the local core-wasm tarball.
+(cd "$SDK_TS_DIR" && rm -f package-lock.json && rm -rf node_modules/@treeship/core-wasm && npm install --no-audit --no-fund --silent --legacy-peer-deps && npm run build --silent)
 
 # 3. Generate corpus.
 echo "==> generating test vectors" >&2

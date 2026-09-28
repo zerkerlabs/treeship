@@ -893,6 +893,16 @@ pub fn stop(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
         PidFile::Live(p) => p,
         PidFile::Stale(p) => {
             let _ = std::fs::remove_file(pid_path(&ts));
+            if printer.format == crate::printer::Format::Json {
+                printer.json(&serde_json::json!({
+                    "status": "ok",
+                    "running": false,
+                    "stopped": false,
+                    "stale_pid_removed": p,
+                    "message": "daemon is not running (stale pid file removed)",
+                }));
+                return Ok(());
+            }
             printer.dim_info(&format!(
                 "  daemon is not running (stale pid file for {p} removed)"
             ));
@@ -906,6 +916,15 @@ pub fn stop(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
             .into());
         }
         PidFile::Absent => {
+            if printer.format == crate::printer::Format::Json {
+                printer.json(&serde_json::json!({
+                    "status": "ok",
+                    "running": false,
+                    "stopped": false,
+                    "message": "daemon is not running",
+                }));
+                return Ok(());
+            }
             printer.dim_info("  daemon is not running");
             return Ok(());
         }

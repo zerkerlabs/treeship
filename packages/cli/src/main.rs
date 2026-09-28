@@ -236,7 +236,7 @@ enum Command {
     /// Examples:
     ///   treeship trust list
     ///   treeship trust add hub_zerker ed25519:<pubkey> --kind hub_checkpoint
-    ///   treeship trust add ship_acme  ed25519:<pubkey> --kind cert_issuer --label "ACME ship"
+    ///   treeship trust add key_a1b2c3d4e5f6a7b8 ed25519:<pubkey> --kind cert_issuer --label "ACME cert issuer"
     ///   treeship trust remove hub_zerker
     #[command(subcommand)]
     Trust(TrustCommand),
@@ -2949,7 +2949,7 @@ enum TrustCommand {
     ///
     /// Examples:
     ///   treeship trust add hub_zerker ed25519:<b64> --kind hub_checkpoint
-    ///   treeship trust add ship_acme  ed25519:<b64> --kind cert_issuer --label "ACME ship"
+    ///   treeship trust add key_a1b2c3d4e5f6a7b8 ed25519:<b64> --kind cert_issuer --label "ACME cert issuer"
     Add(TrustAddArgs),
 
     /// Remove a trust root by `key_id` (across all kinds).
@@ -3146,6 +3146,10 @@ struct HubUnpublishArgs {
     /// A short public reason (at most 200 characters), shown with the 410
     #[arg(long, value_name = "TEXT")]
     reason: Option<String>,
+    /// Skip the confirmation. Required off a terminal and with --format json:
+    /// the takedown is permanent
+    #[arg(long)]
+    yes: bool,
 }
 
 #[derive(Args)]
@@ -4226,6 +4230,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 &a.session_id,
                 a.hub.as_deref(),
                 a.reason.as_deref(),
+                a.yes,
                 cli.config.as_deref(),
                 printer,
             ),

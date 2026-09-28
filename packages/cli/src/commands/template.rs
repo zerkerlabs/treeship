@@ -327,9 +327,15 @@ pub fn save(name: Option<String>, printer: &Printer) -> Result<(), Box<dyn std::
 
     let contents = std::fs::read_to_string(&config_path)?;
 
-    // Ask for name if not provided
+    // Ask for name if not provided; a JSON consumer cannot answer a prompt,
+    // and the prompt text used to land on stdout in front of the document.
     let template_name = match name {
         Some(n) => n,
+        None if printer.format == crate::printer::Format::Json => {
+            return Err(crate::exit::usage(
+                "template name is required: pass --name <NAME> (JSON mode does not prompt)",
+            ));
+        }
         None => {
             use std::io::{self, Write};
             print!("Template name: ");
