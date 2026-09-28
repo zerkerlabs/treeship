@@ -85,12 +85,12 @@ cmd_prepare() {
     fi
   done
   echo
-  echo "  IMPORTANT: these lockfiles are now incomplete on purpose -- the resolved"
+  echo "  NOTE: these lockfiles are now incomplete on purpose -- the resolved"
   echo "  entries still name the previous version, because $VERSION has no tarball"
-  echo "  to hash yet. 'npm ci' will refuse until you run, after publish:"
-  echo "        scripts/release.sh refresh-lockfiles"
-  echo "  That is a required release step, not cleanup. Skipping it leaves main"
-  echo "  unbuildable for JS."
+  echo "  to hash yet. After publish, the release workflow's refresh-lockfiles job"
+  echo "  runs 'scripts/release.sh refresh-lockfiles' and opens the lockfile PR;"
+  echo "  merge it (push an empty commit or close/reopen it first so checks run)."
+  echo "  Until it merges, 'npm ci' refuses in the JS packages. See RELEASING.md."
 
   echo
   echo "Folding changelog.d/ fragments into CHANGELOG.md..."
