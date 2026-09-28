@@ -938,6 +938,7 @@ jobs:
   refresh-lockfiles:
     needs: publish-smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
       pull-requests: write
@@ -978,7 +979,13 @@ jobs:
           git add -- '*package-lock.json'
           git commit -m "chore: refresh npm lockfiles for ${VERSION}" \
             -m "Resolved entries and integrity hashes for the packages published from v${VERSION}. Opened by the release workflow; see RELEASING.md."
-          git push -u origin "$BRANCH"
+          # A re-run while the PR from the first run is still open must
+          # update that PR, not fail on the existing branch.
+          git push --force-with-lease -u origin "$BRANCH"
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            echo "lockfile PR for ${VERSION} is already open; branch updated"
+            exit 0
+          fi
           gh pr create --base main --head "$BRANCH" \
             --title "chore: refresh npm lockfiles for ${VERSION}" \
             --body "$(printf '%s\n\n%s\n\n%s' \
