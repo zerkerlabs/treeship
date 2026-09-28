@@ -216,6 +216,11 @@ def line_findings(
     cover = covered_lines(lines)
     clean_lines = prose_only(text).splitlines()
     for i, line in enumerate(lines):
+        # In a Rust source (main.rs is scanned for its `--help` text) only
+        # the doc comments are prose a person reads; identifiers such as
+        # `max_unwitnessed` and the code that passes them are not claims.
+        if rel.endswith(".rs") and not line.lstrip().startswith(("///", "//!")):
+            continue
         clean = clean_lines[i] if i < len(clean_lines) else line
         low = clean.lower()
         hits = [p for p in BANNED_PHRASES if p in low]
