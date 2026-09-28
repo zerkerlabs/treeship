@@ -138,7 +138,9 @@ treeship/
     release.yml            Build binaries, GitHub Release, npm + crates.io publish
 
   scripts/
-    release.sh             Bumps version across all 8+ package files
+    release.sh             Bumps version across all 8+ package files (order of
+                           operations and the lockfile rule: RELEASING.md)
+    hub-deploy.sh          railway up with the commit stamped into /v1/version
 
   examples/                Usage examples
   test-vectors/            Cryptographic test fixtures

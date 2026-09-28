@@ -482,7 +482,7 @@ paths:
   /v1/receipt/{session_id}:
     put:
       summary: Publish a session receipt
-      description: DPoP authenticated. Idempotent upload of a canonical Session Receipt; served afterward at the permanent public URL.
+      description: DPoP authenticated. Write-once upload of a canonical Session Receipt (idempotent only for a byte-identical replay); served afterward at a public URL until the publishing dock takes it down.
       operationId: putReceipt
       parameters:
         - name: session_id
@@ -510,12 +510,20 @@ paths:
                   events:      { type: integer }
                   uploaded_at: { type: integer }
         '400':
-          description: Missing session_id, empty body, invalid JSON, or unsupported receipt type
+          description: Missing or oversized session_id, empty body, invalid JSON, unsupported receipt type, or session_id mismatch between path and body
         '401':
           description: DPoP authentication failed
+        '403':
+          description: session_id is owned by another dock
+        '409':
+          description: This dock already sealed a different receipt for this session_id (receipts are write-once; a byte-identical replay succeeds instead)
+        '410':
+          description: The publishing dock already took this receipt down; the session_id is retired and is never refilled
+        '413':
+          description: Receipt body over the 10 MB limit
     get:
       summary: Fetch a session receipt
-      description: Public, permanent URL. Returns the raw receipt JSON verbatim; cached immutably.
+      description: Public URL. Returns the raw receipt JSON verbatim; cached immutably until the publishing dock takes it down.
       operationId: getReceipt
       security: []
       parameters:
@@ -526,8 +534,12 @@ paths:
       responses:
         '200':
           description: The receipt JSON, verbatim
+        '400':
+          description: Missing or oversized session_id
+        '403':
+          description: A session row exists but no receipt has been uploaded yet (session still open)
         '404':
-          description: No receipt uploaded for this session
+          description: No session with this id
         '410':
           description: The publishing dock took this receipt down; the body is gone and the id is retired
           content:
@@ -567,6 +579,8 @@ paths:
                   session_id:    { type: string }
                   status:        { type: string, example: tombstoned }
                   tombstoned_at: { type: integer }
+        '400':
+          description: Missing or oversized session_id in path
         '401':
           description: DPoP authentication failed
         '403':
