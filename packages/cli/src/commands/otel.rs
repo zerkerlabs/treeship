@@ -126,6 +126,18 @@ pub fn export_artifact(
 
 #[cfg(feature = "otel")]
 pub fn enable(printer: &Printer) {
+    if printer.format == crate::printer::Format::Json {
+        // Guidance is still a result: one document, not zero bytes.
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "message": "otel is controlled by environment variables; export these",
+            "env": {
+                "TREESHIP_OTEL_ENABLED": "true",
+                "TREESHIP_OTEL_ENDPOINT": "http://localhost:4318",
+            },
+        }));
+        return;
+    }
     printer.blank();
     printer.info("  otel is controlled by environment variables:");
     printer.blank();
@@ -138,6 +150,15 @@ pub fn enable(printer: &Printer) {
 
 #[cfg(feature = "otel")]
 pub fn disable(printer: &Printer) {
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "message": "otel export is controlled by environment variables; set and unset these",
+            "env": { "TREESHIP_OTEL_ENABLED": "false" },
+            "unset": ["TREESHIP_OTEL_ENDPOINT"],
+        }));
+        return;
+    }
     printer.blank();
     printer.info("  to disable otel export:");
     printer.blank();

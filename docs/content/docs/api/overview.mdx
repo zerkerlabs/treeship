@@ -37,7 +37,8 @@ Hub is optional infrastructure. Artifact validity never depends on it -- the sig
 2. **Shareable verification URLs** at `treeship.dev/verify/{artifact_id}`
 3. **Transparency log anchoring** via Sigstore Rekor, for every pushed artifact except one signed only by an agent key (reported as skipped with a reason, not silently unanchored) {/* claims:rekor-artifact-anchoring */}
 
-Hub does not sign, modify, or interpret artifacts. It stores and serves the DSSE envelopes created locally. The WASM verifier on the verification page runs client-side, so Hub cannot forge a passing result.
+{/* claims:hub-cannot-forge-signed-verification */}
+Hub does not sign, modify, or interpret artifacts. It stores and serves the DSSE envelopes created locally. The WASM verifier on the verification page checks a named artifact's signature client-side against your own trust roots, so Hub cannot forge a passing result for it -- that's narrower than a bare Session Receipt fetch, which carries no signature at all (see [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get)).
 
 ## Authentication
 

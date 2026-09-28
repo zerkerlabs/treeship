@@ -116,15 +116,27 @@ fn the_receipt_names_home_files_with_a_tilde() {
         &meta,
     ]);
     assert!(out.status.success(), "{}", text(&out));
+    // The operator's own summary is redacted too, and close says so.
+    let summary = format!(
+        "fixed the parser in {}/src/proj/notes.txt",
+        home.path().display()
+    );
     let out = run(&[
         "session",
         "close",
+        "--summary",
+        &summary,
         "--receipt-dir",
         project.join("r").to_str().unwrap(),
         "--format",
         "json",
     ]);
     assert!(out.status.success(), "{}", text(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--summary were rewritten as ~/"),
+        "close did not say the summary was rewritten:\n{}",
+        text(&out)
+    );
     let pkg = std::fs::read_dir(project.join("r"))
         .unwrap()
         .flatten()
@@ -136,6 +148,10 @@ fn the_receipt_names_home_files_with_a_tilde() {
     assert!(
         !receipt.contains(home_str.as_ref()),
         "receipt carries the home path:\n{receipt}"
+    );
+    assert!(
+        receipt.contains("fixed the parser in ~/src/proj/notes.txt"),
+        "the summary is not in the receipt in its redacted form:\n{receipt}"
     );
     assert!(
         !receipt.contains("/Users/") && !receipt.contains("/home/"),
