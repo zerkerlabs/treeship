@@ -3146,6 +3146,10 @@ struct HubUnpublishArgs {
     /// A short public reason (at most 200 characters), shown with the 410
     #[arg(long, value_name = "TEXT")]
     reason: Option<String>,
+    /// Skip the confirmation. Required off a terminal and with --format json:
+    /// the takedown is permanent
+    #[arg(long)]
+    yes: bool,
 }
 
 #[derive(Args)]
@@ -4226,6 +4230,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 &a.session_id,
                 a.hub.as_deref(),
                 a.reason.as_deref(),
+                a.yes,
                 cli.config.as_deref(),
                 printer,
             ),
