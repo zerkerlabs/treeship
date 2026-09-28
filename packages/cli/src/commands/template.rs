@@ -333,7 +333,7 @@ pub fn save(name: Option<String>, printer: &Printer) -> Result<(), Box<dyn std::
         Some(n) => n,
         None if printer.format == crate::printer::Format::Json => {
             return Err(crate::exit::usage(
-                "template name is required: pass it as the argument (JSON mode does not prompt)",
+                "template name is required: pass --name <NAME> (JSON mode does not prompt)",
             ));
         }
         None => {

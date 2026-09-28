@@ -194,7 +194,6 @@ const SKIP: &[(&str, &str)] = &[
     ("session report", "uploads to a hub"),
     ("setup", "detects and instruments installed agents"),
     ("template apply", "writes config.yaml"),
-    ("template save", "interactive"),
     ("template validate", "needs a file; preview is covered"),
     ("ui", "needs a terminal"),
     ("verify-capability", "needs a card"),
@@ -411,6 +410,12 @@ fn every_json_capable_command_emits_json() {
     check("daemon stop", &["daemon", "stop"]);
     ship.attach_local_hub("http://127.0.0.1:9");
     check("hub open", &["hub", "open", "--no-open"]);
+    // With --name there is nothing to prompt for; without it JSON mode is a
+    // usage error rather than a prompt.
+    check(
+        "template save",
+        &["template", "save", "--name", "json-contract-template"],
+    );
     // 0.31.10 printed one success document per detected harness; the run
     // is a dry run so nothing on this machine is configured.
     check("add", &["add", "--dry-run", "--all"]);
