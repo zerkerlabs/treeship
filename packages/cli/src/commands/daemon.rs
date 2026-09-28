@@ -442,16 +442,10 @@ fn now_rfc3339_daemon() -> String {
     treeship_core::statements::unix_to_rfc3339(secs)
 }
 
-/// Best-effort host ID derived from `hostname` command.
+/// The same host id the session commands stamp (TREESHIP_HOST_ID, else the
+/// random per-install id at ~/.treeship/host_id, never the hostname).
 fn local_host_id() -> String {
-    std::env::var("TREESHIP_HOST_ID").unwrap_or_else(|_| {
-        std::process::Command::new("hostname")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|h| format!("host_{}", h.trim().replace('.', "_")))
-            .unwrap_or_else(|| "host_unknown".into())
-    })
+    crate::commands::session::local_host_id()
 }
 
 /// Compute a simple content digest for a file (sha256 hex, first 16 chars).

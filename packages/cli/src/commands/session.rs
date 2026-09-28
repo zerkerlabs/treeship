@@ -332,15 +332,49 @@ pub(crate) fn count_chain_artifacts(ctx: &ctx::Ctx, root_id: &str) -> u64 {
 
 /// Get the host ID for the current machine.
 pub(crate) fn local_host_id() -> String {
-    // Use PropagationContext's approach: read from env or derive from hostname
-    std::env::var("TREESHIP_HOST_ID").unwrap_or_else(|_| {
-        std::process::Command::new("hostname")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|h| format!("host_{}", h.trim().replace('.', "_")))
-            .unwrap_or_else(|| "host_unknown".into())
-    })
+    // TREESHIP_HOST_ID names the host outright. Otherwise a random id made
+    // once per install and kept at ~/.treeship/host_id: stable on one
+    // machine so a receipt's hosts group, and carrying nothing about the
+    // machine. A hostname digest was tried first and reversed from a guess
+    // list of common machine names in seconds (0.31.11 re-test, N-41).
+    std::env::var("TREESHIP_HOST_ID")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(treeship_core::session::context::read_host_id_file)
+        .or_else(create_host_id_file)
+        .unwrap_or_else(|| "host_unknown".into())
+}
+
+/// Mint `host_` + 16 hex characters from the OS random source and keep it at
+/// ~/.treeship/host_id (0600, never through a link). Several sessions
+/// starting at once on a fresh install race here: the file is created
+/// exclusively, and a loser reads the winner's id back, so one install has
+/// one id. None when there is no HOME or nothing can be written or read;
+/// the caller then says `host_unknown`. `init` calls this too, so the race
+/// only exists on installs from before the file.
+pub(crate) fn create_host_id_file() -> Option<String> {
+    use rand::RngCore;
+    let path = treeship_core::session::context::host_id_file()?;
+    let mut bytes = [0u8; 8];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let id = format!("host_{}", hex::encode(bytes));
+    if let Some(dir) = path.parent() {
+        if !dir.is_dir() {
+            crate::safe_fs::create_dir_all_nofollow(dir).ok()?;
+        }
+    }
+    crate::safe_fs::refuse_symlinks_under_treeship(&path).ok()?;
+    match treeship_core::fs_safe::create_exclusive_nofollow(
+        &path,
+        format!("{id}\n").as_bytes(),
+        0o600,
+    ) {
+        Ok(()) => Some(id),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            treeship_core::session::context::read_host_id_file()
+        }
+        Err(_) => None,
+    }
 }
 
 /// Create a base SessionEvent for this session.
