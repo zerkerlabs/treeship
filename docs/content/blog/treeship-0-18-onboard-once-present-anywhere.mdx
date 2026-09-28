@@ -60,7 +60,7 @@ treeship history <agent> --class countersigned
 
 `verify-presentation` walks the `agent_cert.v1` chain to a pinned ship root, with the pubkey always taken from your trust store and never from the wire. It enforces the validity window fail-closed, honors authorized revocations, re-checks the staple's checkpoint signature and inclusion proof, and reports the staple age as an explicit bound. In challenge mode the response is checked only against the subject key the card verification itself established. A replayed response, a response signed by a non-card key, or a tampered timestamp each reject with a specific reason.
 
-`verify-profile` rebuilds the log's first `tree_size` leaves at the pinned checkpoint, cross-checks the root against the pin, recomputes every field through the same aggregation path as `profile`, and compares. A match grades the profile `checked`. A mismatch names the differing field and exits nonzero. `history` re-verifies every `session.v1` envelope on your machine and re-proves each anchored entry's inclusion offline.
+`verify-profile` rebuilds the log's first `tree_size` leaves at the pinned checkpoint, cross-checks the root against the pin, recomputes every field through the same aggregation path as `profile`, and compares. A match grades the profile `checked`. A mismatch names the differing field and exits nonzero. `history` re-verifies every `session.v1` envelope on your machine and re-proves each anchored entry's inclusion offline. {/* claims:transparency-log-client-reverified */}
 
 ## What it does not do
 

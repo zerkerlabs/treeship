@@ -545,9 +545,11 @@ impl ReceiptComposer {
             duration_ms,
             ship_id: parse_ship_id_from_actor(&manifest.actor),
             workflow_ref: manifest.workflow_ref.clone(),
+            // The operator's summary is free text; a home path in it is
+            // redacted like every other field (0.31.11 re-test, N-28).
             narrative: manifest.summary.as_ref().map(|s| Narrative {
                 headline: manifest.name.clone(),
-                summary: Some(s.clone()),
+                summary: Some(crate::session::redact_home_path(s)),
                 review: None,
             }),
             total_tokens_in,
@@ -1038,7 +1040,10 @@ fn event_summary(et: &super::event::EventType) -> Option<String> {
     use super::event::EventType::*;
     match et {
         SessionStarted => Some("Session started".into()),
-        SessionClosed { summary, .. } => summary.clone().or(Some("Session closed".into())),
+        SessionClosed { summary, .. } => summary
+            .as_ref()
+            .map(|s| crate::session::redact_home_path(s))
+            .or(Some("Session closed".into())),
         AgentSpawned { reason, .. } => reason.clone(),
         AgentHandoff {
             from_agent_instance_id,
@@ -1047,19 +1052,36 @@ fn event_summary(et: &super::event::EventType) -> Option<String> {
         } => Some(format!(
             "{from_agent_instance_id} -> {to_agent_instance_id}"
         )),
-        AgentNote { text } => text.clone(),
+        // A note is free text an agent wrote; a path in it is redacted like
+        // any other, as is the operator's `session close --summary`.
+        AgentNote { text } => text.as_ref().map(|t| crate::session::redact_home_path(t)),
         AgentCalledTool { tool_name, .. } => Some(format!("Called {tool_name}")),
-        AgentReadFile { file_path, .. } => Some(format!("Read {file_path}")),
-        AgentWroteFile { file_path, .. } => Some(format!("Wrote {file_path}")),
+        // The same `~/` form the file ledger uses: a summary is published
+        // with the receipt too.
+        AgentReadFile { file_path, .. } => Some(format!(
+            "Read {}",
+            crate::session::redact_home_path(file_path)
+        )),
+        AgentWroteFile { file_path, .. } => Some(format!(
+            "Wrote {}",
+            crate::session::redact_home_path(file_path)
+        )),
         AgentOpenedPort { port, .. } => Some(format!("Opened port {port}")),
-        AgentConnectedNetwork { destination, .. } => Some(format!("Connected to {destination}")),
-        AgentStartedProcess { process_name, .. } => Some(format!("Started {process_name}")),
+        AgentConnectedNetwork { destination, .. } => Some(format!(
+            "Connected to {}",
+            crate::session::redact_home_path(destination)
+        )),
+        AgentStartedProcess { process_name, .. } => Some(format!(
+            "Started {}",
+            crate::session::redact_home_path(process_name)
+        )),
         AgentCompletedProcess {
             process_name,
             exit_code,
             ..
         } => Some(format!(
-            "Completed {process_name} (exit {})",
+            "Completed {} (exit {})",
+            crate::session::redact_home_path(process_name),
             exit_code.unwrap_or(-1)
         )),
         AgentCompleted { termination_reason } => termination_reason

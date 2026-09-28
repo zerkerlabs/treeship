@@ -25,6 +25,7 @@ fn wrap_json_emits_one_parseable_document_on_stdout() {
 
     let run = |args: &[&str]| {
         let mut cmd = Command::new(cli_path());
+        cmd.env_remove("TREESHIP_CONFIG");
         cmd.current_dir(root).env("HOME", root).args(args);
         cmd.output().expect("run treeship")
     };
@@ -99,6 +100,7 @@ fn wrap_human_mode_still_passes_child_stdout_through() {
 
     let run = |args: &[&str]| {
         let mut cmd = Command::new(cli_path());
+        cmd.env_remove("TREESHIP_CONFIG");
         cmd.current_dir(root).env("HOME", root).args(args);
         cmd.output().expect("run treeship")
     };

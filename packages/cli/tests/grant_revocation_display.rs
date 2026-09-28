@@ -23,6 +23,7 @@ fn revoked_grants_are_marked_in_show_and_list() {
 
     let command = |args: &[&str]| {
         let mut cmd = Command::new(cli_path());
+        cmd.env_remove("TREESHIP_CONFIG");
         cmd.current_dir(root).env("HOME", root).args(args);
         cmd.output().expect("run treeship")
     };

@@ -201,6 +201,50 @@ struct Case {
 const DEAD_COLLECTOR: &str = "http://127.0.0.1:1";
 
 const CASES: &[Case] = &[
+    // --- 0.31.11: the wrapped command's exit code, in every format --------
+    // `--format json wrap -- npm test && deploy` deployed after failing
+    // tests: the JSON branch returned 0 with the code only in the document.
+    Case {
+        name: "wrap propagates the child's exit code (text)",
+        args: &["wrap", "--", "sh", "-c", "exit 7"],
+        env: &[],
+        expect: 7,
+    },
+    Case {
+        name: "wrap propagates the child's exit code (--format json, before)",
+        args: &["--format", "json", "wrap", "--", "sh", "-c", "exit 7"],
+        env: &[],
+        expect: 7,
+    },
+    Case {
+        name: "wrap propagates the child's exit code (--format json, after)",
+        args: &["wrap", "--format", "json", "--", "sh", "-c", "exit 7"],
+        env: &[],
+        expect: 7,
+    },
+    Case {
+        name: "wrap propagates the child's exit code (--quiet)",
+        args: &["--quiet", "wrap", "--", "sh", "-c", "exit 7"],
+        env: &[],
+        expect: 7,
+    },
+    // A registered predicate whose payload fails its schema is the call
+    // refused as written (overview.mdx row 4), exit 4; 0.31.10 exited 1.
+    Case {
+        name: "attest receipt with a payload that fails its registered schema",
+        args: &[
+            "attest",
+            "receipt",
+            "--system",
+            "system://x",
+            "--kind",
+            "memory.write.v1",
+            "--payload",
+            "{\"schema\":\"memory.write.v1\"}",
+        ],
+        env: &[],
+        expect: EXIT_USAGE_COMMAND,
+    },
     // --- 0.31.9 exit-0 failures (CLI-6) ------------------------------------
     Case {
         name: "approval status on a grant nobody has heard of",

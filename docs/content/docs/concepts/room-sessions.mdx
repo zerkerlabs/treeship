@@ -286,6 +286,8 @@ TREESHIP_HOST_ID=host_...
 
 Tools should treat these values as context, not trust roots. Signed artifacts and verifier checks remain authoritative.
 
+`host_id` never carries the machine name. Unset, it is a random id minted once per install and kept at `~/.treeship/host_id` (`host_` plus 16 hex characters): stable on one machine, so a receipt's hosts group, and unrelated to the hostname, so nothing about the machine can be read or guessed back from it. Set `TREESHIP_HOST_ID` to name the host yourself.
+
 ## Hub API sketch
 
 ```http
@@ -335,7 +337,7 @@ The HTML report should:
 {/* claims:checkpoint-root-anchoring */}
 - show the room verdict before the narrative
 - keep participant identities visible on every event
-- distinguish live, closed, anchored, missing, and redacted states
+- distinguish live, closed, anchored, missing, and redacted states {/* claims:rekor-artifact-anchoring */}
 - render handoffs as graph edges and timeline rows
 - make approval failures visually prominent
 - support offline viewing from the package

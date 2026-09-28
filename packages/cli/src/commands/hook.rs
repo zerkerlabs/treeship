@@ -15,12 +15,21 @@ use crate::{ctx, printer::Printer};
 /// a malicious .treeship/config.yaml in a cloned repo from being loaded.
 fn find_project_config() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
+    // The walk stops at the home directory: a project lives under it, and
+    // nothing above it (`/Users`, `/`) is the person's to configure. A
+    // config planted there would otherwise run on every prompt.
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .and_then(|h| std::fs::canonicalize(&h).ok().or(Some(h)));
     loop {
         let config_yaml = dir.join(".treeship").join("config.yaml");
         let config_json = dir.join(".treeship").join("config.json");
         // Only trust config.yaml if there's also a config.json (initialized treeship)
         if config_yaml.exists() && config_json.exists() {
             return Some(config_yaml);
+        }
+        if home.as_deref() == Some(dir.as_path()) {
+            return None;
         }
         if !dir.pop() {
             return None;
@@ -94,12 +103,15 @@ pub fn pre(command: &str, printer: &Printer) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// Pending state older than this, from a hook that names no command, is dropped.
+const STALE_PENDING_MS: u64 = 24 * 60 * 60 * 1000;
+
 /// Post-hook: called after a command completes.
 ///
 /// Reads .pending_hook, creates a receipt, writes .last, cleans up.
 pub fn post(
     exit_code: i32,
-    _command: Option<&str>,
+    command_arg: Option<&str>,
     config_override: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -122,6 +134,18 @@ pub fn post(
     let _ = std::fs::remove_file(&pending_path);
 
     let command = pending["command"].as_str().unwrap_or("unknown").to_string();
+    // The pending state belongs to the command `pre` matched. A `post` that
+    // names a different command has found a stale `pre` whose own `post`
+    // never ran; recording it would attribute the old command to this run.
+    // The state was removed above, and nothing is recorded.
+    if let Some(given) = command_arg {
+        if crate::redact::redact_command(given) != command {
+            printer.note(&format!(
+                "  stale hook state for `{command}` dropped; `{given}` was not matched by a pre-hook"
+            ));
+            return Ok(());
+        }
+    }
     let label = pending["label"].as_str().unwrap_or("action").to_string();
     let start_ms = pending["start_ms"].as_u64().unwrap_or(0);
     let git_before = pending["git_head"].as_str().map(|s| s.to_string());
@@ -130,8 +154,33 @@ pub fn post(
     let now_ms = epoch_ms();
     let elapsed_ms = now_ms.saturating_sub(start_ms);
 
-    // Open treeship context (loads keys + storage)
-    let ctx = ctx::open(config_override)?;
+    // A hook installed before 0.31.11 passes no command. Without one the
+    // only tell for stale state is age: a `pre` a day old whose `post`
+    // never ran belongs to a shell that is gone.
+    if command_arg.is_none() && elapsed_ms > STALE_PENDING_MS {
+        printer.note(&format!(
+            "  stale hook state for `{command}` dropped (older than 24h); run `treeship install` to update the shell hook"
+        ));
+        return Ok(());
+    }
+
+    // Which workspace records this hook? An explicit --config wins. Else,
+    // when a session is active in the project the hook found (session.json
+    // beside its config.yaml), that project's own config: the session was
+    // started there, and an exported TREESHIP_CONFIG used to send the
+    // hook's receipt to another store. Otherwise the normal resolution
+    // (TREESHIP_CONFIG, then discovery). The project config is opened as
+    // DISCOVERED, never as explicit: the shell hook runs on every prompt,
+    // so a cloned repository's config.json gets every discovery check
+    // (stores inside its .treeship, no foreign extends, no links) before a
+    // key is touched.
+    let project_json = config_path.with_file_name("config.json");
+    let session_here = ts_dir.join("session.json").is_file();
+    let ctx = match config_override {
+        Some(explicit) => ctx::open(Some(explicit))?,
+        None if session_here && project_json.is_file() => ctx::open_discovered(&project_json)?,
+        None => ctx::open(None)?,
+    };
 
     let actor_uri = {
         // Try to get actor from project config

@@ -27,7 +27,8 @@ Artifact IDs are derived from the artifact's content:
 art_ + hex(sha256(PAE bytes)[:16])
 ```
 
-The ID is not assigned. It is computed. Change one byte of the artifact and the ID changes. There is no way to modify an artifact while preserving its ID.
+{/* claims:receipt-tamper-evidence */}
+The ID is not assigned. It is computed from the signed payload bytes. Change one byte of that signed payload and the ID changes -- there is no way to modify it while preserving the ID. That's tamper-*evident*, not tamper-proof or immutable: fields outside the signed payload can still change on disk, and a key holder can always sign a new artifact.
 
 <Callout type="info">
 PAE (Pre-Authentication Encoding) is the DSSE standard for encoding payload type and payload before signing. The ID is derived from the same bytes that are signed.
@@ -94,7 +95,7 @@ If the action's actor / action / subject falls outside the signed scope, verific
 
 ## Rekor anchoring
 
-When you push to the Hub, the Hub submits the artifact to Sigstore's Rekor transparency log and returns Rekor's own log entry. The CLI checks that entry and stores it on the local record.
+When you push to the Hub, the Hub submits the artifact to Sigstore's Rekor transparency log and returns Rekor's own log entry -- unless the artifact is signed only by an agent key, which the hub reports as skipped with a reason rather than anchoring. The CLI checks a returned entry and stores it on the local record.
 
 Rekor adds what a local chain cannot: third-party proof of time. A local chain proves order (A before B before C). A Rekor entry proves that A existed by the time Rekor recorded it, according to a public log that Treeship does not run.
 

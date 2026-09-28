@@ -21,7 +21,7 @@ A Treeship receipt is a narrow instrument, and the narrowness is what makes it h
 - **The bytes have not changed since signing.** The artifact id is derived from the signed bytes. Edit one character and verification fails.
 - **A specific key signed it.** Ed25519 over a DSSE envelope. Not "someone at this company"; that key, those bytes.
 - **Its place in the chain.** Each receipt names its parent inside the signed payload. Remove, reorder or splice, and everything after it fails.
-- **Its inclusion in a checkpoint**, when one exists. A Merkle inclusion proof shows the artifact was in the log when the checkpoint was published, so it cannot be back-dated into anchored history.
+- **Its inclusion in a checkpoint**, when one exists. A Merkle inclusion proof shows the artifact was in the log when the checkpoint was published, so it cannot be back-dated into anchored history. {/* claims:transparency-log-client-reverified */}
 - **Which input produced which output**, as hashes you can recompute.
 - **Which binary ran, and under whose mandate**, for wrapped commands and v2 actions.
 - **All of it offline.** The artifact and a public key. If our servers vanish, every receipt still verifies.

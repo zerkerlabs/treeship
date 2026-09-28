@@ -138,7 +138,9 @@ treeship/
     release.yml            Build binaries, GitHub Release, npm + crates.io publish
 
   scripts/
-    release.sh             Bumps version across all 8+ package files
+    release.sh             Bumps version across all 8+ package files (order of
+                           operations and the lockfile rule: RELEASING.md)
+    hub-deploy.sh          railway up with the commit stamped into /v1/version
 
   examples/                Usage examples
   test-vectors/            Cryptographic test fixtures
@@ -197,7 +199,12 @@ Enforced at verify time. Prevents approval reuse.
 
 ## CLI Commands
 
-```bash
+A compact map, not a script -- several lines use `a|b` to name two
+subcommands on one line (`session start|close` means `session start` and
+`session close`) and `attest approval` needs a scope flag to actually run.
+See each command's own reference page for a runnable example.
+
+```text
 treeship init                    # Initialize ship (generates keypair)
 treeship install                 # Install shell hooks
 treeship wrap -- <cmd>           # Wrap command, auto-attest

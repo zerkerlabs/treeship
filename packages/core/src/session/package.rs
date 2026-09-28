@@ -2085,7 +2085,10 @@ fn push_approval_evidence(
 /// CLI-18): an approval whose nonce a chained action consumes in its signed
 /// `approvalNonce`; a participant whose row passed (bound to a sealed
 /// invitation and countersigned by its issuer); the invitation such a
-/// participant redeems. The referencing signer must be authenticated here
+/// participant redeems; an invitation an authenticated signer issued for this
+/// very session, joined or not (its signed `session_ref` is the reference; an
+/// honest host that invited nobody used to fail `--strict` here, 0.31.11
+/// re-test N-39). The referencing signer must be authenticated here
 /// (pinned, own, or vouched by the session.close), so an attacker's own
 /// signed action cannot vouch for a smuggled approval. Package order stays
 /// unproven either way, and the row says so. Unbound ones WARN (`--strict`
@@ -2132,6 +2135,14 @@ fn push_chain_completeness(
             .any(|(_, inv, host)| inv == id && authenticated.contains(host))
         {
             return Some("redeemed invitation");
+        }
+        // An invitation this session's host signed for this session names
+        // the session in its signed payload; whether anyone redeemed it is
+        // not a completeness question.
+        if sealed.invitations.iter().any(|(inv, sess, k)| {
+            inv == id && sess == &receipt.session.id && authenticated.contains(k)
+        }) {
+            return Some("invitation issued for this session");
         }
         // The host's signed record that a bound participant answered its
         // live challenge, for this session.
@@ -2396,6 +2407,8 @@ struct SealedSet {
     /// Verified `session-liveness` records: (artifact id, participant_ref,
     /// session_ref, signer key id).
     liveness: Vec<(String, String, String, String)>,
+    /// Verified invitations: (artifact id, session_ref, signer key id).
+    invitations: Vec<(String, String, String)>,
 }
 
 /// A sealed `session.start` / `session.close` action whose signature, id and
@@ -2551,6 +2564,7 @@ fn verify_sealed_envelopes(
     // still passes after the redemption count.
     let mut participant_rows: Vec<(usize, String, String, String)> = Vec::new();
     let mut liveness: Vec<(String, String, String, String)> = Vec::new();
+    let mut invitations: Vec<(String, String, String)> = Vec::new();
     // Each sealed id once: the same artifact sealed twice would otherwise
     // pass twice (and, for a participant, count as two joins).
     let mut seen_ids: BTreeSet<&str> = BTreeSet::new();
@@ -2685,6 +2699,15 @@ fn verify_sealed_envelopes(
                                 sig.keyid.clone(),
                             ));
                         }
+                        if envelope.payload_type == crate::statements::payload_type("invitation") {
+                            let session_ref = body
+                                .as_ref()
+                                .and_then(|v| v.get("session_ref"))
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            invitations.push((id.clone(), session_ref, sig.keyid.clone()));
+                        }
                         if !entry.unchained {
                             if let Some(n) = body
                                 .as_ref()
@@ -2812,6 +2835,7 @@ fn verify_sealed_envelopes(
         consumers,
         participants,
         liveness,
+        invitations,
     }
 }
 

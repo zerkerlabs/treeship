@@ -73,6 +73,9 @@ func main() {
 	// CORS — allow treeship.dev frontend to call the API.
 	r.Use(securityHeaders)
 	r.Use(corsMiddleware)
+	// HEAD is answered by the GET handler with the body dropped; the router
+	// used to answer 405.
+	r.Use(middleware.GetHead)
 
 	// Two different limits, because they stop two different things.
 	//
@@ -131,6 +134,8 @@ func main() {
 	// PUT is DPoP-authenticated; GET is fully public and the URL is permanent.
 	r.Put("/v1/receipt/{session_id}", receiptHandlers.PutReceipt)
 	r.Get("/v1/receipt/{session_id}", receiptHandlers.GetReceipt)
+	// A dock takes its own receipt down: 410 Gone from then on.
+	r.Delete("/v1/receipt/{session_id}", receiptHandlers.DeleteReceipt)
 
 	// Per-ship registry endpoints (DPoP-authenticated).
 	r.Get("/v1/ship/agents", shipHandlers.ListAgents)
@@ -324,13 +329,18 @@ func requestOverTLS(r *http.Request) bool {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+		// The allowed origin is echoed, and receipts are cached `public,
+		// immutable`: without Vary a shared cache could hand one origin's
+		// CORS header to another. Set on every response, echoed or not, so
+		// the cache key always includes the Origin.
+		w.Header().Add("Vary", "Origin")
 		if origin == "https://treeship.dev" ||
 			origin == "https://www.treeship.dev" ||
 			origin == "http://localhost:3000" ||
 			origin == "http://localhost:2680" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, DPoP")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 

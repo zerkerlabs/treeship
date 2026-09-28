@@ -172,7 +172,8 @@ To put the receipt in the pull request instead of on a hub, close with `treeship
 
 Treeship sends no telemetry. Nothing phones home: not on install, not on first run, not weekly. Adoption is measured from signals the project already owns (hub activity, repository traffic, release and registry downloads) by [`scripts/adoption-report.py`](scripts/adoption-report.py), each number printed with what it counts and what inflates it.
 
-The Hub stores immutable bytes, serves lookup indices and proofs, and enforces write auth ([DPoP](https://docs.treeship.dev/docs/api/overview)) — it never supplies trust verdicts. Server-side verification was deliberately retired (the endpoint returns `410 Gone`): a verifier you don't run yourself is not a verifier.
+<!-- claims:hub-storage-write-once -->
+The Hub stores write-once bytes -- not immutable, since the publisher can withdraw a receipt -- serves lookup indices and proofs, and enforces write auth ([DPoP](https://docs.treeship.dev/docs/api/overview)) — it never supplies trust verdicts. Server-side verification was deliberately retired (the endpoint returns `410 Gone`): a verifier you don't run yourself is not a verifier.
 
 ## What Treeship proves — and what it cannot
 
@@ -336,7 +337,7 @@ print(f"Outcome: {verified.outcome}, chain: {verified.chain} artifacts")
 Treeship builds on existing primitives rather than inventing cryptography:
 
 - **DSSE** (Dead Simple Signing Envelope) with PAE — compatible with the Sigstore / in-toto ecosystem
-- **Ed25519** (RFC 8032) for all signatures
+- **Ed25519** (RFC 8032) for all signatures except Verifiable Intent, which uses ES256 (P-256) for JWS compatibility
 - **SHA-256** for content addressing and the Merkle tree
 - Signing serializes statements as compact JSON with deterministic (declaration-order) fields — a fixed canonical form, though not full RFC 8785/JCS
 
@@ -357,21 +358,23 @@ The current release is the latest tag on [GitHub Releases](https://github.com/ze
 - Sealed session packages verified signature-first (`package verify`, v0.31.2+), with the close record bound into the package (v0.31.4)
 - Workload packet and recomputation receipts, evaluation receipts, the agent graph written from spawn events, a Claude Code gate and a kill switch (v0.31.5+)
 - Linux ARM64 binary (aarch64 musl), built and smoke-tested in the release workflow
+- Per-artifact Rekor anchoring (v0.31.9): a pushed artifact's dsse entry in Sigstore's transparency log, verified offline against the entry's signed timestamp, inclusion proof and checkpoint
 
 **Experimental, explicitly non-authoritative**
 - Zero-knowledge proofs: the prior Groth16 path was found unsound and is **quarantined**; a statement-first private-verification design supersedes it. Nothing in the default trust path depends on ZK. [Honest status](https://docs.treeship.dev/docs/concepts/zero-knowledge).
 
 **Open**
-- Transparent MCP forwarder mode · Anthropic plugin-directory listing · external time anchors (Rekor, OpenTimestamps) · an independent third-party security audit
+- Transparent MCP forwarder mode · Anthropic plugin-directory listing · anchoring a room or checkpoint root itself (RFC 3161, OpenTimestamps) -- per-artifact Rekor anchoring already shipped, see above · an independent third-party security audit
 - Not planned: native Windows (use WSL) — [open an issue](https://github.com/zerkerlabs/treeship/issues) with a strong use case
 
 ## Security history
 
-Treeship's verifier has had four advisories in four months, and most share a root cause: a surface reported a green verdict without a signature check anchored to a pinned key.
+Treeship's verifier has had four advisories in four months, and most share a root cause: a surface reported a green verdict without a signature check rooted in a pinned key.
 
 - **v0.10.3**: the keystore did not encrypt as documented; verifiers trusted embedded keys; a Merkle downgrade path. [TS-2026-001](docs/security/TS-2026-001.md).
-- **v0.19**: higher-level surfaces reported "verified" from attacker-controlled input without anchoring to a checked signature. [Release post](https://docs.treeship.dev/blog/treeship-0-19-the-security-hardening-release).
+- **v0.19**: higher-level surfaces reported "verified" from attacker-controlled input without checking against a pinned signature. [Release post](https://docs.treeship.dev/blog/treeship-0-19-the-security-hardening-release).
 - **v0.31.2**: `package verify` never checked an artifact's Ed25519 signature, so a rewritten sealed set verified green. [TS-2026-002](docs/security/TS-2026-002.md), with a [repro script](docs/security/audit-2026-09-repro.sh). Fixed the same day; follow-ups in 0.31.3 and 0.31.4 bound the close record into the package.
+<!-- claims:rekor-artifact-anchoring -->
 - **v0.31.9**: the hub's Rekor submissions were silently rejected, and the unwitnessed-time policy gate read times from unsigned local records. [TS-2026-003](docs/security/TS-2026-003.md).
 - **v0.31.10**: the 0.31.4 close-record binding accepted a record signed by any key the package carried, not only the session's own -- a rewritten receipt could still verify; separately, `treeship init` and other commands wrote through symlinks. [TS-2026-004](docs/security/TS-2026-004.md), [GHSA-p367-33qm-pwv7](https://github.com/zerkerlabs/treeship/security/advisories/GHSA-p367-33qm-pwv7).
 

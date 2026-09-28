@@ -15,6 +15,12 @@ import (
 )
 
 // Set with -ldflags "-X .../internal/version.Version=... " at build time.
+// Release is the version this source tree ships as; check-release-versions.py
+// stamps it with every other version site. It is the answer when the build
+// did not pass -ldflags (Railway builds the Dockerfile without them), so
+// /v1/version never reads "dev" for a released binary.
+const Release = "0.31.11"
+
 var (
 	Version = ""
 	Commit  = ""
@@ -61,7 +67,7 @@ func Current() Info {
 		}
 	}
 	if info.Version == "" {
-		info.Version = "dev"
+		info.Version = Release
 	}
 	if info.Commit == "" {
 		info.Commit = "unknown"

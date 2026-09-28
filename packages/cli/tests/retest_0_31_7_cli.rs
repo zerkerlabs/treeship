@@ -36,6 +36,7 @@ impl Ws {
     }
     fn cmd_in(&self, config: &str) -> Command {
         let mut c = Command::new(cli_path());
+        c.env_remove("TREESHIP_CONFIG");
         c.env("HOME", &self.root)
             .env("TREESHIP_ALLOW_INSECURE_KEY_PERMS", "1")
             .env("TREESHIP_TRUST_ROOTS", self.root.join("trust_roots.json"))
@@ -269,6 +270,7 @@ fn kind_list_and_help_name_every_registered_predicate() {
     }
     let help = String::from_utf8_lossy(
         &Command::new(cli_path())
+            .env_remove("TREESHIP_CONFIG")
             .args(["attest", "receipt", "--help"])
             .output()
             .unwrap()

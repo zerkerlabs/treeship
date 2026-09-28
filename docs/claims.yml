@@ -11,10 +11,14 @@
 #     for a claim with no single code location)
 #   - a fixed, small set of security-sensitive doc files (`scanned_files`
 #     below) contain none of the banned phrases, UNLESS the phrase appears
-#     only to explicitly disclaim it (see each entry's `not` list, which
-#     names the banned phrases that entry's own accurate wording uses in a
-#     negating sense -- "not machine-bound" is fine, "machine-bound" bare is
-#     not)
+#     only to explicitly disclaim it -- and "disclaim" is judged per claim,
+#     not per phrase: a claim's `not:` list names the banned phrases ITS OWN
+#     `says` field negates ("not machine-bound"), and a doc line that claim
+#     backs must negate that word too, not bare-assert it (N-31: a claim
+#     whose `says` field affirms a word instead, with its own qualifier --
+#     rekor-artifact-anchoring's "witnessed only if ..." -- doesn't require
+#     negation from the doc line either; the check derives which is which
+#     from `says`, not from a separate flag)
 #   - SECURITY.md's supported-versions table names the current CHANGELOG minor
 #
 # Status taxonomy:
@@ -123,6 +127,43 @@ claims:
     not: ["air-gapped"]
     notes: "The circuits are retained as design references for the statement-first rebuild (RISC Zero), not as a sound proving path."
 
+  - id: hub-cannot-forge-signed-verification
+    status: shipped
+    says: >
+      "The Hub cannot forge a passing result" is true for a specific,
+      narrow thing: verifying a named artifact (a signed DSSE envelope,
+      by artifact id) with the CLI or `@treeship/verify`'s WASM verifier
+      against the caller's own pinned trust roots. The Hub holds no
+      signing key, so it cannot produce a signature that verifies
+      against a root it doesn't control, and `/v1/verify/:id`'s
+      server-side verdict is retired for exactly this reason (a server's
+      verdict is the server's trust policy, not yours).
+
+      It is NOT true for a bare Session Receipt fetched from `GET
+      /v1/receipt/{session_id}` or `verifyReceipt()`/`--structural`
+      `package verify`: the receipt's `determinism` and `merkle_root`
+      checks are self-consistency only (does the JSON round-trip; does
+      the stated Merkle root match the artifact ids in it), not a
+      signature check, and cover only the artifact ids -- the timeline,
+      side_effects, tool_usage and narrative are unsigned and untouched
+      by either check. Anyone who can write the stored bytes (the Hub, a
+      compromised database, a MITM before TLS) can fabricate a
+      receipt.json from scratch with correct internal hashes and pass
+      both checks; nothing here would catch it. The only check that
+      reaches a real, actor-signed anchor is `package-verify-binds-
+      receipt`'s `receipt_binding` row, which needs the session's
+      `record.json` -- not present in a bare fetched receipt.json, only
+      in a full `.treeship` package.
+    proof: packages/core/src/session/package.rs
+    not: []
+    notes: >
+      packages/core/src/session/package.rs's own comment on the
+      determinism check states the failure mode directly: "An attacker
+      who edits those fields and re-serializes will pass determinism
+      and pass the Merkle check." N-30 (final 0.31.11 re-test) found
+      the unscoped claim, unqualified, in api/overview.mdx, api/verify.mdx,
+      api/receipt-get.mdx, concepts/trust-model.mdx and AGENTS.md.
+
   - id: package-verify-binds-receipt
     status: shipped
     says: >
@@ -148,6 +189,67 @@ claims:
       under --structural; FAIL otherwise, since the record's absence
       cannot be told apart from a removed record.json without a signed
       statement either way (W1-4, CLI-4).
+
+  - id: transparency-log-client-reverified
+    status: shipped
+    says: >
+      The Hub's agent transparency log serves metadata plus Merkle
+      inclusion proofs only, never payloads. Every reader-side surface
+      that uses it -- `treeship audit`, `history`, `resolve --hub` --
+      re-verifies each anchored entry's Merkle inclusion offline against
+      the reader's own trust roots rather than trusting the Hub's say-so,
+      and `audit` additionally witnesses: it persists the highest
+      *verified* checkpoint it has seen per (hub, signer) locally and
+      compares each new one against it, warning on a forking or
+      regressing hub. This is the client half of Certificate Transparency
+      for agents -- the Hub serves, the client decides -- distinct from
+      rekor-artifact-anchoring (an external, third-party Sigstore log) and
+      from checkpoint-not-witnessed (whether a checkpoint is
+      externally corroborated at all, which this client-side witnessing
+      is not: it catches a hub contradicting itself, not a hub colluding
+      consistently with a forger).
+    proof: docs/specs/transparency-log.md
+    not: ["anchored", "witnessed"]
+    notes: >
+      Verified against `audit --help`, `history --help`, `resolve --hub
+      --help` and the spec's own slice list (2026-09-25 full audit,
+      area C: 4 of 6 specs marked draft-not-implemented were found
+      substantially shipped, this one among them).
+
+  - id: hub-storage-write-once
+    status: shipped
+    says: >
+      The Hub's own storage is write-once and edit-free, not immutable:
+      a pushed artifact is inserted `ON CONFLICT(artifact_id) DO NOTHING`
+      (content-addressed, so a re-push of the same bytes is a no-op,
+      never an overwrite), and a session's receipt can be filled exactly
+      once -- a second upload for the same session_id is refused with
+      409, not replaced. Nothing the Hub's API exposes can silently
+      change a stored artifact or receipt in place. But the publishing
+      dock can withdraw its own session receipt: `DELETE
+      /v1/receipt/{session_id}` (`treeship hub unpublish`) clears the
+      receipt body, name, timing and counts and sets the row to
+      `status = 'tombstoned'` permanently -- the hub answers `410 Gone`
+      from then on and the session id can never be refilled or
+      re-published. A tombstone is not a silent edit: it is a one-shot,
+      publisher-only, publicly-visible withdrawal, distinct from an
+      overwrite or an in-place edit. This is a property of the Hub's
+      database constraints, distinct from receipt-tamper-evidence (which
+      holds even with no Hub involved at all): a Hub operator with direct
+      database access could still edit a row, but the Hub's own API never
+      offers a path to silently overwrite -- or un-tombstone -- what it
+      already stored.
+    proof: packages/hub/internal/receipts/receipts.go
+    not: ["immutable"]
+    notes: >
+      Content-addressing (packages/hub/internal/db/db.go's `ON
+      CONFLICT(artifact_id) DO NOTHING`) covers artifacts; receipts are
+      write-once per session_id via InsertSessionWriteOnce. The tombstone
+      path is `db.TombstoneSession` (same file): publisher-owned check,
+      `WHERE tombstoned_at IS NULL` makes it one-shot, and the UPDATE
+      clears the receipt fields rather than deleting the row, so a later
+      PUT for the same session_id still finds a row and is refused
+      (#533, shipped 0.31.11).
 
   - id: receipt-tamper-evidence
     status: shipped

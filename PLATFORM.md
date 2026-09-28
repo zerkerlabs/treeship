@@ -169,7 +169,10 @@ treeship hub push last                 # push to Hub, get verify URL
 
 ### Full command surface
 
-```bash
+A compact map, not a script -- `attest approval` needs a scope flag to
+actually run.
+
+```text
 # Identity
 treeship init                           # create Treeship (keypair + artifact store)
 treeship status                         # show state, keys, hub status

@@ -47,6 +47,7 @@ impl Workspace {
     /// CI environments.
     fn cmd(&self) -> Command {
         let mut c = Command::new(cli_path());
+        c.env_remove("TREESHIP_CONFIG");
         c.env("HOME", &self.root);
         c.env(
             "TREESHIP_TRUST_ROOTS",

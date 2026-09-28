@@ -37,6 +37,7 @@ impl Workspace {
 
     fn cmd(&self) -> Command {
         let mut c = Command::new(cli_path());
+        c.env_remove("TREESHIP_CONFIG");
         c.env("HOME", &self.root);
         c.env(
             "TREESHIP_TRUST_ROOTS",
@@ -309,6 +310,7 @@ fn approval_rejects_a_non_rfc3339_expiry_before_signing() {
 
     let run = |args: &[&str]| {
         let mut cmd = Command::new(cli_path());
+        cmd.env_remove("TREESHIP_CONFIG");
         cmd.current_dir(root).env("HOME", root).args(args);
         cmd.output().expect("run treeship")
     };

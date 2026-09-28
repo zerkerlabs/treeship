@@ -132,6 +132,18 @@ def declared(pkg: Path) -> dict:
     return out
 
 
+def root_versions(pkg: Path) -> tuple[str | None, str | None, str | None]:
+    """(package.json version, lockfile top-level version, lockfile root entry
+    version). The lockfile names the package's own version twice; `npm ci`
+    tolerates a stale one, so nothing else catches a lockfile left at an old
+    release (the openclaw plugin's read 0.10.3 at 0.31.10)."""
+    with open(pkg / "package.json", encoding="utf-8") as f:
+        declared_v = json.load(f).get("version")
+    with open(pkg / "package-lock.json", encoding="utf-8") as f:
+        lock = json.load(f)
+    return declared_v, lock.get("version"), lock.get("packages", {}).get("", {}).get("version")
+
+
 def locked(pkg: Path) -> dict:
     """The declared ranges recorded in the lockfile's root entry."""
     with open(pkg / "package-lock.json", encoding="utf-8") as f:
@@ -174,6 +186,11 @@ def main(root: Path = ROOT, lookup=npm_published) -> int:
         if not (pkg / "package.json").is_file() or not (pkg / "package-lock.json").is_file():
             continue
         checked += 1
+        declared_v, lock_v, root_v = root_versions(pkg)
+        if declared_v is not None:
+            for where, got in (("lockfile version", lock_v), ("lockfile root entry", root_v)):
+                if got is not None and got != declared_v:
+                    bad.append((rel, "(package version)", declared_v, got, where))
         dec, lck, inst = declared(pkg), locked(pkg), installed(pkg)
         for name, want in dec.items():
             got = lck.get(name)
