@@ -387,9 +387,14 @@ pub fn revoke_capability(
     let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
     let card_agent = card.get("agent").and_then(|v| v.as_str()).unwrap_or("");
 
-    if let Some(existing) = existing_card_revocation(&ctx, card_id) {
+    // Only a revocation verify-capability honors counts as "already
+    // revoked": another ship's agent_card_revocation.v1 copied into the
+    // store used to block the owner's revoke here while every verifier
+    // still honored the card (review of #541).
+    let trust = TrustRootStore::open_default_or_empty()?;
+    if let Some((_, who)) = find_revocation(&ctx, card_id, card_keyid, &trust) {
         return Err(format!(
-            "card {card_id} is already revoked by {existing}; a second revocation receipt would add nothing"
+            "card {card_id} is already revoked ({who}); a second revocation receipt would add nothing"
         )
         .into());
     }
@@ -425,7 +430,6 @@ pub fn revoke_capability(
     let will_be_honored = {
         let signer_kid = signer.key_id();
         let self_revoke = !card_keyid.is_empty() && signer_kid == card_keyid;
-        let trust = TrustRootStore::open_default_or_empty()?;
         // Batch 5: issuer revocation is now scoped to the `Revoker` kind.
         let issuer_revoke = trust
             .roots()
@@ -467,6 +471,9 @@ pub fn revoke_capability(
     })?;
 
     let self_revoke = signer.key_id() == card_keyid;
+    // An asserted card's key is the ship's default key; "agent key" would
+    // claim a per-agent key that does not exist.
+    let key_bound = self_revoke && is_key_bound(card_keyid, card_keyid, &trust);
     printer.success(
         "capability card revoked",
         &[
@@ -475,8 +482,10 @@ pub fn revoke_capability(
             ("agent", card_agent),
             (
                 "authority",
-                if self_revoke {
+                if key_bound {
                     "self (agent key)"
+                } else if self_revoke {
+                    "self (the card's key, the ship default key)"
                 } else {
                     "ship default key"
                 },
@@ -521,14 +530,22 @@ pub(crate) fn find_revocation(
             continue;
         }
         // The revoker's key must have produced a VALID signature over the
-        // revocation, re-verified against trust roots — not read from the
-        // unverified `signatures[0].keyid`. Otherwise a revocation carrying a
-        // forged first keyid (the card's key, or a Ship root) plus a garbage
+        // revocation, re-verified against the keys this machine trusts (its
+        // own keys and the pinned roots, the same set the card itself is
+        // verified against) — not read from the unverified
+        // `signatures[0].keyid`. Otherwise a revocation carrying a forged
+        // first keyid (the card's key, or a Ship root) plus a garbage
         // signature would be honored, letting a stranger revoke a card (DoS).
-        let verified: Vec<String> = treeship_core::verify::resolution::verifier_from_trust(trust)
-            .verify_any(&rec.envelope)
-            .map(|r| r.verified_key_ids)
-            .unwrap_or_default();
+        // Local keys count: an asserted card's key is the ship's own key,
+        // and its self-revocation was silently ignored while `revoke` said
+        // "revoked" (0.31.11 re-test, N-38).
+        let verified: Vec<String> =
+            crate::commands::verifier::from_local_and_trust(&ctx.keys, trust)
+                .ok()
+                .flatten()
+                .and_then(|v| v.verify_any(&rec.envelope).ok())
+                .map(|r| r.verified_key_ids)
+                .unwrap_or_default();
         let self_revoke = !card_keyid.is_empty() && verified.iter().any(|k| k == card_keyid);
         // Batch 5: issuer revocation is now scoped to the `Revoker` kind.
         let issuer_revoke = verified.iter().any(|rk| {
@@ -656,31 +673,4 @@ fn actor_proven_by_cert(
         return true;
     }
     false
-}
-
-/// The id of an agent_card_revocation.v1 receipt this store already holds
-/// for `card_id`, if any.
-fn existing_card_revocation(ctx: &crate::ctx::Ctx, card_id: &str) -> Option<String> {
-    let pt = payload_type("receipt");
-    for entry in ctx.storage.list_by_type(&pt) {
-        let Ok(rec) = ctx.storage.read(&entry.id) else {
-            continue;
-        };
-        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
-            continue;
-        };
-        if stmt.kind != "agent_card_revocation.v1" {
-            continue;
-        }
-        let same = stmt
-            .payload
-            .as_ref()
-            .and_then(|p| p.get("card"))
-            .and_then(|v| v.as_str())
-            == Some(card_id);
-        if same {
-            return Some(entry.id.clone());
-        }
-    }
-    None
 }
