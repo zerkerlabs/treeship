@@ -1,0 +1,1 @@
+- **The cross-SDK contract job builds again on Node 22.** Its TS SDK step removes the lockfile to install the local core-wasm build, and with vitest 4's optional peer dependencies npm 10 then fails without a message; the step installs with `--legacy-peer-deps`.
