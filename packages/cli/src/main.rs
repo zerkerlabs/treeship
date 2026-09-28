@@ -2434,9 +2434,9 @@ struct VerifyArgs {
     /// anything written into a local record does not. Applies in every output
     /// mode, including --format json and --full.
     ///
-    /// Without this flag, coverage is reported and never gates: unanchored
-    /// work is normal (offline machines, network failures) and is not by
-    /// itself evidence of anything.
+    /// Without this flag, coverage is reported and never gates: work with no
+    /// Rekor entry is normal (offline machines, network failures) and is not
+    /// by itself evidence of anything.
     #[arg(long, value_name = "DURATION")]
     max_unwitnessed: Option<String>,
 
