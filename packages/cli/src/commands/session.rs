@@ -264,35 +264,35 @@ pub(crate) fn count_chain_artifacts(ctx: &ctx::Ctx, root_id: &str) -> u64 {
 
 /// Get the host ID for the current machine.
 pub(crate) fn local_host_id() -> String {
-    // TREESHIP_HOST_ID names the host outright. Otherwise the id is a
-    // digest of the hostname, stable on one machine so a receipt's hosts
-    // group, and not the hostname itself: receipts are published, and the
-    // machine name is nobody's business (0.31.11 re-test, N-41; it appeared
-    // eleven times per receipt).
+    // TREESHIP_HOST_ID names the host outright. Otherwise a random id made
+    // once per install and kept at ~/.treeship/host_id: stable on one
+    // machine so a receipt's hosts group, and carrying nothing about the
+    // machine. A hostname digest was tried first and reversed from a guess
+    // list of common machine names in seconds (0.31.11 re-test, N-41).
     std::env::var("TREESHIP_HOST_ID")
         .ok()
         .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| {
-            std::process::Command::new("hostname")
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|h| host_id_for(h.trim()))
-                .unwrap_or_else(|| "host_unknown".into())
-        })
+        .or_else(treeship_core::session::context::read_host_id_file)
+        .or_else(create_host_id_file)
+        .unwrap_or_else(|| "host_unknown".into())
 }
 
-/// `host_` + the first 16 hex characters of SHA-256 over a domain-separated
-/// hostname. A digest, not an encryption: a guessable hostname is still
-/// guessable by someone who can run the same digest, which TREESHIP_HOST_ID
-/// avoids entirely.
-pub(crate) fn host_id_for(hostname: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(b"treeship/host-id/v1\n");
-    h.update(hostname.as_bytes());
-    let digest = h.finalize();
-    format!("host_{}", hex::encode(&digest[..8]))
+/// Mint `host_` + 16 hex characters from the OS random source and keep it at
+/// ~/.treeship/host_id (0600, never through a link). None when there is no
+/// HOME or the file cannot be written; the caller then says `host_unknown`.
+fn create_host_id_file() -> Option<String> {
+    use rand::RngCore;
+    let path = treeship_core::session::context::host_id_file()?;
+    let mut bytes = [0u8; 8];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let id = format!("host_{}", hex::encode(bytes));
+    if let Some(dir) = path.parent() {
+        if !dir.is_dir() {
+            crate::safe_fs::create_dir_all_nofollow(dir).ok()?;
+        }
+    }
+    crate::safe_fs::write_under_treeship(&path, format!("{id}\n").as_bytes(), 0o600).ok()?;
+    Some(id)
 }
 
 /// Create a base SessionEvent for this session.

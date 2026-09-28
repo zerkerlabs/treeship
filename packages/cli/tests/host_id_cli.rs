@@ -18,11 +18,11 @@ fn text(out: &Output) -> String {
 }
 
 fn receipt_after_a_session(home: &std::path::Path, host_id_env: Option<&str>) -> String {
-    let project = home.join(if host_id_env.is_some() {
-        "named"
-    } else {
-        "proj"
-    });
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let project = home.join(format!(
+        "proj{}",
+        N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    ));
     std::fs::create_dir_all(&project).unwrap();
     let cfg = project.join(".treeship/config.json");
     let run = |args: &[&str]| -> Output {
@@ -40,7 +40,13 @@ fn receipt_after_a_session(home: &std::path::Path, host_id_env: Option<&str>) ->
             .output()
             .expect("run treeship")
     };
-    assert!(run(&["init", "--name", "t"]).status.success());
+    let out = run(&["init", "--name", "t"]);
+    assert!(
+        out.status.success(),
+        "init in {}: {}",
+        project.display(),
+        text(&out)
+    );
     assert!(run(&["session", "start", "--name", "s"]).status.success());
     let out = run(&["wrap", "--", "true"]);
     assert!(out.status.success(), "{}", text(&out));
@@ -63,7 +69,7 @@ fn receipt_after_a_session(home: &std::path::Path, host_id_env: Option<&str>) ->
 }
 
 #[test]
-fn the_host_id_is_a_digest_not_the_hostname() {
+fn the_host_id_is_random_per_install_not_the_hostname() {
     let hostname = Command::new("hostname")
         .output()
         .ok()
@@ -97,7 +103,7 @@ fn the_host_id_is_a_digest_not_the_hostname() {
             id.len() == 21
                 && id.starts_with("host_")
                 && id[5..].chars().all(|c| c.is_ascii_hexdigit()),
-            "host_id is not a 16-hex digest: {id}"
+            "host_id is not host_ plus 16 hex: {id}"
         );
     }
     let short = hostname.split('.').next().unwrap_or(&hostname);
@@ -105,6 +111,20 @@ fn the_host_id_is_a_digest_not_the_hostname() {
         !receipt.to_lowercase().contains(&short.to_lowercase()),
         "the receipt carries the machine name {short}:\n{receipt}"
     );
+
+    // Stable within an install: the id is kept at ~/.treeship/host_id, and
+    // a second session says the same one.
+    let kept = std::fs::read_to_string(home.path().join(".treeship/host_id")).unwrap();
+    assert_eq!(kept.trim(), ids[0], "the receipt's id is not the kept one");
+    let again = receipt_after_a_session(home.path(), None);
+    assert!(
+        again.contains(&format!("\"host_id\": \"{}\"", ids[0])),
+        "{again}"
+    );
+    // Unrelated to the machine: another install gets another id.
+    let other = tempfile::tempdir().unwrap();
+    let elsewhere = receipt_after_a_session(other.path(), None);
+    assert!(!elsewhere.contains(&ids[0]), "two installs share a host id");
 
     // TREESHIP_HOST_ID still names the host outright.
     let receipt = receipt_after_a_session(home.path(), Some("host_build-runner-7"));

@@ -189,11 +189,36 @@ impl PropagationContext {
 /// they consume receipts authored elsewhere -- so the fallback is safe.
 #[cfg(not(target_family = "wasm"))]
 fn default_host_id() -> String {
-    hostname::get()
+    // TREESHIP_HOST_ID names the host; else the per-install random id the
+    // CLI keeps at ~/.treeship/host_id; else unknown. Never the hostname:
+    // receipts are published, and a hostname digest reverses from a guess
+    // list (0.31.11 re-test, N-41).
+    std::env::var("TREESHIP_HOST_ID")
         .ok()
-        .and_then(|h| h.into_string().ok())
-        .map(|h| format!("host_{}", h.replace('.', "_")))
+        .filter(|v| !v.is_empty())
+        .or_else(read_host_id_file)
         .unwrap_or_else(|| "host_unknown".into())
+}
+
+/// The per-install host id file, `~/.treeship/host_id`, when HOME is set.
+#[cfg(not(target_family = "wasm"))]
+pub fn host_id_file() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").filter(|h| !h.is_empty()).map(|h| {
+        std::path::PathBuf::from(h)
+            .join(".treeship")
+            .join("host_id")
+    })
+}
+
+/// Read the per-install host id when the file exists and holds one.
+#[cfg(not(target_family = "wasm"))]
+pub fn read_host_id_file() -> Option<String> {
+    let path = host_id_file()?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    let id = raw.trim();
+    let well_formed =
+        id.len() == 21 && id.starts_with("host_") && id[5..].chars().all(|c| c.is_ascii_hexdigit());
+    well_formed.then(|| id.to_string())
 }
 
 #[cfg(target_family = "wasm")]
