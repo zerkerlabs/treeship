@@ -161,4 +161,6 @@ Receipts produced while the plugin was active stay on disk in `.treeship/session
 
 **The session report URL doesn't appear at end of session.** Check `treeship hub status` — the report step needs a configured hub. If the hub isn't reachable, the SessionEnd hook still seals the receipt locally and prints a fallback message pointing to `treeship session report` for a manual retry.
 
+**`TREESHIP_CONFIG` is exported in your shell.** The hooks record into the workspace of the active session: the `.treeship/` that holds `session.json`, found by walking up from the project root. Since 0.31.12 the variable is honoured only when no active session is found that way, so an exported `TREESHIP_CONFIG` no longer sends the plugin's approvals and attestations to another store while the events land in the project. Pass `--config` to a command to override.
+
 **The MCP server isn't capturing tool calls.** `@treeship/mcp` requires `treeship init` (so the MCP server can find the keystore) and an active session (so events have somewhere to land). Both are handled by the SessionStart hook, but if you're testing the MCP server in isolation, run them yourself first.

@@ -29,6 +29,9 @@ use crate::{ctx, printer::Printer};
 
 fn session_path() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
+    // The walk stops at the home directory, like the shell hook's: nothing
+    // above it is the person's to configure.
+    let home = home::home_dir().map(|h| std::fs::canonicalize(&h).unwrap_or(h));
     loop {
         let candidate = dir.join(".treeship").join("session.json");
         if candidate.exists() {
@@ -39,10 +42,75 @@ fn session_path() -> Option<PathBuf> {
         if ts_dir.is_dir() {
             return Some(candidate);
         }
+        if home.as_deref() == Some(dir.as_path()) {
+            return None;
+        }
         if !dir.pop() {
             return None;
         }
     }
+}
+
+/// The workspace a session command records into.
+///
+/// An explicit `--config` wins. Otherwise, when an active session is found by
+/// the walk up from the cwd and a `config.json` sits beside its
+/// `session.json`, that workspace is the one: the session was started there,
+/// and an exported `TREESHIP_CONFIG` used to send the plugin hooks' approvals
+/// and attestations to another store while the session's own log got the
+/// events (0.31.11 re-test, N-12 / N-36). The same rule the shell hook uses.
+/// A project config is opened as DISCOVERED, with every discovery check; the
+/// person's own global config is opened as itself. With no active session,
+/// the normal resolution (`TREESHIP_CONFIG`, then discovery) applies.
+pub fn open_ctx(config: Option<&str>) -> Result<ctx::Ctx, Box<dyn std::error::Error>> {
+    open_workspace_ctx(config, true)
+}
+
+/// `open_ctx` for `session start`: no session exists yet, so the workspace is
+/// the `.treeship/` the walk found, where `session.json` is about to be
+/// written. Its config and the session then agree from the first artifact.
+fn open_ctx_for_start(config: Option<&str>) -> Result<ctx::Ctx, Box<dyn std::error::Error>> {
+    open_workspace_ctx(config, false)
+}
+
+fn open_workspace_ctx(
+    config: Option<&str>,
+    require_session: bool,
+) -> Result<ctx::Ctx, Box<dyn std::error::Error>> {
+    if let Some(explicit) = config {
+        return Ok(ctx::open(Some(explicit))?);
+    }
+    if let Some(session_json) = session_path().filter(|p| !require_session || p.is_file()) {
+        let beside = session_json.with_file_name("config.json");
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        // Only a workspace inside the person's HOME qualifies. A harness
+        // that sandboxes HOME and TREESHIP_CONFIG but runs from the real
+        // user's project would otherwise climb to the real user's session
+        // and sign with their key (the incident config.rs documents); a
+        // walk that never passes HOME finds nothing here.
+        let inside_home = home::home_dir().is_some_and(|h| {
+            session_json
+                .parent()
+                .and_then(|ts| ts.parent())
+                .is_some_and(|project| canon(project).starts_with(canon(&h)))
+        });
+        if inside_home && beside.is_file() {
+            // The .treeship dir and the config beside the session must be
+            // real: a repository's `config.json -> ~/.treeship/config.json`
+            // would canonicalize to the global config and open as --config,
+            // signing with the global key into the global store with the
+            // repository's session as parent.
+            crate::safe_fs::refuse_symlinks_under_treeship(&beside)?;
+            let is_global = home::home_dir()
+                .map(|h| canon(&h.join(".treeship").join("config.json")))
+                .is_some_and(|g| g == canon(&beside));
+            if is_global {
+                return Ok(ctx::open(Some(&beside.to_string_lossy()))?);
+            }
+            return Ok(ctx::open_discovered(&beside)?);
+        }
+    }
+    Ok(ctx::open(None)?)
 }
 
 fn session_dir() -> Option<PathBuf> {
@@ -512,7 +580,7 @@ pub fn start(
         None => return Err("no .treeship directory found -- run treeship init first".into()),
     };
 
-    let ctx = ctx::open(config)?;
+    let ctx = open_ctx_for_start(config)?;
 
     if let Some(reference) = workflow_ref.as_deref() {
         validate_workflow_ref(&ctx, reference)?;
@@ -741,7 +809,7 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
             return Ok(());
         };
 
-        let ctx = ctx::open(config)?;
+        let ctx = open_ctx(config)?;
         let root_verified = if let Some(ref root_id) = manifest.root_artifact_id {
             ctx.storage.read(root_id).is_ok()
         } else {
@@ -787,7 +855,7 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
         }
     };
 
-    let ctx = ctx::open(config)?;
+    let ctx = open_ctx(config)?;
 
     // Verify the root artifact actually exists in storage
     let root_verified = if let Some(ref root_id) = manifest.root_artifact_id {
@@ -1629,7 +1697,7 @@ pub fn close(
         );
     }
 
-    let ctx = ctx::open(config)?;
+    let ctx = open_ctx(config)?;
 
     // session.json is mutable discovery state. Re-derive the authoritative
     // workflow reference from the verified root before writing any close
@@ -2956,7 +3024,7 @@ pub fn report(
         return report_exit(&verification_status);
     }
 
-    let ctx = ctx::open(config)?;
+    let ctx = open_ctx(config)?;
     let hub_resolved = ctx.config.resolve_hub(None);
     let (hub_name, hub_entry) = match hub_resolved {
         Ok(t) => t,

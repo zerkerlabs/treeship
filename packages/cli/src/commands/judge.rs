@@ -366,7 +366,7 @@ pub fn judge(args: JudgeArgs, printer: &Printer) -> Result<(), Box<dyn std::erro
     if !(0.0..=1.0).contains(&args.threshold) {
         return Err("--threshold must be between 0 and 1".into());
     }
-    let ctx = ctx::open(args.config.as_deref())?;
+    let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
     if let Some(id) = args.resolve.clone() {
         return resolve(&ctx, &args, &id, printer);
     }

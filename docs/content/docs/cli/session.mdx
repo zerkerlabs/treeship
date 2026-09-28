@@ -316,6 +316,10 @@ The receipt URL is public and needs no token, expiry, or auth to fetch. A2A clie
 
 `0` when the package's own local verify passed or warned and, if an upload was attempted, it succeeded. Nonzero when the local verify **failed** (`verification_status: fail`), on every path including `--no-upload`, and nonzero on an upload error; the JSON document is emitted in those cases, so a script can branch on the exit code or on `verification_status` and `error`. No hub attached without `--no-upload` is an error on stderr with nothing on stdout: attach a hub, or pass `--no-upload` for the local verdict.
 
+## Which workspace a session uses
+
+`session start` writes `session.json` into the nearest `.treeship/` above the current directory (the walk stops at your home directory). From then on every session command, and every command that signs into the session (`attest`, `approve`, `halt`, `judge`, the Claude Code plugin's hooks), records into the workspace whose `config.json` sits beside that `session.json`. Only a workspace inside your home directory qualifies, and the `.treeship/` and the `config.json` beside the session must be real directories and files, not links. An explicit `--config` still wins. `TREESHIP_CONFIG` in the environment applies only when no active session is found this way; before 0.31.12 an exported `TREESHIP_CONFIG` sent the plugin's approvals and attestations to another store while the session's own event log kept the events. A project's config found this way gets the same checks as `treeship` discovery (no stores outside its `.treeship`, no foreign `extends`, no links).
+
 ## What gets sealed in a receipt
 
 A Session Receipt v1 includes:

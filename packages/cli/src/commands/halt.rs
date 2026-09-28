@@ -220,7 +220,7 @@ pub fn halt(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx = ctx::open(config)?;
+    let ctx = crate::commands::session::open_ctx(config)?;
     if actor != ALL && !actor.contains("://") {
         return Err(
             format!("actor must be a URI such as agent://{actor}, or * for every actor").into(),
@@ -283,7 +283,7 @@ pub fn lift(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx = ctx::open(config)?;
+    let ctx = crate::commands::session::open_ctx(config)?;
     let dir = halts_dir_for(&ctx.config_path);
     let Some(m) = active_halt(&ctx, actor).filter(|m| m.actor == actor) else {
         return Err(format!("{actor} is not halted\n  run: treeship halt list").into());
@@ -311,7 +311,7 @@ pub fn lift(
 }
 
 pub fn list(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx = ctx::open(config)?;
+    let ctx = crate::commands::session::open_ctx(config)?;
     let dir = halts_dir_for(&ctx.config_path);
     let own_key = ctx.keys.default_signer()?.key_id().to_string();
     let mut rows = Vec::new();
