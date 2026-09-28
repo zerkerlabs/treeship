@@ -51,7 +51,8 @@ Two consequences to know:
   yet, and a failure once it does.
 - **The lockfile PR needs a nudge.** GitHub does not start workflows on a PR
   opened with the workflow's own token. Push an empty commit to its branch or
-  close and reopen it, and the checks run.
+  close and reopen it, and the checks run. A re-run of the release workflow
+  while that PR is open updates its branch instead of failing.
 
 ## Hub version on Railway
 
@@ -71,4 +72,6 @@ RAILWAY_SERVICE=<service id> RAILWAY_ENVIRONMENT=production scripts/hub-deploy.s
 It sets `HUB_COMMIT` to the current short SHA, `HUB_BUILT_AT` to now, and
 `HUB_VERSION` to the `Release` constant in `packages/hub/internal/version`,
 then runs `railway up` from the repository root. Run it from a clean checkout
-of the commit you mean to deploy.
+of the commit you mean to deploy. The variables stay on the service, so the
+script sets them fresh on every run; a deploy from the connected repository
+ignores them and takes its commit from `RAILWAY_GIT_COMMIT_SHA`.
