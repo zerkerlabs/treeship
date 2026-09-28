@@ -1,0 +1,1 @@
+- **npm lockfiles point at the published 0.31.11 packages.** `scripts/release.sh refresh-lockfiles` after publish, so `npm ci` resolves `@treeship/*` 0.31.11 from the registry in every package and runtime-acceptance fixture.

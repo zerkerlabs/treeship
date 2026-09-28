@@ -122,7 +122,7 @@ Statement (JSON) ──► compact JSON, declaration-order fields ──► PAE 
 ### Ed25519
 
 Signatures use [`ed25519-dalek`](https://github.com/dalek-cryptography/curve25519-dalek)
-2.x, the implementation that was audited by NCC Group in 2020. The crate
+2.x, a widely-deployed implementation. The crate
 uses the `subtle` library throughout for constant-time scalar operations.
 Treeship does not implement its own elliptic-curve code anywhere; all
 signing and verification call into `ed25519-dalek`.
@@ -473,8 +473,7 @@ A compromised hub **cannot**:
 
 The verifier trusts:
 
-- The implementation of `ed25519-dalek` (NCC Group audited, widely
-  deployed)
+- The implementation of `ed25519-dalek` (widely deployed)
 - The implementation of `sha2` (RustCrypto, widely deployed)
 - The implementation of `aes-gcm` (RustCrypto, widely deployed)
 - Its own configured trust roots
@@ -630,7 +629,7 @@ explicitly so that users do not assume defenses that do not exist.
 
 | Purpose                          | Primitive               | Implementation                   | Notes                                                                          |
 |----------------------------------|-------------------------|----------------------------------|--------------------------------------------------------------------------------|
-| Signing                          | Ed25519                 | `ed25519-dalek` 2.x              | NCC Group audited. Constant-time via `subtle`.                                 |
+| Signing                          | Ed25519                 | `ed25519-dalek` 2.x              | Widely deployed. Constant-time via `subtle`.                                   |
 | Hashing                          | SHA-256                 | RustCrypto `sha2`                | Used for content addressing, Merkle tree, fingerprints.                        |
 | Canonical JSON                   | Compact `serde_json`, declaration-order fields | In-tree, `packages/core/src/attestation/sign.rs` | No whitespace; field order fixed by the struct. Not RFC 8785/JCS — an outside verifier must reproduce declaration order, or verify the exported PAE bytes (`treeship receipt export`). |
 | Envelope binding                 | DSSE PAE                | In-tree, `packages/core/src/attestation/pae.rs`      | `DSSEv1 <type-len> <type> <payload-len> <payload>`                             |

@@ -5,7 +5,7 @@ description: Manage attestation sessions. Start, close, report, and share Sessio
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-A session groups related work into a single unit. When you close a session, Treeship composes a Session Receipt v1 and writes a portable `.treeship` package that can be inspected and verified offline, or uploaded to a hub for sharing at a permanent public URL.
+A session groups related work into a single unit. When you close a session, Treeship composes a Session Receipt v1 and writes a portable `.treeship` package that can be inspected and verified offline, or uploaded to a hub for sharing at a public URL.
 
 See the [Session Receipts concept page](/docs/concepts/session-receipts) for the full format and determinism rules.
 
@@ -220,7 +220,7 @@ treeship session close --summary "fixed JWT expiry bug" --receipt-dir receipts
 
 | Option | Description |
 |--------|-------------|
-| `--summary <text>` | Plain-text summary of what the session accomplished |
+| `--summary <text>` | Plain-text summary of what the session accomplished. Like every other field of the receipt, a path under your home directory in it is rewritten as `~/...` before signing, and `close` says so when it happens |
 | `--headline <text>` | One-line headline for the receipt |
 | `--review <text>` | What should be reviewed before trusting the output |
 | `--receipt-dir <dir>` | Copy the sealed `.treeship` package into `<dir>/<session_id>.treeship` (created if missing). `.treeship/` is usually gitignored; this puts the package somewhere it can be committed next to the change it accounts for. See [Receipts in pull requests](/docs/guides/receipts-in-pull-requests). |
@@ -272,7 +272,7 @@ The command moves `.treeship/session.json` or `.treeship/session.closing` plus t
 
 ## treeship session report
 
-Upload a closed session's receipt to the configured hub and print the permanent public URL.
+Upload a closed session's receipt to the configured hub and print the public URL.
 
 ```bash
 treeship session report
@@ -290,7 +290,7 @@ The command:
 1. Locates the `.treeship` package for the requested session (or the most recently modified one).
 2. Reads `receipt.json` verbatim so the digest signed by `session close` is preserved bit-for-bit.
 3. DPoP-signs a `PUT {hub_endpoint}/v1/receipt/{session_id}` request using the active hub connection's private key.
-4. Prints the permanent receipt URL.
+4. Prints the receipt URL.
 
 If a package directory exists but `receipt.json` was never written, `session report` reports the package as incomplete instead of treating it as a missing closed session.
 
@@ -305,16 +305,20 @@ Example output:
 
   receipt:  https://treeship.dev/receipt/ssn_42e740bd9eb238f6
 
-  → share this URL freely -- it never expires and needs no auth
+  → share these URLs freely -- they need no auth and stay up until you unpublish them
 ```
 
 <Callout type="info">
-The receipt URL is permanent and public. No token, no expiry, no auth required to fetch it. A2A clients, dashboards, and offline verifiers can all `curl` it programmatically. See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) for the API reference.
+The receipt URL is public and needs no token, expiry, or auth to fetch. A2A clients, dashboards, and offline verifiers can all `curl` it programmatically. It stays up until the publishing dock takes it down with [`treeship hub unpublish`](/docs/cli/hub#treeship-hub-unpublish), which is permanent: the receipt body is removed for good and the id cannot be re-published. See [`GET /v1/receipt/{session_id}`](/docs/api/receipt-get) and [`DELETE /v1/receipt/{session_id}`](/docs/api/receipt-delete) for the API reference.
 </Callout>
 
 ### Exit code
 
-`0` when the package's own local verify passed or warned and, if an upload was attempted, it succeeded. Nonzero when the local verify **failed** (`verification_status: fail`), on every path including `--no-upload` and no hub attached, and nonzero on an upload error. The JSON document is emitted either way; a script can branch on the exit code or on `verification_status` and `error`.
+`0` when the package's own local verify passed or warned and, if an upload was attempted, it succeeded. Nonzero when the local verify **failed** (`verification_status: fail`), on every path including `--no-upload`, and nonzero on an upload error; the JSON document is emitted in those cases, so a script can branch on the exit code or on `verification_status` and `error`. No hub attached without `--no-upload` is an error on stderr with nothing on stdout: attach a hub, or pass `--no-upload` for the local verdict.
+
+## Which workspace a session uses
+
+`session start` writes `session.json` into the nearest `.treeship/` above the current directory (the walk stops at your home directory). From then on every session command, and every command that signs into the session (`attest`, `approve`, `halt`, `judge`, the Claude Code plugin's hooks), records into the workspace whose `config.json` sits beside that `session.json`. Only a workspace inside your home directory qualifies, and the `.treeship/` and the `config.json` beside the session must be real directories and files, not links. An explicit `--config` still wins. `TREESHIP_CONFIG` in the environment applies only when no active session is found this way; before 0.31.12 an exported `TREESHIP_CONFIG` sent the plugin's approvals and attestations to another store while the session's own event log kept the events. A project's config found this way gets the same checks as `treeship` discovery (no stores outside its `.treeship`, no foreign `extends`, no links).
 
 ## What gets sealed in a receipt
 

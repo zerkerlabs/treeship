@@ -136,6 +136,49 @@ mod imp {
         opts
     }
 
+    /// Create `path` with `bytes` at `mode`, failing with `AlreadyExists`
+    /// when anything is there (a file, a link, a directory): the one-shot
+    /// write of an id several processes may race to mint. The winner's
+    /// bytes are the ones every loser should then read back.
+    pub fn create_exclusive_nofollow(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
+        use std::io::Write;
+        let mut f = exclusive_options(mode).open(path)?;
+        f.write_all(bytes)?;
+        f.sync_all()
+    }
+
+    /// Read at most `max` bytes of a regular file, never through a link
+    /// (O_NOFOLLOW) and never from a device or FIFO (fstat says regular),
+    /// so a planted `host_id -> /dev/zero` cannot hang the reader.
+    pub fn read_small_nofollow(path: &Path, max: usize) -> io::Result<Vec<u8>> {
+        use std::io::Read;
+        let mut opts = fs::OpenOptions::new();
+        opts.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.custom_flags(libc::O_NOFOLLOW);
+        }
+        let f = opts
+            .open(path)
+            .map_err(|e| if is_symlink(path) { refused(path) } else { e })?;
+        if !f.metadata()?.file_type().is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{} is not a regular file", path.display()),
+            ));
+        }
+        let mut buf = Vec::with_capacity(max + 1);
+        f.take(max as u64 + 1).read_to_end(&mut buf)?;
+        if buf.len() > max {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{} is longer than {max} bytes", path.display()),
+            ));
+        }
+        Ok(buf)
+    }
+
     /// Open `path` for read and write without truncation (a lock file), with
     /// `mode` at creation and no link following. Nothing is ever written
     /// through the handle, so a hard link here is harmless.
@@ -273,6 +316,25 @@ mod imp {
     }
     pub fn create_dir_all_below(_root: &Path, dir: &Path) -> io::Result<()> {
         fs::create_dir_all(dir)
+    }
+    pub fn create_exclusive_nofollow(path: &Path, bytes: &[u8], _mode: u32) -> io::Result<()> {
+        use std::io::Write;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        f.write_all(bytes)
+    }
+    pub fn read_small_nofollow(path: &Path, max: usize) -> io::Result<Vec<u8>> {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        fs::File::open(path)?
+            .take(max as u64 + 1)
+            .read_to_end(&mut buf)?;
+        if buf.len() > max {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "too long"));
+        }
+        Ok(buf)
     }
     pub fn open_rw_nofollow(path: &Path, _mode: u32) -> io::Result<fs::File> {
         fs::OpenOptions::new()

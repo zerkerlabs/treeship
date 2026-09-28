@@ -33,6 +33,9 @@ pub fn match_agents(
 
     let mut req = ureq::get(&format!("{base}/v1/agents/match")).query("exercised", exercised);
     if let Some(c) = class {
+        // The hub would answer an unknown class with an empty match set,
+        // which reads as "nothing matched", not "no such class".
+        crate::validate::attestation_class(c)?;
         req = req.query("class", c);
     }
     if min_sessions > 1 {

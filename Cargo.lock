@@ -1808,17 +1808,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hostname"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd"
-dependencies = [
- "cfg-if",
- "libc",
- "windows-link",
-]
-
-[[package]]
 name = "http"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3160,7 +3149,7 @@ dependencies = [
 
 [[package]]
 name = "rig-treeship"
-version = "0.31.10"
+version = "0.31.11"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -4327,7 +4316,7 @@ dependencies = [
 
 [[package]]
 name = "treeship-cli"
-version = "0.31.10"
+version = "0.31.11"
 dependencies = [
  "base64",
  "clap",
@@ -4348,18 +4337,18 @@ dependencies = [
  "treeship-zk-circom",
  "treeship-zk-risc0",
  "ureq",
+ "url",
 ]
 
 [[package]]
 name = "treeship-core"
-version = "0.31.10"
+version = "0.31.11"
 dependencies = [
  "aes-gcm",
  "base64",
  "ed25519-dalek",
  "fs2",
  "hex",
- "hostname",
  "libc",
  "p256",
  "rand 0.8.5",
@@ -4373,7 +4362,7 @@ dependencies = [
 
 [[package]]
 name = "treeship-core-wasm"
-version = "0.31.10"
+version = "0.31.11"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ec 0.4.2",

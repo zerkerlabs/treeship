@@ -28,6 +28,7 @@ fn init_in_a_fresh_dir_does_not_claim_the_global_workspace_is_this_one() {
 
     // A global workspace exists, as it does for any real user.
     let seed = Command::new(cli_path())
+        .env_remove("TREESHIP_CONFIG")
         .current_dir(home.path())
         .env("HOME", home.path())
         .args(["init", "--global"])
@@ -41,6 +42,7 @@ fn init_in_a_fresh_dir_does_not_claim_the_global_workspace_is_this_one() {
 
     // Now init in an unrelated directory that has no workspace of its own.
     let out = Command::new(cli_path())
+        .env_remove("TREESHIP_CONFIG")
         .current_dir(project.path())
         .env("HOME", home.path())
         .args(["init"])
@@ -61,7 +63,7 @@ fn init_in_a_fresh_dir_does_not_claim_the_global_workspace_is_this_one() {
     // It must say what is actually true and give both ways forward, or the
     // reader is left where the old message left them.
     assert!(
-        msg.contains("no Treeship workspace here"),
+        msg.contains("no Treeship workspace of its own"),
         "the message must say the directory has no workspace: {msg}"
     );
     assert!(
@@ -79,6 +81,7 @@ fn init_still_refuses_when_this_directory_is_already_initialized() {
 
     let run = |args: &[&str]| {
         Command::new(cli_path())
+            .env_remove("TREESHIP_CONFIG")
             .current_dir(project.path())
             .env("HOME", home.path())
             .args(args)

@@ -42,11 +42,16 @@ fn subcommands_in(help: &str) -> Vec<String> {
 /// top-level command -> its subcommand names (empty when it has none),
 /// read from the binary's own help (`--help-all` lists hidden commands).
 fn command_tree() -> BTreeMap<String, BTreeSet<String>> {
-    let out = Command::new(cli_path()).arg("--help-all").output().unwrap();
+    let out = Command::new(cli_path())
+        .env_remove("TREESHIP_CONFIG")
+        .arg("--help-all")
+        .output()
+        .unwrap();
     let top = subcommands_in(&String::from_utf8_lossy(&out.stdout));
     let mut map = BTreeMap::new();
     for name in top {
         let out = Command::new(cli_path())
+            .env_remove("TREESHIP_CONFIG")
             .args([name.as_str(), "--help"])
             .output()
             .unwrap();

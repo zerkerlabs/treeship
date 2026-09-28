@@ -75,7 +75,8 @@ pub fn attach(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
     let hub_name = name.unwrap_or("default");
-    let endpoint = endpoint.unwrap_or("https://api.treeship.dev").to_string();
+    // A trailing slash used to reach `//v1/dock/challenge`, a 404.
+    let endpoint = normalize_endpoint(endpoint.unwrap_or("https://api.treeship.dev"));
 
     // If a connection with stored keys exists, PROBE the hub before claiming
     // "reconnected". Cached keys can outlive the server's dock registration
@@ -663,6 +664,44 @@ pub fn open(
         .resolve_hub(hub)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
+    // Only the hosted hub has a workspace UI to open. A self-hosted hub
+    // answers JSON at /v1/workspace/{dock}; there is no page to send a
+    // browser to, so no share token is minted for it either (CLI-12: a
+    // local hub's token used to be pasted into a treeship.dev URL).
+    // The hosted hub speaks https only: a share token minted over plain
+    // http would travel in the clear, so such an endpoint is refused here.
+    if is_treeship_host(&host_of(&entry.endpoint)) && !entry.endpoint.starts_with("https://") {
+        return Err(crate::exit::usage(format!(
+            "hub endpoint {} names the hosted hub over plain http; use https://api.treeship.dev",
+            entry.endpoint
+        )));
+    }
+    if !is_hosted_endpoint(&entry.endpoint) {
+        let workspace = format!(
+            "{}/v1/workspace/{}",
+            entry.endpoint.trim_end_matches('/'),
+            entry.hub_id
+        );
+        if printer.format == crate::printer::Format::Json {
+            printer.json(&serde_json::json!({
+                "status": "ok",
+                "hub": entry.hub_id,
+                "workspace_ui": serde_json::Value::Null,
+                "workspace_json": workspace,
+                "opened": false,
+                "message": "this hub has no workspace UI; its workspace is JSON",
+            }));
+            return Ok(());
+        }
+        printer.blank();
+        printer.info("this hub has no workspace UI; its workspace is JSON:");
+        printer.info(&format!("  {workspace}"));
+        printer
+            .hint("authenticate with your dock's DPoP key, or a share token from POST /v1/session");
+        printer.blank();
+        return Ok(());
+    }
+
     // We need the dock's private key to DPoP-sign the session mint request.
     let hub_secret_hex = resolve_dpop_secret_hex(entry, &ctx.keys)?;
 
@@ -682,17 +721,24 @@ pub fn open(
         .as_str()
         .ok_or("hub did not return a session token")?;
 
-    // 2. Build the browser URL. The workspace UI lives on treeship.dev
-    //    regardless of which Hub endpoint minted the token.
-    let url = format!(
-        "https://treeship.dev/workspace/{}?session={}",
-        entry.hub_id, token,
-    );
+    // 2. The workspace UI on treeship.dev; the token was minted by the
+    //    hosted hub, the same origin family, so it travels nowhere else.
+    let url = hosted_workspace_url(&entry.hub_id, token);
 
-    printer.blank();
-    printer.info(&url);
-    printer.hint("link is valid for 15 minutes");
-    printer.blank();
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "hub": entry.hub_id,
+            "workspace_ui": url,
+            "valid_for_s": 900,
+            "opened": !no_open,
+        }));
+    } else {
+        printer.blank();
+        printer.info(&url);
+        printer.hint("link is valid for 15 minutes");
+        printer.blank();
+    }
 
     if !no_open {
         #[cfg(target_os = "macos")]
@@ -705,6 +751,120 @@ pub fn open(
         }
     }
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// unpublish
+// ---------------------------------------------------------------------------
+
+/// `treeship hub unpublish <session_id>`: DELETE /v1/receipt/{id} on the
+/// attached hub, signed with this dock's DPoP key. The hub tombstones the
+/// receipt (body removed, 410 Gone from then on); only the publishing dock
+/// is allowed, so a 403 means another dock published it. Nothing local is
+/// touched.
+pub fn unpublish(
+    session_id: &str,
+    hub: Option<&str>,
+    reason: Option<&str>,
+    yes: bool,
+    config: Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !session_id.starts_with("ssn_") || session_id.len() > 128 {
+        return Err(crate::exit::usage(format!(
+            "{session_id:?} is not a session id (ssn_<hex>)"
+        )));
+    }
+    // Permanent, so it is confirmed: on a terminal the person types the id
+    // back; off a terminal, or in JSON mode, `--yes` is the confirmation
+    // and its absence is a usage error, never a takedown (0.31.11 re-test,
+    // N-42: it asked nothing, even without a TTY).
+    if !yes {
+        let interactive = printer.format != crate::printer::Format::Json
+            && std::io::IsTerminal::is_terminal(&std::io::stdin());
+        if !interactive {
+            return Err(crate::exit::usage(format!(
+                "hub unpublish is permanent: pass --yes to take {session_id} down without a prompt"
+            )));
+        }
+        printer.warn(
+            &format!(
+                "this takes {session_id} down for good: the hub keeps no body and answers 410 from then on, and the id cannot be re-uploaded"
+            ),
+            &[],
+        );
+        eprint!("  type the session id to confirm: ");
+        let mut typed = String::new();
+        std::io::stdin().read_line(&mut typed)?;
+        if typed.trim() != session_id {
+            return Err(crate::exit::usage(
+                "not confirmed; nothing was taken down".to_string(),
+            ));
+        }
+    }
+    let ctx = ctx::open(config)?;
+    let (_name, entry) = ctx
+        .config
+        .resolve_hub(hub)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let hub_secret_hex = resolve_dpop_secret_hex(entry, &ctx.keys)?;
+    let url = format!(
+        "{}/v1/receipt/{session_id}",
+        entry.endpoint.trim_end_matches('/')
+    );
+    let dpop_jwt = build_dpop_jwt(&hub_secret_hex, "DELETE", &url)?;
+    let body = serde_json::json!({ "reason": reason.unwrap_or("") });
+    let response = ureq::delete(&url)
+        .set("Authorization", &format!("DPoP {}", entry.hub_id))
+        .set("DPoP", &dpop_jwt)
+        .send_json(body);
+    let doc: serde_json::Value = match response {
+        Ok(resp) => resp.into_json().unwrap_or(serde_json::Value::Null),
+        Err(ureq::Error::Status(code, resp)) => {
+            let detail: serde_json::Value = resp.into_json().unwrap_or(serde_json::Value::Null);
+            let msg = detail["error"].as_str().unwrap_or("").to_string();
+            let what = match code {
+                403 => "another dock published this receipt; only the publisher can take it down",
+                404 => "the hub has no session with this id",
+                410 => "this receipt was already taken down",
+                401 => "the hub refused this dock's DPoP proof",
+                _ => "the hub refused the takedown",
+            };
+            return Err(format!(
+                "{what} (HTTP {code}{})",
+                if msg.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {msg}")
+                }
+            )
+            .into());
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let tombstoned_at = doc["tombstoned_at"].as_i64();
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "session_id": session_id,
+            "hub": entry.hub_id,
+            "receipt_url": share_url(&entry.endpoint, None, &format!("/v1/receipt/{session_id}")),
+            "tombstoned_at": tombstoned_at,
+            "cached_copies_max_age_s": 86400,
+        }));
+        return Ok(());
+    }
+    printer.success(
+        "receipt taken down",
+        &[
+            ("session", session_id),
+            ("hub", &entry.hub_id),
+            ("now answers", "410 Gone at its receipt URL"),
+        ],
+    );
+    printer.hint("local copies of the receipt are untouched; the session id cannot be re-uploaded");
+    printer.hint("copies a browser or proxy cached while it was public can persist for up to 24h (it was served with max-age=86400)");
     Ok(())
 }
 
@@ -794,17 +954,41 @@ pub(crate) fn share_url(endpoint: &str, returned: Option<&str>, api_path: &str) 
     let Some(returned) = returned.filter(|u| !u.is_empty()) else {
         return own;
     };
-    if is_treeship_host(host_of(returned)) && !is_treeship_host(host_of(endpoint)) {
+    if is_treeship_host(&host_of(returned)) && !is_treeship_host(&host_of(endpoint)) {
         return own;
     }
     returned.to_string()
 }
 
-fn host_of(url: &str) -> &str {
-    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    let rest = rest.split('/').next().unwrap_or("");
-    let rest = rest.rsplit('@').next().unwrap_or(rest);
-    rest.split(':').next().unwrap_or("")
+/// The hosted hub's workspace page for a dock, with a share token minted
+/// by that hub. Only ever built for a treeship.dev endpoint.
+pub(crate) fn hosted_workspace_url(hub_id: &str, token: &str) -> String {
+    format!("https://treeship.dev/workspace/{hub_id}?session={token}")
+}
+
+/// Is `endpoint` the hosted hub (a treeship.dev host)? Anything else, a
+/// local hub, another company's, or a URL smuggling credentials in front
+/// of a treeship.dev host, is self-hosted for every decision here.
+pub(crate) fn is_hosted_endpoint(endpoint: &str) -> bool {
+    endpoint.starts_with("https://") && is_treeship_host(&host_of(endpoint))
+}
+
+/// An endpoint as stored: scheme and authority as given, no trailing slash
+/// (paths are appended with their own `/`).
+pub(crate) fn normalize_endpoint(raw: &str) -> String {
+    raw.trim().trim_end_matches('/').to_string()
+}
+
+/// The host of `url` by a real parser, or "" when it does not parse or
+/// carries userinfo (`http://a@b`): a hand-rolled split once read the part
+/// after `@` as the host, which is not what every client connects to.
+fn host_of(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(u) if u.username().is_empty() && u.password().is_none() => {
+            u.host_str().unwrap_or("").to_string()
+        }
+        _ => String::new(),
+    }
 }
 
 fn is_treeship_host(host: &str) -> bool {
@@ -1304,5 +1488,30 @@ mod tests {
         let secret_hex = "ef".repeat(32);
         let entry = conn("hub_legacy", Some(secret_hex.clone()));
         assert_eq!(resolve_dpop_secret_hex(&entry, &keys).unwrap(), secret_hex);
+    }
+
+    #[test]
+    fn only_a_treeship_dev_endpoint_is_the_hosted_hub() {
+        assert!(is_hosted_endpoint("https://api.treeship.dev"));
+        assert!(is_hosted_endpoint("https://api.treeship.dev/"));
+        // The hosted hub over plain http is not "hosted": no token over http.
+        assert!(!is_hosted_endpoint("http://api.treeship.dev"));
+        assert!(!is_hosted_endpoint("http://127.0.0.1:8080/"));
+        assert!(!is_hosted_endpoint("https://hub.example.internal"));
+        // Credentials in front of a treeship.dev host: a parser disagrees
+        // with a split on `@` about the host, so it is never hosted.
+        assert!(!is_hosted_endpoint(
+            "http://127.0.0.1:18527@api.treeship.dev"
+        ));
+        assert!(!is_hosted_endpoint("not a url"));
+        assert_eq!(
+            hosted_workspace_url("dck_1", "tok"),
+            "https://treeship.dev/workspace/dck_1?session=tok"
+        );
+        assert_eq!(normalize_endpoint("http://host:8080/"), "http://host:8080");
+        assert_eq!(
+            normalize_endpoint(" http://host:8080// "),
+            "http://host:8080"
+        );
     }
 }

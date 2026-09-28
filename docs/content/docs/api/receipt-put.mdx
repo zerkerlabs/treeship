@@ -5,7 +5,7 @@ description: Upload a Session Receipt v1 to the hub. DPoP authenticated. Idempot
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Uploads a [Session Receipt v1](/docs/concepts/session-receipts) to the hub and makes it available at the permanent public URL `https://treeship.dev/receipt/{session_id}`.
+Uploads a [Session Receipt v1](/docs/concepts/session-receipts) to the hub and makes it available at the public URL `https://treeship.dev/receipt/{session_id}`, until the publishing dock takes it down with [`treeship hub unpublish`](/docs/cli/hub#treeship-hub-unpublish) ([`DELETE /v1/receipt/{session_id}`](/docs/api/receipt-delete)).
 
 In practice you do not call this directly. Run [`treeship session report`](/docs/cli/session#treeship-session-report) and the CLI handles package discovery, body serialization, and DPoP signing for you.
 
@@ -44,11 +44,13 @@ DPoP-authenticated. The `Authorization` header must be `DPoP {dock_id}`, and the
 
 See the [Hub API overview](/docs/api/overview) for full DPoP details.
 
-## Idempotency
+## Write-once, not overwrite
 
-PUT is idempotent for the owning dock. A second PUT from the same dock for the same `session_id` overwrites the first and refreshes the agent registry.
+A `session_id` slot is filled exactly once. A second PUT from the **owning** dock is idempotent only for a byte-identical replay -- the exact same request body succeeds again with the same response, refreshing the agent registry; anything else (a different receipt for the same id) is rejected with `409`, never silently replaces the first.
 
 A PUT from a **different** dock for a `session_id` that already exists is rejected with `403`. Session ids are owned by the first dock to upload a receipt for them.
+
+A PUT for a `session_id` the publishing dock has [taken down](/docs/api/receipt-delete) is rejected with `410`: the slot is retired permanently and is never refilled, by any dock.
 
 ## Side effects
 
@@ -73,7 +75,7 @@ On success, the hub:
 | Field | Type | Description |
 |-------|------|------|
 | `session_id` | string | Echoed session id |
-| `receipt_url` | string | Permanent public URL for the uploaded receipt |
+| `receipt_url` | string | Public URL for the uploaded receipt |
 | `agents` | integer | Number of agent nodes extracted from the receipt's agent graph |
 | `events` | integer | Number of timeline events in the receipt |
 | `uploaded_at` | integer | Unix timestamp of the upload |
@@ -83,11 +85,17 @@ On success, the hub:
 | Status | Body | Cause |
 |--------|------|------|
 | `400` | `{"error": "missing session_id in path"}` | Empty path parameter |
+| `400` | `{"error": "session_id too long (max 128 chars)"}` | Path parameter over 128 characters |
 | `400` | `{"error": "empty request body"}` | Zero-length body |
 | `400` | `{"error": "invalid receipt JSON: ..."}` | Body does not parse as valid JSON |
 | `400` | `{"error": "unsupported receipt type: ..."}` | `type` field is not `treeship/session-receipt/v1` |
 | `400` | `{"error": "receipt missing session.id"}` | `session.id` field is missing |
 | `400` | `{"error": "session_id in path does not match receipt body"}` | Path parameter does not match `session.id` in the body |
+| `401` | (DPoP error body) | DPoP proof invalid, expired, replayed or bound to another URL |
+| `403` | `{"error": "session_id is owned by another dock"}` | A different dock already published a receipt for this `session_id` |
+| `409` | `{"error": "receipt already uploaded for this session; receipts are write-once"}` | Same dock, but this exact body doesn't match what's already stored (a byte-identical replay succeeds instead) |
+| `410` | `{"error": "this receipt was taken down by its publisher; the session id is retired"}` | The publishing dock [took this receipt down](/docs/api/receipt-delete); the slot is never refilled |
+| `413` | `{"error": "receipt body exceeds 10 MB limit"}` | Request body over 10 MB |
 | `401` | `{"error": "invalid DPoP proof"}` | DPoP JWT invalid or expired |
 | `403` | `{"error": "session_id is owned by another dock"}` | A different dock has already uploaded a receipt for this session id |
 | `500` | `{"error": "failed to store receipt"}` | Database error |

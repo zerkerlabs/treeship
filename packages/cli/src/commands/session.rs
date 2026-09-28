@@ -29,6 +29,9 @@ use crate::{ctx, printer::Printer};
 
 fn session_path() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
+    // The walk stops at the home directory, like the shell hook's: nothing
+    // above it is the person's to configure.
+    let home = home::home_dir().map(|h| std::fs::canonicalize(&h).unwrap_or(h));
     loop {
         let candidate = dir.join(".treeship").join("session.json");
         if candidate.exists() {
@@ -39,10 +42,75 @@ fn session_path() -> Option<PathBuf> {
         if ts_dir.is_dir() {
             return Some(candidate);
         }
+        if home.as_deref() == Some(dir.as_path()) {
+            return None;
+        }
         if !dir.pop() {
             return None;
         }
     }
+}
+
+/// The workspace a session command records into.
+///
+/// An explicit `--config` wins. Otherwise, when an active session is found by
+/// the walk up from the cwd and a `config.json` sits beside its
+/// `session.json`, that workspace is the one: the session was started there,
+/// and an exported `TREESHIP_CONFIG` used to send the plugin hooks' approvals
+/// and attestations to another store while the session's own log got the
+/// events (0.31.11 re-test, N-12 / N-36). The same rule the shell hook uses.
+/// A project config is opened as DISCOVERED, with every discovery check; the
+/// person's own global config is opened as itself. With no active session,
+/// the normal resolution (`TREESHIP_CONFIG`, then discovery) applies.
+pub fn open_ctx(config: Option<&str>) -> Result<ctx::Ctx, Box<dyn std::error::Error>> {
+    open_workspace_ctx(config, true)
+}
+
+/// `open_ctx` for `session start`: no session exists yet, so the workspace is
+/// the `.treeship/` the walk found, where `session.json` is about to be
+/// written. Its config and the session then agree from the first artifact.
+fn open_ctx_for_start(config: Option<&str>) -> Result<ctx::Ctx, Box<dyn std::error::Error>> {
+    open_workspace_ctx(config, false)
+}
+
+fn open_workspace_ctx(
+    config: Option<&str>,
+    require_session: bool,
+) -> Result<ctx::Ctx, Box<dyn std::error::Error>> {
+    if let Some(explicit) = config {
+        return Ok(ctx::open(Some(explicit))?);
+    }
+    if let Some(session_json) = session_path().filter(|p| !require_session || p.is_file()) {
+        let beside = session_json.with_file_name("config.json");
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        // Only a workspace inside the person's HOME qualifies. A harness
+        // that sandboxes HOME and TREESHIP_CONFIG but runs from the real
+        // user's project would otherwise climb to the real user's session
+        // and sign with their key (the incident config.rs documents); a
+        // walk that never passes HOME finds nothing here.
+        let inside_home = home::home_dir().is_some_and(|h| {
+            session_json
+                .parent()
+                .and_then(|ts| ts.parent())
+                .is_some_and(|project| canon(project).starts_with(canon(&h)))
+        });
+        if inside_home && beside.is_file() {
+            // The .treeship dir and the config beside the session must be
+            // real: a repository's `config.json -> ~/.treeship/config.json`
+            // would canonicalize to the global config and open as --config,
+            // signing with the global key into the global store with the
+            // repository's session as parent.
+            crate::safe_fs::refuse_symlinks_under_treeship(&beside)?;
+            let is_global = home::home_dir()
+                .map(|h| canon(&h.join(".treeship").join("config.json")))
+                .is_some_and(|g| g == canon(&beside));
+            if is_global {
+                return Ok(ctx::open(Some(&beside.to_string_lossy()))?);
+            }
+            return Ok(ctx::open_discovered(&beside)?);
+        }
+    }
+    Ok(ctx::open(None)?)
 }
 
 fn session_dir() -> Option<PathBuf> {
@@ -264,15 +332,49 @@ pub(crate) fn count_chain_artifacts(ctx: &ctx::Ctx, root_id: &str) -> u64 {
 
 /// Get the host ID for the current machine.
 pub(crate) fn local_host_id() -> String {
-    // Use PropagationContext's approach: read from env or derive from hostname
-    std::env::var("TREESHIP_HOST_ID").unwrap_or_else(|_| {
-        std::process::Command::new("hostname")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|h| format!("host_{}", h.trim().replace('.', "_")))
-            .unwrap_or_else(|| "host_unknown".into())
-    })
+    // TREESHIP_HOST_ID names the host outright. Otherwise a random id made
+    // once per install and kept at ~/.treeship/host_id: stable on one
+    // machine so a receipt's hosts group, and carrying nothing about the
+    // machine. A hostname digest was tried first and reversed from a guess
+    // list of common machine names in seconds (0.31.11 re-test, N-41).
+    std::env::var("TREESHIP_HOST_ID")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(treeship_core::session::context::read_host_id_file)
+        .or_else(create_host_id_file)
+        .unwrap_or_else(|| "host_unknown".into())
+}
+
+/// Mint `host_` + 16 hex characters from the OS random source and keep it at
+/// ~/.treeship/host_id (0600, never through a link). Several sessions
+/// starting at once on a fresh install race here: the file is created
+/// exclusively, and a loser reads the winner's id back, so one install has
+/// one id. None when there is no HOME or nothing can be written or read;
+/// the caller then says `host_unknown`. `init` calls this too, so the race
+/// only exists on installs from before the file.
+pub(crate) fn create_host_id_file() -> Option<String> {
+    use rand::RngCore;
+    let path = treeship_core::session::context::host_id_file()?;
+    let mut bytes = [0u8; 8];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let id = format!("host_{}", hex::encode(bytes));
+    if let Some(dir) = path.parent() {
+        if !dir.is_dir() {
+            crate::safe_fs::create_dir_all_nofollow(dir).ok()?;
+        }
+    }
+    crate::safe_fs::refuse_symlinks_under_treeship(&path).ok()?;
+    match treeship_core::fs_safe::create_exclusive_nofollow(
+        &path,
+        format!("{id}\n").as_bytes(),
+        0o600,
+    ) {
+        Ok(()) => Some(id),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            treeship_core::session::context::read_host_id_file()
+        }
+        Err(_) => None,
+    }
 }
 
 /// Create a base SessionEvent for this session.
@@ -512,7 +614,7 @@ pub fn start(
         None => return Err("no .treeship directory found -- run treeship init first".into()),
     };
 
-    let ctx = ctx::open(config)?;
+    let ctx = open_ctx_for_start(config)?;
 
     if let Some(reference) = workflow_ref.as_deref() {
         validate_workflow_ref(&ctx, reference)?;
@@ -741,7 +843,7 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
             return Ok(());
         };
 
-        let ctx = ctx::open(config)?;
+        let ctx = open_ctx(config)?;
         let root_verified = if let Some(ref root_id) = manifest.root_artifact_id {
             ctx.storage.read(root_id).is_ok()
         } else {
@@ -787,7 +889,7 @@ pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std
         }
     };
 
-    let ctx = ctx::open(config)?;
+    let ctx = open_ctx(config)?;
 
     // Verify the root artifact actually exists in storage
     let root_verified = if let Some(ref root_id) = manifest.root_artifact_id {
@@ -1450,7 +1552,7 @@ fn mint_coverage_receipt(
     payload: serde_json::Value,
 ) -> Result<String, Box<dyn std::error::Error>> {
     treeship_core::predicates::validate("coverage.v1", Some(&payload))
-        .map_err(|e| format!("predicate validation failed: {e}"))?;
+        .map_err(|e| crate::exit::usage(format!("predicate validation failed: {e}")))?;
 
     let mut stmt = ReceiptStatement::new("system://treeship-session", "coverage.v1");
     stmt.parent_id = Some(close_artifact_id.to_string());
@@ -1488,7 +1590,7 @@ fn mint_session_record(
     payload: serde_json::Value,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
     treeship_core::predicates::validate("session.v1", Some(&payload))
-        .map_err(|e| format!("predicate validation failed: {e}"))?;
+        .map_err(|e| crate::exit::usage(format!("predicate validation failed: {e}")))?;
 
     let class = payload
         .get("attestation_class")
@@ -1603,7 +1705,33 @@ pub fn close(
         }
     };
 
-    let ctx = ctx::open(config)?;
+    // The operator's narrative is free text and lands in the signed receipt;
+    // a home path in it is rewritten as `~/...` like every other field, and
+    // the person is told, since these are their own words (0.31.11 re-test,
+    // N-28).
+    let mut rewritten: Vec<&str> = Vec::new();
+    let mut redact_text = |label: &'static str, text: Option<String>| -> Option<String> {
+        let text = text?;
+        let out = treeship_core::session::redact_home_path(&text);
+        if out != text {
+            rewritten.push(label);
+        }
+        Some(out)
+    };
+    let summary = redact_text("--summary", summary);
+    let headline = redact_text("--headline", headline);
+    let review = redact_text("--review", review);
+    if !rewritten.is_empty() {
+        printer.warn(
+            &format!(
+                "home directory paths in {} were rewritten as ~/... before signing",
+                rewritten.join(", ")
+            ),
+            &[],
+        );
+    }
+
+    let ctx = open_ctx(config)?;
 
     // session.json is mutable discovery state. Re-derive the authoritative
     // workflow reference from the verified root before writing any close
@@ -2930,33 +3058,18 @@ pub fn report(
         return report_exit(&verification_status);
     }
 
-    let ctx = ctx::open(config)?;
+    let ctx = open_ctx(config)?;
     let hub_resolved = ctx.config.resolve_hub(None);
     let (hub_name, hub_entry) = match hub_resolved {
         Ok(t) => t,
         Err(e) => {
-            // No hub attached. In `--format json` we degrade to a
-            // local-only response so AI agents can still consume the
-            // shape; in text mode we keep the original recovery
-            // hint that points the user at `hub attach` or local
-            // verify.
+            // No hub attached: an error, in every format. 0.31.10 printed
+            // a report document carrying `error` on stdout in JSON mode
+            // and exited nonzero; errors go to stderr, and the local verdict
+            // is one flag away.
             if format == "json" {
-                emit_report_output(
-                    format,
-                    None,
-                    None,
-                    None,
-                    None,
-                    &resolved_id,
-                    &receipt_digest,
-                    package_digest.as_deref(),
-                    &verification_status,
-                    &warnings,
-                    Some("hub not attached -- run `treeship hub attach` to publish; see verification_status for the local verdict"),
-                    None,
-                    printer,
-                )?;
-                return finish_report(&verification_status, Some("hub not attached -- run `treeship hub attach` to publish; see verification_status for the local verdict"));
+                let _ = e;
+                return Err("hub not attached: run `treeship hub attach` to publish, or `treeship session report --no-upload` for the local verdict".into());
             }
             return Err(format!(
                 "{e}\n\n  \
@@ -3336,7 +3449,9 @@ fn emit_report_output(
             printer.info(&format!("  warnings: {}", warnings.len()));
         }
         printer.blank();
-        printer.hint("share these URLs freely -- they never expire and need no auth");
+        printer.hint(
+            "share these URLs freely -- they need no auth and stay up until you unpublish them",
+        );
         printer.blank();
     } else {
         // No upload (--no-upload or hub error in text mode is unusual

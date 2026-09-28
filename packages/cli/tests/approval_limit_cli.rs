@@ -7,6 +7,7 @@ use std::process::{Command, Output};
 
 fn run(home: &std::path::Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_treeship"))
+        .env_remove("TREESHIP_CONFIG")
         .env("HOME", home)
         .env("TREESHIP_CONFIG", home.join(".treeship/config.json"))
         .current_dir(home)

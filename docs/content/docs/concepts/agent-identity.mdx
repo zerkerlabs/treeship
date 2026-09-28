@@ -197,6 +197,7 @@ This is the URL operators put in their README, in their docs, on their GitHub pr
 - **Not a CA-rooted PKI.** There's no globally-trusted root authority. Trust bottoms out in the ship's ed25519 keypair plus optional amplifiers (domain, voice, tool manifest).
 - **Not a hosting decision.** The certificate works for cloud agents, local agents, OSS contributors, enterprise deployments. The only requirement is that the issuing machine has a Treeship keystore.
 - **Not a payment identity.** x402 / lobster.cash flows are wrapped by `treeship wrap` and recorded into receipts; the identity of *who is allowed to spend* is a separate concern from *who is allowed to act*. Future certificates may include a `payment` layer; today they don't.
+{/* claims:receipt-tamper-evidence */}
 - **Not immutable.** Certs expire (default 90 days). Re-issue with the same name to publish a new version. The Merkle history of past receipts under the old cert remains verifiable forever — the cert just stops being usable for new attestations.
 
 ## Where to go next

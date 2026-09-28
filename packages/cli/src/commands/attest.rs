@@ -179,7 +179,7 @@ pub fn action(
     if args.parent_id.is_none() && !args.no_parent {
         if let Some(manifest) = crate::commands::session::load_session() {
             if manifest.actor == args.actor {
-                let ctx = ctx::open(args.config.as_deref())?;
+                let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
                 args.parent_id = crate::commands::session::session_chain_head(
                     &ctx,
                     manifest.root_artifact_id.as_deref(),
@@ -242,7 +242,7 @@ fn validate_v2_flags(args: &ActionArgs) -> Result<(), Box<dyn std::error::Error>
 }
 
 fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std::error::Error>> {
-    let ctx = ctx::open(args.config.as_deref())?;
+    let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
 
     let mut meta: Option<Value> = args
         .meta
@@ -364,12 +364,16 @@ fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     }
 
     // Optional: write raw DSSE envelope to file or stdout.
+    let mut envelope_out: Option<(&str, serde_json::Value)> = None;
     if let Some(path) = &args.out {
         let json = result.envelope.to_json()?;
-        if path == "-" {
-            println!("{}", String::from_utf8_lossy(&json));
-        } else {
+        if path != "-" {
             crate::safe_fs::write_user_path(std::path::Path::new(path), &json)?;
+        } else if printer.format == crate::printer::Format::Json {
+            // One document on stdout: the envelope rides inside the result.
+            envelope_out = Some(("envelope", serde_json::from_slice(&json)?));
+        } else {
+            println!("{}", String::from_utf8_lossy(&json));
         }
     }
 
@@ -389,7 +393,7 @@ fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     }
 
     let field_refs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    printer.success("action attested", &field_refs);
+    printer.success_with("action attested", &field_refs, envelope_out.as_slice());
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     if args.parent_id.is_none() && crate::commands::session::load_session().is_some() {
         // --no-parent inside a session: sealed at close, marked unchained
@@ -404,7 +408,7 @@ fn action_v1(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
 
 /// Emit a `treeship/action/v2` receipt bound to a signed grant.
 fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std::error::Error>> {
-    let ctx = ctx::open(args.config.as_deref())?;
+    let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
 
     let mut meta: Option<Value> = args
         .meta
@@ -545,12 +549,16 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
         }
     }
 
+    let mut envelope_out: Option<(&str, serde_json::Value)> = None;
     if let Some(path) = &args.out {
         let json = result.envelope.to_json()?;
-        if path == "-" {
-            println!("{}", String::from_utf8_lossy(&json));
-        } else {
+        if path != "-" {
             crate::safe_fs::write_user_path(std::path::Path::new(path), &json)?;
+        } else if printer.format == crate::printer::Format::Json {
+            // One document on stdout: the envelope rides inside the result.
+            envelope_out = Some(("envelope", serde_json::from_slice(&json)?));
+        } else {
+            println!("{}", String::from_utf8_lossy(&json));
         }
     }
 
@@ -574,7 +582,7 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
     }
 
     let field_refs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    printer.success("action/v2 attested", &field_refs);
+    printer.success_with("action/v2 attested", &field_refs, envelope_out.as_slice());
     printer.hint(&format!("treeship verify {}", result.artifact_id));
     printer.blank();
     Ok(result.artifact_id)
@@ -790,7 +798,7 @@ pub struct ApprovalArgs {
 }
 
 pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx = ctx::open(args.config.as_deref())?;
+    let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
 
     // Build scope from CLI flags. An all-empty scope is treated as "no
     // scope" -- but we refuse to mint such an approval unless the
@@ -1137,7 +1145,7 @@ pub struct HandoffArgs {
 }
 
 pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx = ctx::open(args.config.as_deref())?;
+    let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
     // A handoff of artifacts nobody has is signed garbage; verify used to
     // find out later ("not found") with no hint that the input was wrong.
     crate::validate::artifacts_exist(&ctx.storage, &args.artifacts)?;
@@ -1297,7 +1305,7 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
         }
         return Ok(());
     }
-    let ctx = ctx::open(args.config.as_deref())?;
+    let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
 
     // Chain rule, the same one `attest action` follows (audit follow-up P3):
     // inside an active session a receipt minted by the session's own actor
@@ -1394,7 +1402,7 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
     // attest sign-on-submit, exactly as before (backward compatible). This
     // runs before signing and does not touch the signature path.
     treeship_core::predicates::validate(&args.kind, payload_val.as_ref())
-        .map_err(|e| format!("predicate validation failed: {e}"))?;
+        .map_err(|e| crate::exit::usage(format!("predicate validation failed: {e}")))?;
 
     let mut stmt = ReceiptStatement::new(&args.system, &args.kind);
     stmt.payload = payload_val;
@@ -1678,7 +1686,7 @@ mod a2a_card_tests {
 /// wrapper over the agent_card.v1 predicate: builds the payload, validates it,
 /// signs it, and reports whether the card is key-bound at mint time.
 pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx = ctx::open(args.config.as_deref())?;
+    let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
     // Sign the card with the agent's own key when it has a registered, pinned
     // one, so the card and the agent's actions share a signer and the card is
     // key-bound. Falls back to the ship's default key.
@@ -1862,7 +1870,7 @@ pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std
     if let Some(d) = args.prompt_digest.as_deref() {
         crate::validate::sha256_digest("--prompt-digest", d)?;
     }
-    let ctx = ctx::open(args.config.as_deref())?;
+    let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
     // The deciding agent signs; use its own key when registered.
     let signer = resolve_actor_signer(&ctx, &args.actor)?;
 
@@ -2018,7 +2026,7 @@ pub fn endorsement(
     args: EndorsementArgs,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx = ctx::open(args.config.as_deref())?;
+    let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
 
     let meta: Option<Value> = args
         .meta
@@ -2085,16 +2093,20 @@ pub fn endorsement(
     // Write .last for auto-chaining
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
+    let mut envelope_out: Option<(&str, serde_json::Value)> = None;
     if let Some(path) = &args.out {
         let json = result.envelope.to_json()?;
-        if path == "-" {
-            println!("{}", String::from_utf8_lossy(&json));
-        } else {
+        if path != "-" {
             crate::safe_fs::write_user_path(std::path::Path::new(path), &json)?;
+        } else if printer.format == crate::printer::Format::Json {
+            // One document on stdout: the envelope rides inside the result.
+            envelope_out = Some(("envelope", serde_json::from_slice(&json)?));
+        } else {
+            println!("{}", String::from_utf8_lossy(&json));
         }
     }
 
-    printer.success(
+    printer.success_with(
         "endorsement attested",
         &[
             ("id", &result.artifact_id),
@@ -2102,6 +2114,7 @@ pub fn endorsement(
             ("subject", &args.subject_id),
             ("kind", &args.kind),
         ],
+        envelope_out.as_slice(),
     );
     if let Some(ref rationale) = args.rationale {
         printer.dim_info(&format!("  rationale: {}", rationale));

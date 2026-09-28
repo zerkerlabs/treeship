@@ -77,8 +77,9 @@ enum Command {
 
     /// Set up a new Treeship -- generates a keypair and config
     ///
-    /// Run this once on each machine. Your signing key is encrypted at
-    /// rest and tied to this machine's identity.
+    /// Run this once per workspace. Your signing key is encrypted at rest
+    /// with a seed file kept beside the keystore; the two travel together
+    /// with `.treeship/` (see SECURITY.md).
     ///
     /// Examples:
     ///   treeship init
@@ -181,7 +182,7 @@ enum Command {
     ///   treeship publish agent://deployer
     Publish(PublishArgs),
 
-    /// Audit an agent's transparency log from a Hub: re-verify each anchored
+    /// Audit an agent's transparency log from a Hub: re-verify each logged
     /// entry's inclusion offline and check completeness against its anchor
     ///
     /// Example:
@@ -235,7 +236,7 @@ enum Command {
     /// Examples:
     ///   treeship trust list
     ///   treeship trust add hub_zerker ed25519:<pubkey> --kind hub_checkpoint
-    ///   treeship trust add ship_acme  ed25519:<pubkey> --kind cert_issuer --label "ACME ship"
+    ///   treeship trust add key_a1b2c3d4e5f6a7b8 ed25519:<pubkey> --kind cert_issuer --label "ACME cert issuer"
     ///   treeship trust remove hub_zerker
     #[command(subcommand)]
     Trust(TrustCommand),
@@ -397,7 +398,7 @@ enum Command {
 
     /// An agent's work history: its transparency log filtered to signed
     /// session.v1 records, sortable and filterable. Each record's envelope
-    /// is re-verified on this machine; anchored entries' Merkle inclusion
+    /// is re-verified on this machine; logged entries' Merkle inclusion
     /// is re-proved offline. History proves what was recorded, never
     /// everything that happened.
     ///
@@ -1522,7 +1523,7 @@ enum AgentsCommand {
     /// Promote a Draft or NeedsReview card to Active.
     Approve { agent_id: String },
 
-    /// Delete an Agent Card from the store. Idempotent.
+    /// Delete an Agent Card from the store. Exits 1 when no such card exists.
     Remove { agent_id: String },
 }
 
@@ -2422,7 +2423,7 @@ struct VerifyArgs {
     #[arg(long, default_value_t = false)]
     full: bool,
 
-    /// Fail unless every stretch of claimed work was externally witnessed
+    /// Fail unless every stretch of claimed work was externally confirmed
     /// within this long (e.g. 15m, 1h, 3600).
     ///
     /// A receipt's timestamp is the signer's own clock, signed with the
@@ -2633,8 +2634,9 @@ struct PresentCliArgs {
     /// Comma-separated tool names that must appear in the agent's card. The
     /// presentation carries a re-signed, digests-only card plus openings for
     /// only the named capabilities; the others stay opaque. A disclosed
-    /// presentation is not transparency-anchored (an ephemeral, privacy-
-    /// preserving re-sign), so it omits the Merkle staple.
+    /// presentation carries no transparency-log inclusion of its own
+    /// (an ephemeral, privacy-preserving re-sign), so it omits the Merkle
+    /// staple.
     #[arg(long, value_name = "CAPS", value_delimiter = ',')]
     disclose: Vec<String>,
 }
@@ -2947,7 +2949,7 @@ enum TrustCommand {
     ///
     /// Examples:
     ///   treeship trust add hub_zerker ed25519:<b64> --kind hub_checkpoint
-    ///   treeship trust add ship_acme  ed25519:<b64> --kind cert_issuer --label "ACME ship"
+    ///   treeship trust add key_a1b2c3d4e5f6a7b8 ed25519:<b64> --kind cert_issuer --label "ACME cert issuer"
     Add(TrustAddArgs),
 
     /// Remove a trust root by `key_id` (across all kinds).
@@ -3064,6 +3066,17 @@ enum HubCommand {
     ///   treeship hub open --hub acme-corp
     Open(HubOpenArgs),
 
+    /// Take a published session receipt down from the hub
+    ///
+    /// Only the dock that published it can. The hub removes the receipt
+    /// body for good and answers 410 Gone at its URL from then on; the
+    /// session id is retired (no re-upload). Local copies are untouched.
+    ///
+    /// Examples:
+    ///   treeship hub unpublish ssn_a9993133572ca758
+    ///   treeship hub unpublish ssn_a9993133572ca758 --reason "leaked local paths"
+    Unpublish(HubUnpublishArgs),
+
     /// Remove a hub connection (revokes + deletes local keys)
     ///
     /// Examples:
@@ -3121,6 +3134,22 @@ struct HubOpenArgs {
     /// Print URL only, don't open browser
     #[arg(long)]
     no_open: bool,
+}
+
+#[derive(Args)]
+struct HubUnpublishArgs {
+    /// Session id of the receipt to take down (ssn_...)
+    session_id: String,
+    /// Hub connection to use (default: the active one)
+    #[arg(long, value_name = "NAME|ID")]
+    hub: Option<String>,
+    /// A short public reason (at most 200 characters), shown with the 410
+    #[arg(long, value_name = "TEXT")]
+    reason: Option<String>,
+    /// Skip the confirmation. Required off a terminal and with --format json:
+    /// the takedown is permanent
+    #[arg(long)]
+    yes: bool,
 }
 
 #[derive(Args)]
@@ -4197,6 +4226,14 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             HubCommand::Open(a) => {
                 commands::hub::open(a.hub.as_deref(), a.no_open, cli.config.as_deref(), printer)
             }
+            HubCommand::Unpublish(a) => commands::hub::unpublish(
+                &a.session_id,
+                a.hub.as_deref(),
+                a.reason.as_deref(),
+                a.yes,
+                cli.config.as_deref(),
+                printer,
+            ),
             HubCommand::Kill(a) => {
                 commands::hub::kill(&a.name, a.force, cli.config.as_deref(), printer)
             }

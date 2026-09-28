@@ -18,6 +18,7 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/zerkerlabs/treeship/packages/hub/internal/db"
@@ -162,6 +163,9 @@ func (h *Handlers) PutReceipt(w http.ResponseWriter, r *http.Request) {
 	case "owned_by_other":
 		writeError(w, http.StatusForbidden, "session_id is owned by another dock")
 		return
+	case "tombstoned":
+		writeError(w, http.StatusGone, "this receipt was taken down by its publisher; the session id is retired")
+		return
 	case "already_sealed":
 		writeError(w, http.StatusConflict, "receipt already uploaded for this session; receipts are write-once")
 		return
@@ -225,6 +229,25 @@ func (h *Handlers) GetReceipt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Taken down by its dock: 410 Gone, a short reason, never the old bytes
+	// (the body was removed when the tombstone was written), and no caching
+	// so a cached 200 is not refreshed from here.
+	if sess.TombstonedAt != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusGone)
+		resp := map[string]interface{}{
+			"error":         "receipt removed by its publisher",
+			"session_id":    sess.SessionID,
+			"tombstoned_at": *sess.TombstonedAt,
+		}
+		if sess.TombstoneReason != nil && *sess.TombstoneReason != "" {
+			resp["reason"] = *sess.TombstoneReason
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+		return
+	}
+
 	if sess.ReceiptJSON == nil || *sess.ReceiptJSON == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
@@ -239,7 +262,78 @@ func (h *Handlers) GetReceipt(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(*sess.ReceiptJSON))
 }
 
+// DeleteReceipt handles DELETE /v1/receipt/:session_id [DPoP authenticated].
+//
+// Only the dock that published the receipt can take it down; the same
+// DPoP proof rules as PutReceipt apply (method and URL bound, jti burned,
+// so a captured proof cannot be replayed). The receipt body is removed and
+// the row keeps only the id, the dock and the tombstone time (plus an
+// optional short reason from the body: {"reason": "..."}, capped at 200
+// bytes on a character boundary); the name, timing and counts are cleared
+// with the body. GetReceipt answers 410 Gone from then on; PutReceipt on the id
+// answers 410 too, so the slot is never refilled.
+func (h *Handlers) DeleteReceipt(w http.ResponseWriter, r *http.Request) {
+	dockID := dpop.Verify(h.DB, w, r)
+	if dockID == "" {
+		return
+	}
+	sessionID := chi.URLParam(r, "session_id")
+	if sessionID == "" || len(sessionID) > 128 {
+		writeError(w, http.StatusBadRequest, "missing or too long session_id in path")
+		return
+	}
+	reason := ""
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if body, err := io.ReadAll(r.Body); err == nil && len(body) > 0 {
+		var req struct {
+			Reason string `json:"reason"`
+		}
+		if json.Unmarshal(body, &req) == nil {
+			reason = truncateReason(req.Reason, 200)
+		}
+	}
+	now := time.Now().Unix()
+	outcome, err := db.TombstoneSession(h.DB, sessionID, dockID, reason, now)
+	if err != nil {
+		log.Printf("tombstone session error: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to take the receipt down")
+		return
+	}
+	switch outcome {
+	case "not_found":
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	case "owned_by_other":
+		writeError(w, http.StatusForbidden, "session_id is owned by another dock")
+		return
+	case "already":
+		writeError(w, http.StatusGone, "receipt already taken down")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"session_id":    sessionID,
+		"status":        "tombstoned",
+		"tombstoned_at": now,
+	})
+}
+
 // --- helpers ---
+
+// truncateReason caps a reason at max bytes without splitting a UTF-8
+// sequence, so a long multibyte reason never comes back with a broken
+// final character.
+func truncateReason(reason string, max int) string {
+	if len(reason) <= max {
+		return reason
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(reason[cut]) {
+		cut--
+	}
+	return reason[:cut]
+}
 
 func writeError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")

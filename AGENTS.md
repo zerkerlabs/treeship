@@ -61,9 +61,9 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 
 <!-- claims:rekor-artifact-anchoring -->
 <!-- claims:checkpoint-root-anchoring -->
-1. **ZK TLS (TLSNotary)** -- fully specced, feature-flagged, TLSNotary still alpha
+1. **ZK TLS (TLSNotary)** -- `treeship zk-tls-setup` exists and is not feature-gated, but it only prints setup instructions for a notary you'd run yourself; there is no TLSNotary proving/capture path implemented, and no feature flag gates one because none exists yet
 2. **`treeship attach claude/cursor`** -- agent process detection (the official Claude Code plugin at `integrations/claude-code-plugin/` covers Claude Code via PostToolUse hooks; standalone process attach for Cursor/Cline is still planned)
-3. **Checkpoint anchoring** -- per-artifact Rekor anchoring works as of TS-2026-003 (it never did before: every submission was rejected and the failure was swallowed). Checkpoint roots are not anchored yet, local-only sessions get nothing, and an anchor proves existence by push time, not creation time. RFC 3161 timestamps are not implemented.
+3. **Checkpoint anchoring** -- <!-- claims:rekor-artifact-anchoring --> per-artifact Rekor anchoring works as of TS-2026-003 (it never did before: every submission was rejected and the failure was swallowed). <!-- claims:checkpoint-root-anchoring --> Checkpoint roots are not anchored yet, local-only sessions get nothing, and an anchor proves existence by push time, not creation time. RFC 3161 timestamps are not implemented.
 4. **Certificate pinning to `api.treeship.dev`** -- hub writes are DPoP-authenticated (RFC 9449), which binds the request to a dock keypair, but the TLS connection itself is trusted on the system root store. A machine with a hostile root CA sees a hub it should not trust.
 5. **Selective disclosure of receipt fields** -- receipts are all-or-nothing today; `present --disclose` narrows a capability card, not a session receipt's contents.
 
@@ -164,7 +164,8 @@ treeship-dev/
 | `hub.treeship.dev` | Workspace app (if it has a frontend, not in this repo) | Not this monorepo |
 | `api.treeship.dev` | Go Hub API | Server --packages/hub/ in monorepo |
 
-The `/verify/:id` public page lives at `treeship.dev/verify/:id` and calls `api.treeship.dev` for artifact data. The WASM verifier runs client-side in the browser --Hub cannot forge a passing result.
+<!-- claims:hub-cannot-forge-signed-verification -->
+The `/verify/:id` public page lives at `treeship.dev/verify/:id` and calls `api.treeship.dev` for artifact data. The WASM verifier runs client-side in the browser against the caller's own trust roots -- Hub cannot forge a passing result for that signed artifact. A bare Session Receipt fetch (`GET /v1/receipt/{session_id}`) carries no signature at all and does not get the same guarantee.
 
 ---
 

@@ -1,8 +1,8 @@
 # Agent Capability Cards — design draft
 
-**Status:** draft, not implemented
+**Status:** Largely shipped -- `treeship verify-capability <card_id>` exists and matches this doc's description almost verbatim. Cards are minted by `treeship agent register`, not `treeship attest card` as this doc says throughout -- that command name never shipped. Body not re-audited section by section against 0.31.10 beyond that.
 **Pairs with:** predicate registry (PR #127), `TrustRootKind::AgentCert` (`packages/core/src/trust`)
-**Last updated:** 2026-06-23
+**Last updated:** 2026-06-23 (status line updated 2026-09-27 against v0.31.10)
 
 ## The shift
 

@@ -35,6 +35,7 @@ impl Workspace {
 
     fn cmd(&self) -> Command {
         let mut c = Command::new(cli_path());
+        c.env_remove("TREESHIP_CONFIG");
         c.env("HOME", &self.root);
         c.env(
             "TREESHIP_TRUST_ROOTS",
@@ -246,7 +247,7 @@ fn room_create_delegated_with_delegate_succeeds() {
             "--invitation-authority",
             "delegated",
             "--delegate",
-            "ed25519:deadbeef",
+            "ed25519:AkeP0YomPIIOnZi0xG6MOxlgp3kHdL_R-cQ_heeDWLA",
         ])
         .args(["--format", "json", "--config"])
         .arg(ws.config())

@@ -927,3 +927,68 @@ jobs:
       # and calls it -- the artifact users get, not the one CI built.
       - name: Published @treeship/verify verifies in Node
         run: bash .github/scripts/publish-smoke-verify-js.sh "${GITHUB_REF_NAME#v}"
+
+  # The lockfiles at the tag name the previous release: `release.sh prepare`
+  # can only write the declared range, because the version has no tarball and
+  # so no integrity hash until publish. This job does the other half the
+  # moment the packages are installable, and opens the PR that used to be
+  # a manual step nobody remembered in time (v0.31.10 and v0.31.11 both
+  # left main unbuildable for JS for hours; 0.31.11 re-test, N-3). It is
+  # a PR, not a push, because main is protected. See RELEASING.md.
+  refresh-lockfiles:
+    needs: publish-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24'
+
+      - name: Wait for every published JS package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for pkg in treeship @treeship/core-wasm @treeship/verify @treeship/sdk @treeship/mcp @treeship/a2a; do
+            bash .github/scripts/wait-for-npm-version.sh "$pkg" "$VERSION"
+          done
+
+      - name: Refresh lockfiles against the published versions
+        run: scripts/release.sh refresh-lockfiles
+
+      - name: Open the lockfile PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if git diff --quiet -- '*package-lock.json'; then
+            echo "lockfiles already current at main; nothing to open"
+            exit 0
+          fi
+          BRANCH="release/lockfiles-v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -- '*package-lock.json'
+          git commit -m "chore: refresh npm lockfiles for ${VERSION}" \
+            -m "Resolved entries and integrity hashes for the packages published from v${VERSION}. Opened by the release workflow; see RELEASING.md."
+          # A re-run while the PR from the first run is still open must
+          # update that PR, not fail on the existing branch.
+          git push --force-with-lease -u origin "$BRANCH"
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            echo "lockfile PR for ${VERSION} is already open; branch updated"
+            exit 0
+          fi
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore: refresh npm lockfiles for ${VERSION}" \
+            --body "$(printf '%s\n\n%s\n\n%s' \
+              "The lockfiles at v${VERSION} name the previous release; prepare cannot hash tarballs that do not exist yet. This PR carries the resolved entries and integrity hashes for the packages published from the tag." \
+              "Opened by the release workflow. Checks do not start on a PR opened with the workflow token: push an empty commit or close and reopen it to run them, then merge." \
+              "See RELEASING.md, section \"Lockfiles\".")"

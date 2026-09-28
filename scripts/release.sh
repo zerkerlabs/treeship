@@ -73,6 +73,7 @@ cmd_prepare() {
   # its integrity hash are deliberately left alone until after publish.
   echo "Updating npm lockfiles..."
   for pkg in packages/verify-js packages/sdk-ts bridges/mcp bridges/a2a \
+           integrations/openclaw-plugin \
            tests/runtime-acceptance/aws-lambda \
            tests/runtime-acceptance/cloudflare-worker \
            tests/runtime-acceptance/vercel-edge; do
@@ -84,17 +85,25 @@ cmd_prepare() {
     fi
   done
   echo
-  echo "  IMPORTANT: these lockfiles are now incomplete on purpose -- the resolved"
+  echo "  NOTE: these lockfiles are now incomplete on purpose -- the resolved"
   echo "  entries still name the previous version, because $VERSION has no tarball"
-  echo "  to hash yet. 'npm ci' will refuse until you run, after publish:"
-  echo "        scripts/release.sh refresh-lockfiles"
-  echo "  That is a required release step, not cleanup. Skipping it leaves main"
-  echo "  unbuildable for JS."
+  echo "  to hash yet. After publish, the release workflow's refresh-lockfiles job"
+  echo "  runs 'scripts/release.sh refresh-lockfiles' and opens the lockfile PR;"
+  echo "  merge it (push an empty commit or close/reopen it first so checks run)."
+  echo "  Until it merges, 'npm ci' refuses in the JS packages. See RELEASING.md."
 
   echo
   echo "Folding changelog.d/ fragments into CHANGELOG.md..."
   python3 "$(dirname "$0")/changelog.py" assemble "$VERSION" \
     || { echo "changelog assemble failed" >&2; exit 1; }
+
+  # The docs site carries a copy of CHANGELOG.md, and docs-drift fails when
+  # a released section is missing from it. The section assembled just above
+  # is new, so regenerate the copy here or the release PR goes red.
+  echo
+  echo "Syncing the docs changelog page..."
+  (cd "$(dirname "$0")/../docs" && node scripts/sync-changelog.mjs) \
+    || { echo "docs changelog sync failed (run: cd docs && npm ci)" >&2; exit 1; }
 
   echo
   echo "Running release version preflight..."
@@ -223,6 +232,7 @@ EOF
 cmd_refresh_lockfiles() {
   local failed=0
   for pkg in packages/verify-js packages/sdk-ts bridges/mcp bridges/a2a \
+           integrations/openclaw-plugin \
            tests/runtime-acceptance/aws-lambda \
            tests/runtime-acceptance/cloudflare-worker \
            tests/runtime-acceptance/vercel-edge; do

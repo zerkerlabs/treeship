@@ -35,6 +35,7 @@ impl Ws {
     }
     fn cmd(&self) -> Command {
         let mut c = Command::new(cli_path());
+        c.env_remove("TREESHIP_CONFIG");
         c.env("HOME", &self.root)
             .env("TREESHIP_ALLOW_INSECURE_KEY_PERMS", "1")
             .env("TREESHIP_TRUST_ROOTS", self.root.join("trust_roots.json"))
@@ -440,16 +441,29 @@ fn session_report_exits_nonzero_when_local_verify_fails() {
     let (ok, v) = ws.json_any(&["session", "report", "--no-upload"]);
     assert!(!ok, "a failed local verify must exit nonzero: {v}");
     assert_eq!(v["verification_status"], "fail", "{v}");
-    // The default path with no hub attached emits the same document with an
-    // `error` and used to exit 0 (retest of 0.31.4).
-    let (ok, v) = ws.json_any(&["session", "report"]);
-    assert!(!ok, "no hub and a failed verify must exit nonzero: {v}");
-    assert_eq!(v["verification_status"], "fail", "{v}");
+    // The default path with no hub attached is an error: nothing on stdout,
+    // the error document on stderr, nonzero exit (it used to exit 0 with a
+    // report carrying `error` on stdout; retest of 0.31.4, then 0.31.11 D).
+    let out = ws
+        .cmd()
+        .args(["session", "report", "--format", "json", "--config"])
+        .arg(ws.config())
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "no hub must exit nonzero");
     assert!(
-        v["error"]
-            .as_str()
-            .unwrap_or("")
-            .contains("hub not attached"),
-        "{v}"
+        out.stdout.is_empty(),
+        "an error went to stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    // stderr may start with the TREESHIP_TRUST_ROOTS warning; the error
+    // document is its last line.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let last = stderr.trim().lines().last().unwrap_or("");
+    let err: Value = serde_json::from_str(last).unwrap_or_else(|e| panic!("{e}: {stderr}"));
+    assert_eq!(err["status"], "error", "{err}");
+    assert!(
+        err["error"].as_str().unwrap_or("").contains("--no-upload"),
+        "{err}"
     );
 }

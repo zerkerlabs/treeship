@@ -6,25 +6,28 @@ API server for storing, querying, and distributing Treeship attestations.
 
 Treeship Hub is a Go service that acts as the central registry for attestation envelopes:
 
-- **13 REST endpoints** for envelope CRUD, search, and verification status
+- **~23 REST endpoints** (see `main.go` for the exact, current route list -- device-flow enrollment, artifact push/pull, workspace listing, Merkle checkpoint/proof/consistency, session receipts, ship listing). There is no server-side verification-status endpoint; `/v1/verify/{id}` is retired and returns `410`.
 - **DPoP (Demonstration of Proof-of-Possession) authentication** for token-bound requests
 - Stores attestation metadata and links to artifact hashes
-- Serves the public transparency log
+- Serves this hub's Merkle checkpoint/proof log -- readable by anyone if the hub is public, but a single hub-controlled log, not a federated Certificate-Transparency-style set of independently monitored logs
 
 ## Requirements
 
-- Go 1.22+
-- PostgreSQL 15+
+- Go 1.23+
+- No external database -- SQLite, file-backed (`modernc.org/sqlite`)
 
 ## Running locally
 
 ```sh
 cd packages/hub
-cp .env.example .env   # configure database URL and secrets
-go run ./cmd/server
+go run .
 ```
 
-The server starts on `http://localhost:8080` by default.
+Configure the database path with `TREESHIP_HUB_DB` (checked first) or `DATABASE_PATH` (what Railway sets); with neither set, it defaults to `/var/lib/treeship/hub.db`. The server starts on `http://localhost:8080` by default (`PORT` env var to change it).
+
+## Deploying
+
+Production runs on Railway. Deploy with `scripts/hub-deploy.sh` from the repository root (`RAILWAY_SERVICE=<service id>`); it sets `HUB_VERSION`, `HUB_COMMIT` and `HUB_BUILT_AT` on the service, which the Dockerfile takes as build args, then runs `railway up`. A plain `railway up` has no `.git`, so without those variables `/v1/version` reports `commit: unknown`; with them left from an earlier run it would report that run's commit, which is why the script sets them fresh every time. A deploy from the connected repository takes its commit from `RAILWAY_GIT_COMMIT_SHA` regardless. See `RELEASING.md`.
 
 ## API overview
 

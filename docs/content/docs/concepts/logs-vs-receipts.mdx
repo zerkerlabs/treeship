@@ -13,10 +13,11 @@ A log is **written by the system whose behavior is in question**. A receipt is
 
 Everything else follows from that.
 
+{/* claims:receipt-tamper-evidence */}
 | | Log | Receipt |
 |---|---|---|
 | Written by | the system under question | the same system — but signed |
-| Editable after the fact | yes, by anyone with write access | no; any edit breaks verification |
+| Editable after the fact | yes, by anyone with write access | the signed payload: no, any edit breaks verification. Unsigned fields outside it can still change |
 | Proves order | by timestamp, which the writer controls | by parent hash, inside the signed bytes |
 | Detects a deleted middle entry | no | yes — the chain breaks |
 | Survives the vendor | no | yes — verify offline with a public key |

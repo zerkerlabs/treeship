@@ -9,7 +9,8 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 | Primitive | Usage |
 |-----------|-------|
-| Ed25519 | All artifact signatures |
+| Ed25519 | All artifact signatures, except Verifiable Intent |
+| ES256 (P-256) | Verifiable Intent (`vi`) statements -- JWS-compatible, see [Verifiable Intent](/docs/integrations/verifiable-intent) |
 | SHA-256 | Content-addressed artifact IDs, subject digests |
 | DSSE | Envelope format for all signed statements |
 | PAE | Pre-Authentication Encoding for deterministic signing |
@@ -17,14 +18,14 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 ## Key management
 
-{/* claims:keystore-at-rest */}
 - One Ed25519 keypair per Treeship
+{/* claims:keystore-at-rest */}
 - Private key encrypted at rest (AES-256-GCM) under a key derived from a secret seed file stored alongside the keystore -- not from a passphrase; nothing you type or remember protects it
 - Key never leaves the local machine unless explicitly exported
 - No key escrow, no key recovery service -- losing the seed file makes the keystore unrecoverable
 
-{/* claims:keystore-at-rest */}
 <Callout type="warn">
+{/* claims:keystore-at-rest */}
 Root access to the machine breaks all guarantees. The trust boundary is the machine itself: anyone who can read your `.treeship` directory (keys plus the seed file beside them) can copy it and sign as you. There is no passphrase to additionally compromise.
 </Callout>
 

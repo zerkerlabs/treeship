@@ -61,6 +61,34 @@ impl Printer {
         self.print_fields(fields);
     }
 
+    /// `success` with JSON-valued fields that belong in the same document:
+    /// in JSON mode they are merged into the envelope (a nested object, not
+    /// a second document); in text mode they are not shown, the caller
+    /// prints them however text wants them.
+    pub fn success_with(
+        &self,
+        msg: &str,
+        fields: &[(&str, &str)],
+        extra: &[(&str, serde_json::Value)],
+    ) {
+        // `extra` is output the caller asked for by name (`--out -`), so in
+        // JSON mode it is printed even under `--quiet`: quiet silences
+        // commentary, not requested output. Text mode under quiet stays
+        // silent (the caller printed the raw envelope itself).
+        if self.quiet && (self.format != Format::Json || extra.is_empty()) {
+            return;
+        }
+        if self.format == Format::Json {
+            out!(
+                "{}",
+                self.json_envelope_with("ok", Some(msg), fields, extra)
+            );
+            return;
+        }
+        out!("{}", self.green(&format!("✓ {msg}")));
+        self.print_fields(fields);
+    }
+
     /// ✗ red failure to stderr -- always shows.
     ///
     /// In JSON mode emits a structured error envelope:
@@ -87,12 +115,21 @@ impl Printer {
     }
 
     /// ⚠ amber warning
+    ///
+    /// In JSON mode the warning envelope `{"status": "warning", "message":
+    /// ...}` goes to stderr, like errors: a command that warns and then
+    /// succeeds must still leave exactly one JSON document on stdout
+    /// (0.31.10 printed two on `attest action --v2` out of scope and on
+    /// `trust add --replace`, and `json.load(stdout)` failed with "Extra
+    /// data"). Warnings that belong in the result are fields of the
+    /// success document, not a second document.
     pub fn warn(&self, msg: &str, fields: &[(&str, &str)]) {
         if self.quiet {
             return;
         }
         if self.format == Format::Json {
-            self.print_json_with_status("warning", Some(msg), fields);
+            let body = self.json_envelope("warning", Some(msg), fields);
+            err!("{body}");
             return;
         }
         out!("{}", self.yellow(&format!("⚠ {msg}")));
@@ -130,6 +167,15 @@ impl Printer {
             return;
         }
         out!("{}", self.dim(msg));
+    }
+
+    /// Dim diagnostic on stderr, for commands whose stdout belongs to someone
+    /// else (the shell hooks print into the prompt). Quiet silences it.
+    pub fn note(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
+        err!("{}", self.dim(msg));
     }
 
     /// Bold section header (for status-style multi-part output)
@@ -176,6 +222,16 @@ impl Printer {
         message: Option<&str>,
         fields: &[(&str, &str)],
     ) -> String {
+        self.json_envelope_with(status, message, fields, &[])
+    }
+
+    fn json_envelope_with(
+        &self,
+        status: &str,
+        message: Option<&str>,
+        fields: &[(&str, &str)],
+        extra: &[(&str, serde_json::Value)],
+    ) -> String {
         let mut m = serde_json::Map::new();
         m.insert(
             "status".into(),
@@ -194,6 +250,9 @@ impl Printer {
         }
         for (k, v) in fields {
             m.insert(k.to_string(), serde_json::Value::String(v.to_string()));
+        }
+        for (k, v) in extra {
+            m.insert(k.to_string(), v.clone());
         }
         serde_json::to_string(&m).unwrap_or_default()
     }
