@@ -210,15 +210,25 @@ pub fn host_id_file() -> Option<std::path::PathBuf> {
     })
 }
 
-/// Read the per-install host id when the file exists and holds one.
+/// Read the per-install host id when the file exists and holds one. Never
+/// through a link, never more than 64 bytes, and only the `host_` + 16 hex
+/// form; anything else counts as absent.
 #[cfg(not(target_family = "wasm"))]
 pub fn read_host_id_file() -> Option<String> {
     let path = host_id_file()?;
-    let raw = std::fs::read_to_string(path).ok()?;
+    let raw = crate::fs_safe::read_small_nofollow(&path, 64).ok()?;
+    let raw = String::from_utf8(raw).ok()?;
     let id = raw.trim();
-    let well_formed =
-        id.len() == 21 && id.starts_with("host_") && id[5..].chars().all(|c| c.is_ascii_hexdigit());
-    well_formed.then(|| id.to_string())
+    is_host_id(id).then(|| id.to_string())
+}
+
+/// `host_` followed by exactly 16 lowercase hex characters.
+pub fn is_host_id(id: &str) -> bool {
+    id.len() == 21
+        && id.starts_with("host_")
+        && id[5..]
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
 }
 
 #[cfg(target_family = "wasm")]

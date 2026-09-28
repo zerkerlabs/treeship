@@ -442,8 +442,8 @@ fn now_rfc3339_daemon() -> String {
     treeship_core::statements::unix_to_rfc3339(secs)
 }
 
-/// The same host id the session commands stamp (TREESHIP_HOST_ID, else a
-/// digest of the hostname, never the hostname itself).
+/// The same host id the session commands stamp (TREESHIP_HOST_ID, else the
+/// random per-install id at ~/.treeship/host_id, never the hostname).
 fn local_host_id() -> String {
     crate::commands::session::local_host_id()
 }

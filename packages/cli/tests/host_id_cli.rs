@@ -1,7 +1,8 @@
 //! Receipts carried the machine's hostname as `host_<hostname>` on every
 //! event and in the hosts table, outside the path redaction (0.31.11
-//! re-test, N-41). The id is a digest of the hostname now, unless
-//! TREESHIP_HOST_ID names the host.
+//! re-test, N-41). The id is a random per-install value now (a hostname
+//! digest reverses from a guess list), minted once by `init` or by the first
+//! session, unless TREESHIP_HOST_ID names the host.
 
 use std::process::{Command, Output};
 
@@ -23,6 +24,19 @@ fn receipt_after_a_session(home: &std::path::Path, host_id_env: Option<&str>) ->
         "proj{}",
         N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     ));
+    receipt_after_a_session_at(home, &project, host_id_env)
+}
+
+fn receipt_after_a_session_in(home: &std::path::Path, project: &std::path::Path) -> String {
+    receipt_after_a_session_at(home, project, None)
+}
+
+fn receipt_after_a_session_at(
+    home: &std::path::Path,
+    project: &std::path::Path,
+    host_id_env: Option<&str>,
+) -> String {
+    let project = project.to_path_buf();
     std::fs::create_dir_all(&project).unwrap();
     let cfg = project.join(".treeship/config.json");
     let run = |args: &[&str]| -> Output {
@@ -132,4 +146,113 @@ fn the_host_id_is_random_per_install_not_the_hostname() {
         receipt.contains("\"host_id\": \"host_build-runner-7\""),
         "{receipt}"
     );
+}
+
+fn host_ids_in_events(project: &std::path::Path) -> Vec<String> {
+    let sessions = project.join(".treeship/sessions");
+    let mut ids = Vec::new();
+    for dir in std::fs::read_dir(sessions).unwrap().flatten() {
+        let log = std::fs::read_to_string(dir.path().join("events.jsonl")).unwrap_or_default();
+        for line in log.lines() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                if let Some(h) = v["host_id"].as_str() {
+                    ids.push(h.to_string());
+                }
+            }
+        }
+    }
+    ids
+}
+
+/// `init` mints the id, and six sessions starting at once on an install
+/// without one agree on a single id (the exclusive create decides).
+#[test]
+fn init_mints_the_id_and_concurrent_first_use_agrees_on_one() {
+    let home = tempfile::tempdir().unwrap();
+    let mk = |name: &str| {
+        let project = home.path().join(name);
+        std::fs::create_dir_all(&project).unwrap();
+        let cfg = project.join(".treeship/config.json");
+        let out = Command::new(cli_path())
+            .current_dir(&project)
+            .env("HOME", home.path())
+            .env_remove("TREESHIP_CONFIG")
+            .env_remove("TREESHIP_HOST_ID")
+            .args(["init", "--name", name, "--config"])
+            .arg(&cfg)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", text(&out));
+        (project, cfg)
+    };
+    let projects: Vec<_> = (0..6).map(|i| mk(&format!("p{i}"))).collect();
+    let file = home.path().join(".treeship/host_id");
+    let minted = std::fs::read_to_string(&file).expect("init did not mint ~/.treeship/host_id");
+    assert!(
+        minted.trim().starts_with("host_") && minted.trim().len() == 21,
+        "{minted}"
+    );
+
+    // A legacy install: no file. Six sessions start at once.
+    std::fs::remove_file(&file).unwrap();
+    let children: Vec<_> = projects
+        .iter()
+        .map(|(project, cfg)| {
+            Command::new(cli_path())
+                .current_dir(project)
+                .env("HOME", home.path())
+                .env_remove("TREESHIP_CONFIG")
+                .env_remove("TREESHIP_HOST_ID")
+                .args(["session", "start", "--name", "race", "--config"])
+                .arg(cfg)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    for mut c in children {
+        assert!(c.wait().unwrap().success());
+    }
+    let kept = std::fs::read_to_string(&file).unwrap().trim().to_string();
+    let mut seen: Vec<String> = projects
+        .iter()
+        .flat_map(|(p, _)| host_ids_in_events(p))
+        .collect();
+    seen.sort();
+    seen.dedup();
+    assert_eq!(
+        seen,
+        vec![kept.clone()],
+        "concurrent first use produced several host ids"
+    );
+}
+
+/// A planted link at ~/.treeship/host_id is never followed: not to a file
+/// holding a plausible id, and not to a device that never ends.
+#[cfg(unix)]
+#[test]
+fn a_linked_host_id_file_is_refused() {
+    for (target, label) in [("/dev/zero".to_string(), "device"), (String::new(), "file")] {
+        let home = tempfile::tempdir().unwrap();
+        let project = home.path().join("proj");
+        std::fs::create_dir_all(home.path().join(".treeship")).unwrap();
+        let target = if target.is_empty() {
+            let f = home.path().join("planted");
+            std::fs::write(&f, "host_aaaaaaaaaaaaaaaa\n").unwrap();
+            f.to_string_lossy().to_string()
+        } else {
+            target
+        };
+        std::os::unix::fs::symlink(&target, home.path().join(".treeship/host_id")).unwrap();
+        let receipt = receipt_after_a_session_in(home.path(), &project);
+        assert!(
+            !receipt.contains("host_aaaaaaaaaaaaaaaa"),
+            "{label}: the planted id was adopted"
+        );
+        assert!(
+            receipt.contains("\"host_id\": \"host_unknown\""),
+            "{label}: {receipt}"
+        );
+    }
 }
