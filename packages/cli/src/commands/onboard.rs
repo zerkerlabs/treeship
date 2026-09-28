@@ -59,6 +59,13 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
 
     let ctx = ctx::open(args.config.as_deref())?;
 
+    // In JSON mode the four sub-commands stay silent (each printed its own
+    // success document: three documents on stdout in 0.31.11) and one
+    // document below reports the whole onboarding.
+    let json = printer.format == crate::printer::Format::Json;
+    let quiet = Printer::new(crate::printer::Format::Text, true, printer.no_color);
+    let sub: &Printer = if json { &quiet } else { printer };
+
     // ── 1/4 identity: per-agent key, certified + pinned ────────────────────
     // register --own-key is idempotent: an existing key is reused, never
     // duplicated, so onboard can run repeatedly (e.g. on every agent boot).
@@ -77,7 +84,7 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
         true, // --own-key
         true, // --quiet (no .agent dir dropped into cwd)
         args.config.as_deref(),
-        printer,
+        sub,
     )?;
     let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
     let key_id = crate::commands::cards::registered_key_for_actor(&agents_dir, &actor)
@@ -100,7 +107,7 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
             network: Vec::new(),
             config: args.config.clone(),
         },
-        printer,
+        sub,
     )?;
     // Re-open: the storage index was read when `ctx` opened, before the
     // certificate and the card were minted by the sub-commands (each opens
@@ -113,11 +120,15 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
     // agent onboarded the documented way has its rules at runtime. Before
     // this the record was left at `capabilities: {}` and every tool call was
     // off-card (TASKS-0.31.6 T1).
+    let mut rules_written: Option<usize> = None;
     if let Some(id) = card_id.as_deref() {
         match sync_card_rules(&ctx, &actor, id) {
-            Ok(n) => printer.info(&format!(
-                "      rules: {n} tool(s) written to the card record the gate reads"
-            )),
+            Ok(n) => {
+                rules_written = Some(n);
+                printer.info(&format!(
+                    "      rules: {n} tool(s) written to the card record the gate reads"
+                ))
+            }
             Err(e) => printer.warn(
                 &format!("card record not updated with the signed card's tools: {e}"),
                 &[],
@@ -131,9 +142,9 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
         printer.info("[3/4] publish + anchor to Hub");
         // Fail loudly: --publish is an explicit request, and a silent local-only
         // onboard would let the operator believe the agent is resolvable.
-        crate::commands::publish::publish(&actor, args.config.as_deref(), printer)?;
-        crate::commands::merkle::checkpoint(args.config.as_deref(), printer)?;
-        crate::commands::merkle::publish(args.config.as_deref(), printer)?;
+        crate::commands::publish::publish(&actor, args.config.as_deref(), sub)?;
+        crate::commands::merkle::checkpoint(args.config.as_deref(), sub)?;
+        crate::commands::merkle::publish(args.config.as_deref(), sub)?;
         hub_endpoint = ctx
             .config
             .resolve_hub(None)
@@ -161,6 +172,34 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
     let ship_key = ctx.keys.default_key_id()?;
     let ship_pub = pinnable(&ctx, &ship_key)?;
     let agent_pub = pinnable(&ctx, &key_id)?;
+
+    if json {
+        let mut bundle = serde_json::json!({
+            "cert_issuer": format!("treeship trust add {ship_key} {ship_pub} --kind cert_issuer --yes"),
+            "agent_cert": format!("treeship trust add {key_id} {agent_pub} --kind agent_cert --yes"),
+        });
+        if args.publish {
+            bundle["hub_checkpoint"] = serde_json::json!(format!(
+                "treeship trust add {ship_key} {ship_pub} --kind hub_checkpoint --yes"
+            ));
+        }
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "message": "agent onboarded",
+            "agent": actor,
+            "key": key_id,
+            "card": card_id,
+            "rules_written": rules_written,
+            "published": args.publish,
+            "hub": hub_endpoint,
+            "trust_bundle": bundle,
+            "verify": match &hub_endpoint {
+                Some(endpoint) => format!("treeship resolve --hub {endpoint} {actor}"),
+                None => format!("treeship resolve {actor}"),
+            },
+        }));
+        return Ok(());
+    }
 
     printer.info("[4/4] trust bundle — hand these to a counterparty:");
     printer.blank();

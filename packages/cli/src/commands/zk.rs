@@ -2,6 +2,24 @@ use crate::printer::Printer;
 
 /// Show full ZK configuration status.
 pub fn setup(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    if printer.format == crate::printer::Format::Json {
+        let notary = std::env::var("TREESHIP_NOTARY").ok();
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "zk_in_build": cfg!(feature = "zk"),
+            "circom_circuits": if cfg!(feature = "zk") {
+                serde_json::json!(["policy-checker", "spend-limit-checker", "input-output-binding", "prompt-template"])
+            } else {
+                serde_json::json!([])
+            },
+            "snarkjs": cfg!(feature = "zk")
+                && std::process::Command::new("snarkjs").arg("--version").output().is_ok(),
+            "risc0_prover": if cfg!(feature = "zk") { "local CPU" } else { "not in build" },
+            "bonsai": std::env::var("BONSAI_API_KEY").is_ok_and(|k| !k.is_empty()),
+            "tls_notary": notary,
+        }));
+        return Ok(());
+    }
     printer.blank();
     printer.info("ZK configuration");
     printer.blank();
@@ -84,6 +102,17 @@ pub fn setup(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Print self-hosted TLSNotary setup instructions.
 pub fn tls_notary_setup(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "message": "run your own TLS notary and point Treeship at it",
+            "run": "docker run -p 7047:7047 ghcr.io/tlsnotary/tlsn-notary:0.1.0-alpha.14",
+            "env": { "TREESHIP_NOTARY": "localhost:7047" },
+            "config_yaml": { "zk_tls": { "notary": "localhost:7047" } },
+            "default_notary": "notary.pse.dev:7047",
+        }));
+        return Ok(());
+    }
     printer.blank();
     printer.info("Self-hosted TLS notary setup");
     printer.blank();

@@ -9,6 +9,9 @@ COPY . .
 #   docker build --build-arg HUB_VERSION=0.31.10 --build-arg HUB_COMMIT=$(git rev-parse --short HEAD) \
 #     --build-arg HUB_BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) .
 # Unset, the endpoint reports "dev" / "unknown" rather than guessing.
+# On Railway, `scripts/hub-deploy.sh` sets HUB_VERSION / HUB_COMMIT /
+# HUB_BUILT_AT as service variables before `railway up`; Railway hands
+# service variables to the build as these ARGs.
 # Build args with defaults. Railway passes its own build-time variables in
 # as ARGs when declared, so the commit comes from RAILWAY_GIT_COMMIT_SHA when
 # nothing else set it. An empty HUB_VERSION falls back at runtime to the
