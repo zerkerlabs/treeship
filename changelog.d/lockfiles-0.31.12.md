@@ -1,0 +1,1 @@
+- **npm lockfiles point at the published 0.31.12 packages.** Refreshed by hand after publish; the release workflow's new lockfile job failed on its first run and is fixed separately.
