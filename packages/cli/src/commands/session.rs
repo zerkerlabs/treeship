@@ -370,11 +370,30 @@ pub(crate) fn create_host_id_file() -> Option<String> {
         0o600,
     ) {
         Ok(()) => Some(id),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            treeship_core::session::context::read_host_id_file()
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => read_host_id_file_settled(&path),
         Err(_) => None,
     }
+}
+
+/// A loser of the exclusive create reads the winner's id. The file is
+/// published whole (see `create_exclusive_nofollow`), so one read is the
+/// rule; on a filesystem without hard links the winner writes in place, and
+/// a read that finds the file still shorter than an id waits a moment and
+/// looks again, up to half a second, rather than settling for `host_unknown`.
+/// A file that is long enough and still not an id is left alone at once.
+fn read_host_id_file_settled(path: &std::path::Path) -> Option<String> {
+    const ID_LEN: usize = "host_".len() + 16;
+    for _ in 0..50 {
+        if let Some(id) = treeship_core::session::context::read_host_id_file() {
+            return Some(id);
+        }
+        match treeship_core::fs_safe::read_small_nofollow(path, 64) {
+            Ok(raw) if raw.len() < ID_LEN => {}
+            _ => return None,
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    None
 }
 
 /// Create a base SessionEvent for this session.
