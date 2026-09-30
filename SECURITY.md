@@ -47,6 +47,7 @@ Key properties:
 - Rekor anchors count as witnessed time only when the stapled log entry verifies offline against a pinned transparency-log key; local anchor records never do (see [TS-2026-003](docs/security/TS-2026-003.md))
 <!-- claims:package-verify-binds-receipt -->
 - A package's close record must name that session's own chained `session.close`, signed by the same key as the chain-root `session.start` (or a record key that close names); it is not enough for the record to merely verify under some key the package carries (see [TS-2026-004](docs/security/TS-2026-004.md) for packages built before 0.31.10)
+- A capability card is key-bound only when its own key is among the signatures that verified and that key's `agent_cert` pin names the card's agent; pins without an agent scope no longer bind (see [TS-2026-005](docs/security/TS-2026-005.md) to re-pin counterparty keys)
 - Content-addressed artifact IDs derived from PAE bytes
 - Hub: device authorization for **enrollment**, **DPoP (RFC 9449)** for **every authenticated Hub write** (no bearer session tokens for that path)
 - Approval nonce binding prevents approval reuse

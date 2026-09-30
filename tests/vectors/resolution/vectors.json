@@ -1,0 +1,524 @@
+{
+  "cases": [
+    {
+      "bundle": {
+        "agent": "agent://victim",
+        "card": {
+          "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ",
+          "payloadType": "application/vnd.treeship.receipt.v1+json",
+          "signatures": [
+            {
+              "keyid": "key_victim",
+              "sig": "xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw"
+            }
+          ]
+        },
+        "certs": [],
+        "revocations": []
+      },
+      "expected": {
+        "key_bound": true,
+        "key_bound_reason": null,
+        "revoked": false,
+        "sig_ok": true
+      },
+      "name": "honest_pinned_card",
+      "now": "2026-09-28T00:00:00Z",
+      "presentation": {
+        "agent": "agent://victim",
+        "card": {
+          "artifact_id": "art_d135ea2a3c02c516697ad9680dbe06c3",
+          "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_victim\",\"sig\":\"xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw\"}]}"
+        },
+        "certs": [],
+        "revocations": [],
+        "type": "treeship/presentation/v1"
+      },
+      "trust_roots": {
+        "roots": [
+          {
+            "added_at": "",
+            "agent": "agent://victim",
+            "key_id": "key_victim",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          },
+          {
+            "added_at": "",
+            "agent": "agent://attacker",
+            "key_id": "key_attacker",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+          }
+        ],
+        "version": 1
+      },
+      "why": "the victim's own card, key pinned under agent_cert"
+    },
+    {
+      "bundle": {
+        "agent": "agent://victim",
+        "card": {
+          "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ",
+          "payloadType": "application/vnd.treeship.receipt.v1+json",
+          "signatures": [
+            {
+              "keyid": "key_victim",
+              "sig": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw"
+            },
+            {
+              "keyid": "key_attacker",
+              "sig": "sV5whRsquuW7VVG1Gct-s4dgxSJT5Hf-h_1wOC2o5mLRu_XyEea5UEVwpr3hMggTB0Ad9Ws_Ab3FVSyzZOMRBw"
+            }
+          ]
+        },
+        "certs": [],
+        "revocations": []
+      },
+      "expected": {
+        "key_bound": false,
+        "key_bound_reason": "key_not_verified",
+        "revoked": false,
+        "sig_ok": true
+      },
+      "name": "forged_first_signature",
+      "now": "2026-09-28T00:00:00Z",
+      "presentation": {
+        "agent": "agent://victim",
+        "card": {
+          "artifact_id": "art_d135ea2a3c02c516697ad9680dbe06c3",
+          "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_victim\",\"sig\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw\"},{\"keyid\":\"key_attacker\",\"sig\":\"sV5whRsquuW7VVG1Gct-s4dgxSJT5Hf-h_1wOC2o5mLRu_XyEea5UEVwpr3hMggTB0Ad9Ws_Ab3FVSyzZOMRBw\"}]}"
+        },
+        "certs": [],
+        "revocations": [],
+        "type": "treeship/presentation/v1"
+      },
+      "trust_roots": {
+        "roots": [
+          {
+            "added_at": "",
+            "agent": "agent://victim",
+            "key_id": "key_victim",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          },
+          {
+            "added_at": "",
+            "agent": "agent://attacker",
+            "key_id": "key_attacker",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+          }
+        ],
+        "version": 1
+      },
+      "why": "signed by another pinned party with a garbage first signature naming the victim's key: signed, but not the victim's"
+    },
+    {
+      "bundle": {
+        "agent": "agent://victim",
+        "card": {
+          "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ",
+          "payloadType": "application/vnd.treeship.receipt.v1+json",
+          "signatures": [
+            {
+              "keyid": "key_victim",
+              "sig": "xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw"
+            }
+          ]
+        },
+        "certs": [],
+        "revocations": [
+          {
+            "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkX3Jldm9jYXRpb24udjEiLCJwYXlsb2FkIjp7ImNhcmQiOiJhcnRfZDEzNWVhMmEzYzAyYzUxNjY5N2FkOTY4MGRiZTA2YzMiLCJyZWFzb24iOiJwd25lZCJ9fQ",
+            "payloadType": "application/vnd.treeship.receipt.v1+json",
+            "signatures": [
+              {
+                "keyid": "key_victim",
+                "sig": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw"
+              },
+              {
+                "keyid": "key_attacker",
+                "sig": "gjD2MlA3jPtNXIOmNhV2k778FcrjHvgjxayQ-HigouYpjSemNQjJHmuTXO56YnfcN_1neaWx3GR_zjqeagtTDA"
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "key_bound": true,
+        "key_bound_reason": null,
+        "revoked": false,
+        "sig_ok": true
+      },
+      "name": "forged_revocation",
+      "now": "2026-09-28T00:00:00Z",
+      "presentation": {
+        "agent": "agent://victim",
+        "card": {
+          "artifact_id": "art_d135ea2a3c02c516697ad9680dbe06c3",
+          "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_victim\",\"sig\":\"xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw\"}]}"
+        },
+        "certs": [],
+        "revocations": [
+          {
+            "artifact_id": "art_rev",
+            "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkX3Jldm9jYXRpb24udjEiLCJwYXlsb2FkIjp7ImNhcmQiOiJhcnRfZDEzNWVhMmEzYzAyYzUxNjY5N2FkOTY4MGRiZTA2YzMiLCJyZWFzb24iOiJwd25lZCJ9fQ\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_victim\",\"sig\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw\"},{\"keyid\":\"key_attacker\",\"sig\":\"gjD2MlA3jPtNXIOmNhV2k778FcrjHvgjxayQ-HigouYpjSemNQjJHmuTXO56YnfcN_1neaWx3GR_zjqeagtTDA\"}]}"
+          }
+        ],
+        "type": "treeship/presentation/v1"
+      },
+      "trust_roots": {
+        "roots": [
+          {
+            "added_at": "",
+            "agent": "agent://victim",
+            "key_id": "key_victim",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          },
+          {
+            "added_at": "",
+            "agent": "agent://attacker",
+            "key_id": "key_attacker",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+          }
+        ],
+        "version": 1
+      },
+      "why": "a revocation by another pinned party with a garbage first signature naming the victim's key is not the victim's"
+    },
+    {
+      "bundle": {
+        "agent": "agent://victim",
+        "card": {
+          "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ",
+          "payloadType": "application/vnd.treeship.receipt.v1+json",
+          "signatures": [
+            {
+              "keyid": "key_victim",
+              "sig": "xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw"
+            }
+          ]
+        },
+        "certs": [],
+        "revocations": [
+          {
+            "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkX3Jldm9jYXRpb24udjEiLCJwYXlsb2FkIjp7ImNhcmQiOiJhcnRfc29tZV9vbGRfY2FyZCIsInJlYXNvbiI6InJvdGF0ZWQifX0",
+            "payloadType": "application/vnd.treeship.receipt.v1+json",
+            "signatures": [
+              {
+                "keyid": "key_victim",
+                "sig": "dPat7fHsDWeWDiDuqvfV9PFskXklgvMS6rPakN2E3UDTk2kbOqKRGBmXLqVVODvoevYdxsJEdVCHXkA-zGB0Ag"
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "key_bound": true,
+        "key_bound_reason": null,
+        "revoked": false,
+        "sig_ok": true
+      },
+      "name": "revocation_for_another_card",
+      "now": "2026-09-28T00:00:00Z",
+      "presentation": {
+        "agent": "agent://victim",
+        "card": {
+          "artifact_id": "art_d135ea2a3c02c516697ad9680dbe06c3",
+          "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_victim\",\"sig\":\"xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw\"}]}"
+        },
+        "certs": [],
+        "revocations": [
+          {
+            "artifact_id": "art_rev",
+            "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkX3Jldm9jYXRpb24udjEiLCJwYXlsb2FkIjp7ImNhcmQiOiJhcnRfc29tZV9vbGRfY2FyZCIsInJlYXNvbiI6InJvdGF0ZWQifX0\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_victim\",\"sig\":\"dPat7fHsDWeWDiDuqvfV9PFskXklgvMS6rPakN2E3UDTk2kbOqKRGBmXLqVVODvoevYdxsJEdVCHXkA-zGB0Ag\"}]}"
+          }
+        ],
+        "type": "treeship/presentation/v1"
+      },
+      "trust_roots": {
+        "roots": [
+          {
+            "added_at": "",
+            "agent": "agent://victim",
+            "key_id": "key_victim",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          },
+          {
+            "added_at": "",
+            "agent": "agent://attacker",
+            "key_id": "key_attacker",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+          }
+        ],
+        "version": 1
+      },
+      "why": "the victim's own revocation of a different card leaves this one standing"
+    },
+    {
+      "bundle": {
+        "agent": "agent://victim",
+        "card": {
+          "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ",
+          "payloadType": "application/vnd.treeship.receipt.v1+json",
+          "signatures": [
+            {
+              "keyid": "key_victim",
+              "sig": "xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw"
+            }
+          ]
+        },
+        "certs": [],
+        "revocations": [
+          {
+            "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkX3Jldm9jYXRpb24udjEiLCJwYXlsb2FkIjp7ImNhcmQiOiJhcnRfZDEzNWVhMmEzYzAyYzUxNjY5N2FkOTY4MGRiZTA2YzMiLCJyZWFzb24iOiJyb3RhdGVkIn19",
+            "payloadType": "application/vnd.treeship.receipt.v1+json",
+            "signatures": [
+              {
+                "keyid": "key_victim",
+                "sig": "GtXDIWyiWtVO1Jhejhp-lmNedMoMrpJv5od9Qb8NwTD2kO3hiM3LZNMiKOxm_SyhyrLlSISFYEZpSRyL6WxKCw"
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "key_bound": true,
+        "key_bound_reason": null,
+        "revoked": true,
+        "sig_ok": true
+      },
+      "name": "own_revocation",
+      "now": "2026-09-28T00:00:00Z",
+      "presentation": {
+        "agent": "agent://victim",
+        "card": {
+          "artifact_id": "art_d135ea2a3c02c516697ad9680dbe06c3",
+          "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_victim\",\"sig\":\"xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw\"}]}"
+        },
+        "certs": [],
+        "revocations": [
+          {
+            "artifact_id": "art_rev",
+            "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkX3Jldm9jYXRpb24udjEiLCJwYXlsb2FkIjp7ImNhcmQiOiJhcnRfZDEzNWVhMmEzYzAyYzUxNjY5N2FkOTY4MGRiZTA2YzMiLCJyZWFzb24iOiJyb3RhdGVkIn19\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_victim\",\"sig\":\"GtXDIWyiWtVO1Jhejhp-lmNedMoMrpJv5od9Qb8NwTD2kO3hiM3LZNMiKOxm_SyhyrLlSISFYEZpSRyL6WxKCw\"}]}"
+          }
+        ],
+        "type": "treeship/presentation/v1"
+      },
+      "trust_roots": {
+        "roots": [
+          {
+            "added_at": "",
+            "agent": "agent://victim",
+            "key_id": "key_victim",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          },
+          {
+            "added_at": "",
+            "agent": "agent://attacker",
+            "key_id": "key_attacker",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+          }
+        ],
+        "version": 1
+      },
+      "why": "the victim's revocation naming this card is honored"
+    },
+    {
+      "bundle": {
+        "agent": "agent://victim",
+        "card": {
+          "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwia2V5aWQiOiJrZXlfYXR0YWNrZXIifX0",
+          "payloadType": "application/vnd.treeship.receipt.v1+json",
+          "signatures": [
+            {
+              "keyid": "key_attacker",
+              "sig": "LCcNxhWjNjnj1AvwV6Nh8TgS6P1tZGTjFYKzrj9uG6g-wu1c4Q-6oTmxGxIMKWq5nCKH3JcyufDG-0nAcla7Dg"
+            }
+          ]
+        },
+        "certs": [],
+        "revocations": []
+      },
+      "expected": {
+        "key_bound": false,
+        "key_bound_reason": "pin_scoped_to_other",
+        "revoked": false,
+        "sig_ok": true
+      },
+      "name": "pinned_attacker_claims_victims_name",
+      "now": "2026-09-28T00:00:00Z",
+      "presentation": {
+        "agent": "agent://victim",
+        "card": {
+          "artifact_id": "art_53d1d08a0d87dd04f482868bd8fd6aa4",
+          "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwia2V5aWQiOiJrZXlfYXR0YWNrZXIifX0\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_attacker\",\"sig\":\"LCcNxhWjNjnj1AvwV6Nh8TgS6P1tZGTjFYKzrj9uG6g-wu1c4Q-6oTmxGxIMKWq5nCKH3JcyufDG-0nAcla7Dg\"}]}"
+        },
+        "certs": [],
+        "revocations": [],
+        "type": "treeship/presentation/v1"
+      },
+      "trust_roots": {
+        "roots": [
+          {
+            "added_at": "",
+            "agent": "agent://victim",
+            "key_id": "key_victim",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          },
+          {
+            "added_at": "",
+            "agent": "agent://attacker",
+            "key_id": "key_attacker",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+          }
+        ],
+        "version": 1
+      },
+      "why": "a key pinned as agent://attacker signs a card for agent://victim: verified, but bound to nobody"
+    },
+    {
+      "bundle": {
+        "agent": "agent://victim",
+        "card": {
+          "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ",
+          "payloadType": "application/vnd.treeship.receipt.v1+json",
+          "signatures": [
+            {
+              "keyid": "key_victim",
+              "sig": "xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw"
+            }
+          ]
+        },
+        "certs": [],
+        "revocations": []
+      },
+      "expected": {
+        "key_bound": false,
+        "key_bound_reason": "pin_unscoped",
+        "revoked": false,
+        "sig_ok": true
+      },
+      "name": "legacy_unscoped_pin",
+      "now": "2026-09-28T00:00:00Z",
+      "presentation": {
+        "agent": "agent://victim",
+        "card": {
+          "artifact_id": "art_d135ea2a3c02c516697ad9680dbe06c3",
+          "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_victim\",\"sig\":\"xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw\"}]}"
+        },
+        "certs": [],
+        "revocations": [],
+        "type": "treeship/presentation/v1"
+      },
+      "trust_roots": {
+        "roots": [
+          {
+            "added_at": "",
+            "key_id": "key_victim",
+            "kind": "agent_cert",
+            "label": "the counterparty",
+            "public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          }
+        ],
+        "version": 1
+      },
+      "why": "the victim's key on a pin with no agent scope and a non-agent label binds no card"
+    },
+    {
+      "bundle": {
+        "agent": "agent://victim",
+        "card": {
+          "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ",
+          "payloadType": "application/vnd.treeship.receipt.v1+json",
+          "signatures": [
+            {
+              "keyid": "key_victim",
+              "sig": "xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw"
+            }
+          ]
+        },
+        "certs": [],
+        "revocations": [
+          {
+            "payload": "eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkX3Jldm9jYXRpb24udjEiLCJwYXlsb2FkIjp7ImNhcmQiOiJhcnRfZDEzNWVhMmEzYzAyYzUxNjY5N2FkOTY4MGRiZTA2YzMiLCJrZXlpZCI6ImtleV92aWN0aW0iLCJyZWFzb24iOiJjb21wcm9taXNlZCJ9fQ",
+            "payloadType": "application/vnd.treeship.receipt.v1+json",
+            "signatures": [
+              {
+                "keyid": "key_victim",
+                "sig": "s2JMT8VRxtsurBvuBQuISnQpL1jZQB6dpDhLpIMUydSsrTKleaJSvwOxkIqowyCeTJfYdGMQ7QDfJbTYqspmDg"
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "key_bound": true,
+        "key_bound_reason": null,
+        "revoked": true,
+        "sig_ok": true
+      },
+      "name": "compromised_key_remint",
+      "now": "2026-09-28T00:00:00Z",
+      "presentation": {
+        "agent": "agent://victim",
+        "card": {
+          "artifact_id": "art_d135ea2a3c02c516697ad9680dbe06c3",
+          "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkLnYxIiwicGF5bG9hZCI6eyJhZ2VudCI6ImFnZW50Oi8vdmljdGltIiwiY2FwYWJpbGl0aWVzIjp7InRvb2xzIjpbImRiLmRyb3AiXX0sImtleWlkIjoia2V5X3ZpY3RpbSJ9fQ\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_victim\",\"sig\":\"xLD1K3jt0FDOymhMvfmCfLswdq4-J-hGBQmTkgu3_KPF0s-cirpN2mmIV0jbQ3t54b6ykpl670v30Aw9HTXdCw\"}]}"
+        },
+        "certs": [],
+        "revocations": [
+          {
+            "artifact_id": "art_rev",
+            "envelope_json": "{\"payload\":\"eyJ0eXBlIjoidHJlZXNoaXAvcmVjZWlwdC92MSIsInRpbWVzdGFtcCI6IjIwMjYtMDktMjhUMDA6MDA6MDBaIiwic3lzdGVtIjoic2hpcDovL3NoaXBfdGVzdCIsImtpbmQiOiJhZ2VudF9jYXJkX3Jldm9jYXRpb24udjEiLCJwYXlsb2FkIjp7ImNhcmQiOiJhcnRfZDEzNWVhMmEzYzAyYzUxNjY5N2FkOTY4MGRiZTA2YzMiLCJrZXlpZCI6ImtleV92aWN0aW0iLCJyZWFzb24iOiJjb21wcm9taXNlZCJ9fQ\",\"payloadType\":\"application/vnd.treeship.receipt.v1+json\",\"signatures\":[{\"keyid\":\"key_victim\",\"sig\":\"s2JMT8VRxtsurBvuBQuISnQpL1jZQB6dpDhLpIMUydSsrTKleaJSvwOxkIqowyCeTJfYdGMQ7QDfJbTYqspmDg\"}]}"
+          }
+        ],
+        "type": "treeship/presentation/v1"
+      },
+      "trust_roots": {
+        "roots": [
+          {
+            "added_at": "",
+            "agent": "agent://victim",
+            "key_id": "key_victim",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          },
+          {
+            "added_at": "",
+            "agent": "agent://attacker",
+            "key_id": "key_attacker",
+            "kind": "agent_cert",
+            "label": "",
+            "public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+          }
+        ],
+        "version": 1
+      },
+      "why": "a newer card from a key revoked as compromised is revoked with it"
+    }
+  ],
+  "schema": "treeship/resolution-vectors/v1"
+}
