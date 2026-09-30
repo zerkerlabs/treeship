@@ -15,7 +15,7 @@
 // non-zero if any vector failed expectations or threw.
 
 import { readFileSync, existsSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -62,6 +62,10 @@ function findBinaryDir(): string {
 const binaryDir = findBinaryDir();
 process.env.PATH = `${binaryDir}:${process.env.PATH ?? ""}`;
 process.env.TREESHIP_CONFIG = corpus.config_path;
+// Per-install state (host id, global trust roots) lives under $HOME/.treeship:
+// keep it in the corpus's scratch dir, never the developer's real home.
+const cfgDir = dirname(corpus.config_path);
+process.env.HOME = basename(cfgDir) === ".treeship" ? dirname(cfgDir) : cfgDir;
 
 // Import the SDK from its built output. The source uses .js suffixes in
 // its imports (TS module resolution hint), which Node's strip-types

@@ -143,6 +143,7 @@ describeOrSkip("@treeship/sdk round-trip vs real CLI", () => {
   let storageDir:  string;
   let originalPath: string | undefined;
   let originalTreeshipConfig: string | undefined;
+  let originalHome: string | undefined;
   let setupSucceeded = false;
 
   beforeAll(() => {
@@ -153,6 +154,7 @@ describeOrSkip("@treeship/sdk round-trip vs real CLI", () => {
     // but corrupts subsequent runs under `vitest --watch`.
     originalPath           = process.env.PATH;
     originalTreeshipConfig = process.env.TREESHIP_CONFIG;
+    originalHome = process.env.HOME;
 
     try {
       ensureBinary(WORKSPACE_ROOT, BINARY_PATH);
@@ -169,6 +171,10 @@ describeOrSkip("@treeship/sdk round-trip vs real CLI", () => {
 
       process.env.PATH            = `${shimDir}:${process.env.PATH ?? ""}`;
       process.env.TREESHIP_CONFIG = configPath;
+      // The CLI also keeps per-install state under $HOME/.treeship (the
+      // host id, the global trust roots): point HOME at the scratch dir so
+      // a test run never writes into the developer's real home.
+      process.env.HOME = sessionDir;
 
       // Initialize a fresh ship. The SDK doesn't expose `init` -- it's a
       // one-time setup step the operator runs via the CLI -- so we invoke
@@ -189,6 +195,8 @@ describeOrSkip("@treeship/sdk round-trip vs real CLI", () => {
       else process.env.PATH = originalPath;
       if (originalTreeshipConfig === undefined) delete process.env.TREESHIP_CONFIG;
       else process.env.TREESHIP_CONFIG = originalTreeshipConfig;
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
       if (sessionDir && existsSync(sessionDir)) {
         rmSync(sessionDir, { recursive: true, force: true });
       }
@@ -205,6 +213,8 @@ describeOrSkip("@treeship/sdk round-trip vs real CLI", () => {
     else process.env.PATH = originalPath;
     if (originalTreeshipConfig === undefined) delete process.env.TREESHIP_CONFIG;
     else process.env.TREESHIP_CONFIG = originalTreeshipConfig;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
 
     if (setupSucceeded && sessionDir && existsSync(sessionDir)) {
       rmSync(sessionDir, { recursive: true, force: true });

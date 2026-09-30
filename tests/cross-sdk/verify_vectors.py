@@ -56,6 +56,10 @@ def main() -> int:
     binary_dir = find_binary_dir()
     os.environ["PATH"] = f"{binary_dir}{os.pathsep}{os.environ.get('PATH', '')}"
     os.environ["TREESHIP_CONFIG"] = corpus["config_path"]
+    # Per-install state (host id, global trust roots) lives under $HOME/.treeship:
+    # keep it in the corpus's scratch dir, never the developer's real home.
+    cfg_dir = os.path.dirname(corpus["config_path"])
+    os.environ["HOME"] = os.path.dirname(cfg_dir) if os.path.basename(cfg_dir) == ".treeship" else cfg_dir
 
     # Import the SDK from source. The package is at packages/sdk-python/,
     # rooted at the workspace; adding it to sys.path makes `treeship_sdk`

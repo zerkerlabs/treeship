@@ -32,6 +32,9 @@ fi
 # Always work in a fresh scratch dir so vector IDs are deterministic-ish
 # (within a single run) and the real keystore stays untouched.
 SCRATCH="$(mktemp -d -t treeship-cross-sdk-XXXXXX)"
+# The CLI keeps per-install state under $HOME/.treeship (host id, global
+# trust roots): keep it in the scratch dir, never the developer's real home.
+export HOME="$SCRATCH"
 CFG="$SCRATCH/config.json"
 echo "scratch keystore: $SCRATCH" >&2
 
