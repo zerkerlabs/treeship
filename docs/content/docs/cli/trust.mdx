@@ -11,7 +11,7 @@ Your trust-root store is the policy half of every verification: nothing is trust
 
 ```bash
 treeship trust list
-treeship trust add <key-id> <public-key> --kind <kind> [--label <text>] [--yes] [--replace]
+treeship trust add <key-id> <public-key> --kind <kind> [--agent <uri>] [--label <text>] [--yes] [--replace]
 treeship trust remove <key-id> [--yes]
 ```
 
@@ -19,7 +19,7 @@ treeship trust remove <key-id> [--yes]
 
 | Kind | Pinning a key under it means |
 |------|------------------------------|
-| `agent_cert` | Accept this agent key's certificates, cards, and receipts (leaf pin) |
+| `agent_cert` | Accept this agent key's certificates, cards, and receipts (leaf pin). With `--agent <uri>`, the key's capability cards for that agent are key-bound; see below |
 | `cert_issuer` | Accept agent certificates this ship key issues — the chain-walk pin |
 | `hub_checkpoint` | Accept this key's signed Merkle checkpoints (staples, transparency) |
 | `hub_org` | Accept this hub's org-wide single-use approval checkpoints |
@@ -62,6 +62,18 @@ This ship's own key ids (the ones `treeship keys export` lists) are a separate c
 `package verify`'s `signer_trust` row and `session join`'s SessionHost hint both print a ready-to-paste `trust add` command for an unpinned key, and neither appends `--yes` anymore: pasting the line stops at the fingerprint prompt instead of skipping straight past it. The `session join` hint also says explicitly to confirm the key with the host out of band -- over a channel the invitation itself didn't travel on -- before running it.
 
 `remove` deletes **all** pins for the key ID, across every kind.
+
+## Scoping an agent pin
+
+A capability card is **key-bound** when its own key signed it and that key is pinned under `agent_cert` **as the agent the card names**: `treeship trust add key_… ed25519:… --kind agent_cert --agent agent://deployer`. The scope is what stops a key you pinned as one agent from signing itself into another agent's name; a card for `agent://payments` signed by the key pinned as `agent://deployer` verifies as a signature and is graded asserted, and `resolve` and `verify-capability` say which pin they found. `treeship agent register --own-key` writes the scope for the agent's own key, and the `trust add` lines that `keys export --agent <uri>` and `onboard` print carry it.
+
+`--agent` takes one spelling: `scheme://name[/path]`, lower-case scheme, no trailing slash, no whitespace, query, fragment or `..` segment; `agent://alice/` is stored as `agent://alice` and anything else is refused (exit 4), so a pin and the card it is compared with cannot differ by an accident of spelling. Re-pinning a key id as a different agent, or dropping its scope, changes what the pin vouches for and needs `--replace`, like a different public key does; pinning one public key under two key ids as two different agents prints a warning. In `--format json` the verdicts of `resolve`, `resolve --hub` and `verify-presentation` carry `key_bound_reason`: `not_pinned`, `pin_unscoped`, `pin_scoped_to_other` or `key_not_verified`, null when the card is key-bound.
+
+A pin written before `--agent` existed has no scope. If its label is what `agent register` wrote, the bare agent name or the `agent://` URI, that is taken as the scope. Any other unscoped pin still lets the key's artifacts verify and import, but binds no card; the output names the fix: `treeship trust add <key-id> <public-key> --kind agent_cert --agent <uri> --replace --yes`. A pin is never silently promoted to key-binding.
+
+## Compromised keys
+
+A revocation whose reason is `compromised` (`treeship revoke-capability <card> --reason compromised`) retires the key, not just the card: every card that key minted, older or newer, is treated as revoked by every verifier that sees the revocation. The definitive answer to a compromised key is still to unpin it, `treeship trust remove <key-id>`, so that nothing it signs verifies here at all.
 
 ## JSON output
 

@@ -51,6 +51,8 @@ export type TrustRootInput = {
   publicKey: string;
   /** What this root may verify, e.g. `agent_cert`. */
   kind: string;
+  /** For `agent_cert`: the agent URI this key is pinned as; cards are key-bound only to it. */
+  agent?: string;
   label?: string;
   addedAt?: string;
 };
@@ -68,6 +70,7 @@ function serializeTrustRoots(roots?: TrustRootInput[]): string {
       key_id: r.keyId,
       public_key: r.publicKey,
       kind: r.kind,
+      ...(r.agent ? { agent: r.agent } : {}),
       label: r.label ?? "",
       added_at: r.addedAt ?? "",
     })),

@@ -143,7 +143,17 @@ impl Ship {
                 .split_whitespace()
                 .find(|w| w.starts_with("ed25519:"))
                 .unwrap();
-            self.ok(&["trust", "add", key_id, pubkey, "--kind", kind, "--yes"]);
+            // An agent_cert line names the agent the key is pinned as.
+            let words: Vec<&str> = line.split_whitespace().collect();
+            let agent = words
+                .iter()
+                .position(|w| *w == "--agent")
+                .and_then(|i| words.get(i + 1).copied());
+            let mut args = vec!["trust", "add", key_id, pubkey, "--kind", kind, "--yes"];
+            if let Some(a) = agent {
+                args.extend_from_slice(&["--agent", a]);
+            }
+            self.ok(&args);
         }
     }
 }

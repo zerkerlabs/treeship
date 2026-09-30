@@ -95,7 +95,14 @@ impl Workspace {
         let out = self
             .cmd()
             .args(["trust", "add", &key_id, &format!("ed25519:{pk}")])
-            .args(["--kind", "agent_cert", "--yes", "--config"])
+            .args([
+                "--kind",
+                "agent_cert",
+                "--agent",
+                "system://zmem",
+                "--yes",
+                "--config",
+            ])
             .arg(self.config())
             .output()
             .expect("trust add");

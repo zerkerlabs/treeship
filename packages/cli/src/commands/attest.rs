@@ -1104,9 +1104,12 @@ fn validate_quarantine_receipt(
     // unreadable trust store is an error, never silently empty (lane J).
     let trust = TrustRootStore::open_default_or_empty()
         .map_err(|e| format!("trust store unreadable: {e}"))?;
+    // Only pins scoped to THIS provider (the receipt's `system`) count: a
+    // key pinned as some other agent or provider is not this provider.
+    let provider = treeship_core::trust::canonical_agent_uri(&stmt.system).ok();
     let mut provider_keys = std::collections::HashMap::new();
     for r in trust.roots() {
-        if r.kind == TrustRootKind::AgentCert {
+        if r.kind == TrustRootKind::AgentCert && provider.is_some() && r.agent_scope() == provider {
             if let Ok(vk) = decode_ed25519_pubkey(&r.public_key) {
                 provider_keys.insert(r.key_id.clone(), vk);
             }
@@ -1116,9 +1119,9 @@ fn validate_quarantine_receipt(
     verifier.verify_any(&rec.envelope).map_err(|_| {
         format!(
             "quarantine receipt {receipt_id} is not signed by a key-bound memory provider\n  \
-             the signer's key must be pinned under agent_cert\n  \
-             fix: treeship onboard <provider>   (or)   \
-             treeship trust add <key_id> <pubkey> --kind agent_cert --yes"
+             the signer's key must be pinned under agent_cert as {}\n  \
+             fix: treeship trust add <key_id> <pubkey> --kind agent_cert --agent {} --yes",
+            stmt.system, stmt.system
         )
     })?;
     Ok(())
@@ -1809,7 +1812,8 @@ pub fn card(args: CardArgs, printer: &Printer) -> Result<(), Box<dyn std::error:
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
     let trust = treeship_core::trust::TrustRootStore::open_default_or_empty()?;
-    let key_bound = crate::commands::capability::is_key_bound(&keyid, signer.key_id(), &trust);
+    let key_bound =
+        crate::commands::capability::is_key_bound(&keyid, signer.key_id(), &args.agent, &trust);
 
     let tools_str = all_tools.join(", ");
     let mut prov_parts = vec![format!(

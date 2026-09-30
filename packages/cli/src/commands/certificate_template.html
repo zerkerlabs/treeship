@@ -101,8 +101,20 @@ code{font-family:var(--mono);font-size:.82em;background:var(--panel);border:1px 
 <script>
 const C=JSON.parse(document.getElementById('cert-data').textContent);
 document.title='Agent Certificate: '+(C.identity?C.identity.agent_name:'unknown');
-function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+// Every string field on a certificate is issuer-set, but the issuer is
+// whoever ran `treeship onboard`/`agent register` -- not necessarily
+// trusted by the person opening this file. esc() covers attribute contexts
+// too (`"`/`'`), not just text nodes: line ~168 below interpolates a
+// capability's description into a quoted `title="..."` attribute, where a
+// bare `"` breaks out of the attribute; escaping quotes in a text node is
+// always harmless (an entity, not a functional change).
+function esc(s){return(s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 function num(v){const n=Number(v);return Number.isFinite(n)?n:0}
+// Not currently wired to any certificate field (the one href in this file is
+// a hardcoded literal), kept as the safe primitive to reach for if that
+// changes -- a bare `#id` fragment is safe in href; anything else
+// (javascript:, data:, an absolute URL from the data) is refused.
+function safeHref(u){return typeof u==='string'&&/^#[\w-]*$/.test(u)?u:'#'}
 
 const id=C.identity||{};
 const cap=C.capabilities||{};

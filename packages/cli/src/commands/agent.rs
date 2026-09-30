@@ -404,6 +404,7 @@ pub fn register(
                 key_id: kid.clone(),
                 public_key: format!("ed25519:{subject_pub_b64}"),
                 kind: TrustRootKind::AgentCert,
+                agent: Some(format!("agent://{name}")),
                 label: name.to_string(),
                 added_at: now.clone(),
             });
@@ -540,4 +541,151 @@ fn fraunces_data_uri() -> String {
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
     format!("data:font/woff2;base64,{}", STANDARD.encode(FRAUNCES_WOFF2))
+}
+
+#[cfg(test)]
+mod certificate_template_tests {
+    use super::CERTIFICATE_TEMPLATE;
+
+    // ── Escaping regression: every certificate string field must be
+    // HTML-escaped before it reaches the DOM. ─────────────────────────────
+    //
+    // The certificate is issuer-set (`treeship onboard`/`agent register`),
+    // not necessarily by whoever ends up opening `certificate.html` -- an
+    // onboarding flow run against an untrusted or compromised harness can
+    // set any of these fields. The client-side script parses the embedded
+    // JSON directly with no schema validation, so any string field it
+    // interpolates into the page without escaping renders as markup,
+    // independent of anything the Rust `Certificate` type enforces on the
+    // way in (a hostile actor building certificate.html by hand is under no
+    // such constraint either).
+    //
+    // Same technique as the equivalent preview_template.html test in
+    // packages/core/src/session/package.rs: run the REAL shipped template's
+    // inline script in Node against a payload in every string field, and
+    // assert the HTML it would have handed to `.innerHTML` never contains
+    // the payload's `<` or `"` un-escaped.
+    #[test]
+    fn certificate_html_escapes_every_string_field() {
+        const PAYLOAD: &str = "<img src=x onerror=alert(1)>\" onmouseover=\"alert(2)'";
+
+        let cert = serde_json::json!({
+            "identity": {
+                "agent_name": PAYLOAD, "ship_id": PAYLOAD, "issuer": PAYLOAD,
+                "issued_at": "2026-01-01T00:00:00Z", "valid_until": "2099-01-01T00:00:00Z",
+                "model": PAYLOAD, "description": PAYLOAD,
+            },
+            "capabilities": {
+                "tools": [{"name": PAYLOAD, "description": PAYLOAD}],
+            },
+            "declaration": {
+                "bounded_actions": [PAYLOAD], "forbidden": [PAYLOAD], "escalation_required": [PAYLOAD],
+            },
+            "signature": {
+                "public_key": PAYLOAD, "signature": PAYLOAD, "key_id": PAYLOAD,
+                "algorithm": PAYLOAD, "signed_fields": PAYLOAD,
+            },
+        });
+
+        // Same `<` -> `<` defense-in-depth the production path applies
+        // before embedding into the `<script type="application/json">` slot.
+        let cert_text = cert.to_string().replace('<', "\\u003c");
+        let html = CERTIFICATE_TEMPLATE
+            .replace("__CERTIFICATE_JSON__", &cert_text)
+            .replace("__FONT_FRAUNCES__", "data:font/woff2;base64,AAAA");
+
+        let script = html
+            .split("<script>\n")
+            .nth(1)
+            .and_then(|s| s.split("</script>\n</body>").next())
+            .expect("template must have exactly one plain <script> block");
+
+        let rendered = run_client_render_in_node(script, &cert_text)
+            .expect("node must be available to run this escaping regression test");
+
+        assert!(
+            !rendered.contains("<img"),
+            "unescaped <img tag reached the page -- unescaped markup:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("&lt;img") || !rendered.contains("onmouseover=\"alert"),
+            "a live onmouseover attribute was injected via an unescaped quote:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("&lt;img src=x onerror=alert(1)&gt;&quot;"),
+            "payload never reached the page at all; test may not be exercising the code path:\n{rendered}"
+        );
+    }
+
+    /// Extracts the inline script and evaluates it in Node with a minimal
+    /// `document` stub, capturing whatever string the script would have
+    /// handed to `document.getElementById('app').innerHTML`. Returns `None`
+    /// if `node` isn't on PATH.
+    fn run_client_render_in_node(script: &str, cert_text: &str) -> Option<String> {
+        use std::io::Write;
+
+        const HARNESS: &str = r#"
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+
+const script = readFileSync(process.argv[2], 'utf8');
+const certText = readFileSync(process.argv[3], 'utf8');
+
+let captured = null;
+
+function makeEl(textContent) {
+  return { textContent, set innerHTML(v) { captured = v; }, get innerHTML() { return captured; } };
+}
+
+const fakeDocument = {
+  getElementById(id) {
+    if (id === 'cert-data') return makeEl(certText);
+    if (id === 'app') return makeEl('Loading...');
+    return null;
+  },
+  set title(_v) {}, get title() { return ''; },
+};
+
+const sandbox = { document: fakeDocument, console };
+vm.createContext(sandbox);
+vm.runInContext(script, sandbox, { filename: 'certificate_script.js' });
+
+process.stdout.write(JSON.stringify({ captured }));
+"#;
+
+        let dir = std::env::temp_dir().join(format!(
+            "treeship-cert-escape-test-{}",
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir_all(&dir).ok()?;
+        let write = |name: &str, contents: &str| -> Option<std::path::PathBuf> {
+            let path = dir.join(name);
+            let mut f = std::fs::File::create(&path).ok()?;
+            f.write_all(contents.as_bytes()).ok()?;
+            Some(path)
+        };
+        let harness_path = write("harness.mjs", HARNESS)?;
+        let script_path = write("script.js", script)?;
+        let cert_path = write("cert.json", cert_text)?;
+
+        let output = std::process::Command::new("node")
+            .arg(&harness_path)
+            .arg(&script_path)
+            .arg(&cert_path)
+            .output()
+            .ok()?;
+        let _ = std::fs::remove_dir_all(&dir);
+        if !output.status.success() {
+            panic!(
+                "node harness failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|e| panic!("harness did not print JSON ({e}): {output:?}"));
+        parsed
+            .get("captured")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    }
 }

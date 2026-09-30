@@ -426,9 +426,21 @@ pub(crate) fn check_presentation_live(
     let reason = if let Some(r) = &v.revoked {
         format!("REVOKED -- {r}")
     } else if !v.key_bound {
-        "issuer not in your trust roots (key_bound: false); pin their ship with \
-         `treeship trust add <key_id> <ed25519:...> --kind cert_issuer --yes`"
-            .to_string()
+        match crate::commands::capability::unscoped_pin_hint(
+            &presented_card_keyid(&pres),
+            &v.agent,
+            &trust,
+        ) {
+            Some(hint) => format!(
+                "card not key-bound ({}): {hint}",
+                v.key_bound_reason.as_deref().unwrap_or("not_pinned")
+            ),
+            None => format!(
+                "card not key-bound ({}): pin the agent's key with `treeship trust add <key_id> <ed25519:...> --kind agent_cert --agent {} --yes`, or their ship with `--kind cert_issuer`",
+                v.key_bound_reason.as_deref().unwrap_or("not_pinned"),
+                v.agent
+            ),
+        }
     } else if let ChallengeOutcome::Failed { reason } = &v.challenge {
         reason.clone()
     } else if let ChallengeOutcome::NoResponse = &v.challenge {
@@ -486,11 +498,17 @@ pub fn verify_presentation(
         card_id,
         sig_ok,
         key_bound,
+        key_bound_reason,
         via_chain,
         revoked,
         challenge: challenge_outcome,
         staple: sv,
     } = treeship_core::verify::presentation::verify_presentation(&pres, &trust, challenge, now)?;
+    if let Some(hint) =
+        crate::commands::capability::unscoped_pin_hint(&presented_card_keyid(&pres), &agent, &trust)
+    {
+        printer.hint(&hint);
+    }
 
     // Re-parse the card payload for the selective-disclosure display below (the
     // trust decision above already consumed and verified the envelope).
@@ -672,6 +690,7 @@ pub fn verify_presentation(
             "card": card_id,
             "signature": sig_str,
             "key_bound": key_bound,
+            "key_bound_reason": key_bound_reason,
             "via_chain": via_chain,
             "staple": {
                 "detail": staple_str,
@@ -808,6 +827,21 @@ fn human_secs(secs: u64) -> String {
     } else {
         format!("{}d old", secs / 86400)
     }
+}
+
+/// The `keyid` the presented card claims, for the pin hints.
+fn presented_card_keyid(pres: &serde_json::Value) -> String {
+    pres.get("card")
+        .and_then(|c| c.get("envelope_json"))
+        .and_then(|v| v.as_str())
+        .and_then(|ej| serde_json::from_str::<Envelope>(ej).ok())
+        .and_then(|env| {
+            env.unmarshal_statement::<treeship_core::statements::ReceiptStatement>()
+                .ok()
+        })
+        .and_then(|stmt| stmt.payload)
+        .and_then(|p| p.get("keyid").and_then(|v| v.as_str()).map(str::to_string))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

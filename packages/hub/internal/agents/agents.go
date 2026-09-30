@@ -71,9 +71,9 @@ func (h *Handlers) Resolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var cards []envelopeEntry
-	var certs []envelopeEntry               // agent_cert.v1 chain for this agent
-	revByCard := map[string]envelopeEntry{} // revoked card_id -> revocation entry
-	cardIDs := map[string]bool{}            // this agent's card ids
+	var certs []envelopeEntry                  // agent_cert.v1 chain for this agent
+	revsByCard := map[string][]envelopeEntry{} // revoked card_id -> every revocation naming it
+	cardIDs := map[string]bool{}               // this agent's card ids
 	for _, a := range receipts {
 		var env dsseEnvelope
 		if json.Unmarshal([]byte(a.EnvelopeJSON), &env) != nil {
@@ -110,19 +110,11 @@ func (h *Handlers) Resolve(w http.ResponseWriter, r *http.Request) {
 			if json.Unmarshal(stmt.Payload, &p) != nil || p.Card == "" {
 				continue
 			}
-			// Artifacts arrive newest-first (ORDER BY signed_at DESC), so an
-			// unconditional assignment left the OLDEST revocation per card --
-			// the last write won. A client asking "is this card revoked, and
-			// when" would get a superseded answer.
-			//
-			// Keep the first one seen, which under that ordering is the
-			// newest. Note the ordering key is caller-supplied signed_at that
-			// the Hub does not verify; this fixes the inversion, it does not
-			// make the choice trustworthy. Clients still decide which
-			// revocations are authorized.
-			if _, seen := revByCard[p.Card]; !seen {
-				revByCard[p.Card] = entry
-			}
+			// Every revocation naming the card is served, newest first (the
+			// query orders by signed_at DESC). The Hub does not verify
+			// signed_at, so it serves them all rather than picking one per
+			// card: which revocations are authorized is the client's decision.
+			revsByCard[p.Card] = append(revsByCard[p.Card], entry)
 		case "agent_cert.v1":
 			// The certificate chain: ship-signed bindings of this agent's
 			// URI to its per-agent key. Served verbatim so a client that
@@ -138,19 +130,20 @@ func (h *Handlers) Resolve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// receipts come newest-first, so the first matching card is the current one.
+	// receipts come newest-first, so the first matching card is served as
+	// `current_card`. It is a hint: the ordering key is the caller-supplied
+	// signed_at, so a client picks its own current card among `cards`
+	// (the newest that verifies key-bound for it).
 	var current *envelopeEntry
 	if len(cards) > 0 {
 		current = &cards[0]
 	}
 
-	// Include only revocations that reference one of this agent's cards. The
+	// Include every revocation that references one of this agent's cards. The
 	// client decides whether each revocation is authorized; the Hub does not.
 	var revocations []envelopeEntry
-	for id := range cardIDs {
-		if rev, ok := revByCard[id]; ok {
-			revocations = append(revocations, rev)
-		}
+	for _, c := range cards {
+		revocations = append(revocations, revsByCard[c.ArtifactID]...)
 	}
 
 	// Transparency: if the current card has a Merkle inclusion proof, include

@@ -105,6 +105,9 @@ pub fn effective_schema_version(field: Option<&str>) -> &str {
 /// Errors verifying an `AgentCertificate` signature.
 #[derive(Debug)]
 pub enum CertificateVerifyError {
+    /// The signer's key is pinned under `AgentCert`, but not as the agent the
+    /// certificate names (an unscoped pin, or one scoped to another agent).
+    PinNotScopedToAgent { key_id: String, agent: String },
     /// Public key in `signature.public_key` was not valid base64url or wrong length.
     BadPublicKey(String),
     /// Signature bytes were not valid base64url or wrong length.
@@ -132,6 +135,11 @@ pub enum CertificateVerifyError {
 impl std::fmt::Display for CertificateVerifyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            CertificateVerifyError::PinNotScopedToAgent { key_id, agent } => write!(
+                f,
+                "{key_id} is pinned under agent_cert, but not as {agent}: an agent_cert pin binds only the agent it is scoped to. \
+                 If this key is {agent}'s, re-pin it: treeship trust add {key_id} <pubkey> --kind agent_cert --agent {agent} --replace --yes"
+            ),
             Self::BadPublicKey(s) => write!(f, "certificate public key: {s}"),
             Self::BadSignature(s) => write!(f, "certificate signature bytes: {s}"),
             Self::PayloadEncode(s) => write!(f, "certificate canonical encoding: {s}"),
@@ -210,6 +218,34 @@ pub fn verify_certificate(
         }
         return Err(CertificateVerifyError::UntrustedIssuer {
             key_id: cert.signature.key_id.clone(),
+        });
+    }
+    // The pin vouches for one agent: the certificate must name that agent.
+    // A key pinned as agent://a signing a certificate for agent://b is not
+    // vouched for by anyone.
+    // Both sides must be a real, canonical URI: an agent name that does not
+    // canonicalize (a scheme inside the name, whitespace, a query, `..`,
+    // percent-encoding, a non-ASCII look-alike) and an unscoped pin are
+    // each None, and None never matches None.
+    let cert_agent = format!("agent://{}", cert.identity.agent_name);
+    let Ok(cert_agent_canonical) = crate::trust::canonical_agent_uri(&cert_agent) else {
+        return Err(CertificateVerifyError::PinNotScopedToAgent {
+            key_id: cert.signature.key_id.clone(),
+            agent: cert_agent,
+        });
+    };
+    let key_bytes = verifying_key.to_bytes();
+    let scoped_here = trust.roots().iter().any(|r| {
+        r.kind == TrustRootKind::AgentCert
+            && crate::trust::decode_ed25519_pubkey(&r.public_key)
+                .map(|k| k.to_bytes() == key_bytes)
+                .unwrap_or(false)
+            && r.agent_scope().as_deref() == Some(cert_agent_canonical.as_str())
+    });
+    if !scoped_here {
+        return Err(CertificateVerifyError::PinNotScopedToAgent {
+            key_id: cert.signature.key_id.clone(),
+            agent: cert_agent,
         });
     }
 
@@ -312,6 +348,7 @@ mod tests {
             key_id: "key_demo".into(),
             public_key: format!("ed25519:{pk_b64}"),
             kind: TrustRootKind::AgentCert,
+            agent: Some("agent://agent-007".into()),
             label: "test issuer".into(),
             added_at: "2026-05-15T00:00:00Z".into(),
         }])
@@ -602,6 +639,96 @@ mod tests {
         assert_eq!(
             effective_schema_version(parsed.schema_version.as_deref()),
             "1"
+        );
+    }
+
+    /// A signed certificate for `agent_name`, and its base64url public key.
+    fn signed_cert_named(agent_name: &str) -> (AgentCertificate, String) {
+        use crate::attestation::{Ed25519Signer, Signer};
+        let signer = Ed25519Signer::generate("key_demo").unwrap();
+        let pk_b64 = URL_SAFE_NO_PAD.encode(signer.public_key_bytes());
+        let identity = AgentIdentity {
+            agent_name: agent_name.into(),
+            ship_id: "ship_x".into(),
+            public_key: pk_b64.clone(),
+            issuer: "ship://ship_x".into(),
+            issued_at: "2026-04-15T00:00:00Z".into(),
+            valid_until: "2027-04-15T00:00:00Z".into(),
+            model: None,
+            description: None,
+        };
+        let capabilities = AgentCapabilities {
+            tools: vec![],
+            api_endpoints: vec![],
+            mcp_servers: vec![],
+        };
+        let declaration = AgentDeclaration {
+            bounded_actions: vec![],
+            forbidden: vec![],
+            escalation_required: vec![],
+            network: vec![],
+        };
+        let payload = serde_json::json!({
+            "identity": identity, "capabilities": capabilities, "declaration": declaration,
+        });
+        let sig = signer.sign(&serde_json::to_vec(&payload).unwrap()).unwrap();
+        let cert = AgentCertificate {
+            r#type: CERTIFICATE_TYPE.into(),
+            schema_version: Some(CERTIFICATE_SCHEMA_VERSION.into()),
+            identity,
+            capabilities,
+            declaration,
+            signature: CertificateSignature {
+                algorithm: "ed25519".into(),
+                key_id: "key_demo".into(),
+                public_key: pk_b64.clone(),
+                signature: URL_SAFE_NO_PAD.encode(sig),
+                signed_fields: SIGNED_FIELDS_V1.into(),
+            },
+        };
+        (cert, pk_b64)
+    }
+
+    fn pin(pk_b64: &str, agent: Option<&str>) -> crate::trust::TrustRootStore {
+        crate::trust::TrustRootStore::with_roots(vec![crate::trust::TrustRoot {
+            key_id: "key_demo".into(),
+            public_key: format!("ed25519:{pk_b64}"),
+            kind: crate::trust::TrustRootKind::AgentCert,
+            agent: agent.map(str::to_string),
+            label: "the counterparty".into(),
+            added_at: String::new(),
+        }])
+    }
+
+    /// An unscoped pin and a name that does not canonicalize are each
+    /// nothing, and nothing never matches nothing.
+    #[test]
+    fn a_cert_whose_name_does_not_canonicalize_never_passes_on_an_unscoped_pin() {
+        for name in [
+            "agent://alice",
+            "v\u{456}ctim",
+            "vic tim",
+            "alice?x",
+            "a/../alice",
+            "vic%74im",
+        ] {
+            let (cert, pk) = signed_cert_named(name);
+            let err = verify_certificate(&cert, &pin(&pk, None))
+                .expect_err(&format!("{name:?} passed on an unscoped pin"));
+            assert!(
+                matches!(err, CertificateVerifyError::PinNotScopedToAgent { .. }),
+                "{name:?}: {err}"
+            );
+            // Nor on a pin scoped to the plain name.
+            assert!(verify_certificate(&cert, &pin(&pk, Some("agent://alice"))).is_err());
+        }
+        // A plain name on an unscoped pin is refused too; scoped, it passes.
+        let (cert, pk) = signed_cert_named("alice");
+        assert!(verify_certificate(&cert, &pin(&pk, None)).is_err());
+        verify_certificate(&cert, &pin(&pk, Some("agent://alice"))).unwrap();
+        assert!(
+            verify_certificate(&cert, &pin(&pk, Some("agent://Alice"))).is_err(),
+            "names are case-sensitive"
         );
     }
 }

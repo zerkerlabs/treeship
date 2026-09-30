@@ -230,6 +230,9 @@ pub struct PresentationVerdict {
     /// via the certificate chain).
     pub sig_ok: bool,
     pub key_bound: bool,
+    /// Why the card is not key-bound (`key_not_verified`, `not_pinned`,
+    /// `pin_unscoped`, `pin_scoped_to_other`); None when it is.
+    pub key_bound_reason: Option<String>,
     pub via_chain: bool,
     pub revoked: Option<String>,
     pub challenge: ChallengeOutcome,
@@ -267,7 +270,12 @@ pub fn verify_presentation(
     let env: Envelope = serde_json::from_str(card_env_json)
         .map_err(|e| format!("unparseable card envelope: {e}"))?;
     let mut verifier = verifier_from_trust(trust);
-    let mut sig_ok = verifier.verify_any(&env).is_ok();
+    // Judged on the keys that verified, never on the keyid a signature
+    // names (see verify_resolution).
+    let card_res = verifier.verify_any(&env).ok();
+    let mut sig_ok = card_res.is_some();
+    let mut derived_id: Option<String> = card_res.as_ref().map(|r| r.artifact_id.clone());
+    let card_verified: Vec<String> = card_res.map(|r| r.verified_key_ids).unwrap_or_default();
     let stmt: ReceiptStatement = env
         .unmarshal_statement()
         .map_err(|e| format!("unparseable card statement: {e}"))?;
@@ -282,13 +290,8 @@ pub fn verify_presentation(
         return Err("card's agent URI does not match the presentation's".into());
     }
     let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
-    let signer = env
-        .signatures
-        .first()
-        .map(|s| s.keyid.as_str())
-        .unwrap_or("")
-        .to_string();
-    let mut key_bound = sig_ok && is_key_bound(card_keyid, &signer, trust);
+    let mut key_bound = card_verified.iter().any(|k| k == card_keyid)
+        && is_key_bound(card_keyid, card_keyid, agent, trust);
 
     let served_certs: Vec<(String, Envelope)> = pres
         .get("certs")
@@ -317,7 +320,10 @@ pub fn verify_presentation(
             key_bound = true;
             via_chain = true;
             subject_vk = Some(verdict.subject_key);
-            verifier.add_key(signer.clone(), verdict.subject_key);
+            verifier.add_key(card_keyid.to_string(), verdict.subject_key);
+            if derived_id.is_none() {
+                derived_id = verifier.verify_any(&env).ok().map(|r| r.artifact_id);
+            }
         }
     } else {
         subject_vk = trust
@@ -325,6 +331,28 @@ pub fn verify_presentation(
             .iter()
             .find(|r| r.key_id == card_keyid && r.kind == TrustRootKind::AgentCert)
             .and_then(|r| decode_ed25519_pubkey(&r.public_key).ok());
+    }
+
+    // The presentation's `card.artifact_id` is a label the presenter wrote;
+    // the challenge and the staple are bound to it, so it must be the id the
+    // card's bytes re-derive to, whether or not any trusted key verified the
+    // card (a staple must not prove a different id for an unverified card).
+    let derived = match &derived_id {
+        Some(d) => d.clone(),
+        None => {
+            let payload = env
+                .payload_bytes()
+                .map_err(|e| format!("card envelope payload does not decode: {e}"))?;
+            crate::attestation::id::artifact_id_from_pae(&crate::attestation::pae::pae(
+                &env.payload_type,
+                &payload,
+            ))
+        }
+    };
+    if derived != card_id {
+        return Err(format!(
+            "presentation names card {card_id} but the card envelope re-derives to {derived}"
+        ));
     }
 
     // ── Revocations: honored when authorized, exactly as resolve does ───────
@@ -338,34 +366,32 @@ pub fn verify_presentation(
             let Ok(rev_env) = serde_json::from_str::<Envelope>(rev_json) else {
                 continue;
             };
-            if verifier.verify_any(&rev_env).is_err() {
+            let Ok(rev_res) = verifier.verify_any(&rev_env) else {
                 continue;
-            }
+            };
             let Ok(rev_stmt) = rev_env.unmarshal_statement::<ReceiptStatement>() else {
                 continue;
             };
             if rev_stmt.kind != "agent_card_revocation.v1" {
                 continue;
             }
-            if rev_stmt
+            let names_this_card = rev_stmt
                 .payload
                 .as_ref()
                 .and_then(|p| p.get("card"))
                 .and_then(|v| v.as_str())
-                != Some(card_id)
-            {
+                == Some(card_id);
+            if !names_this_card && !crate::verify::resolution::revokes_key(&rev_stmt, card_keyid) {
                 continue;
             }
-            let rev_signer = rev_env
-                .signatures
-                .first()
-                .map(|s| s.keyid.as_str())
-                .unwrap_or("");
-            let self_revoke = !card_keyid.is_empty() && rev_signer == card_keyid;
-            let issuer = trust
-                .roots()
-                .iter()
-                .any(|r| r.key_id == rev_signer && r.kind == TrustRootKind::Revoker);
+            let self_revoke =
+                !card_keyid.is_empty() && rev_res.verified_key_ids.iter().any(|k| k == card_keyid);
+            let issuer = rev_res.verified_key_ids.iter().any(|k| {
+                trust
+                    .roots()
+                    .iter()
+                    .any(|r| &r.key_id == k && r.kind == TrustRootKind::Revoker)
+            });
             if self_revoke || issuer {
                 revoked = Some(
                     rev_stmt
@@ -401,11 +427,23 @@ pub fn verify_presentation(
 
     let staple = verify_staple(pres, card_id, trust, now_unix);
 
+    let key_bound_reason = if key_bound {
+        None
+    } else {
+        crate::capability::key_bound_reason(
+            card_keyid,
+            card_verified.iter().any(|k| k == card_keyid),
+            agent,
+            trust,
+        )
+        .map(str::to_string)
+    };
     Ok(PresentationVerdict {
         agent: agent.to_string(),
         card_id: card_id.to_string(),
         sig_ok,
         key_bound,
+        key_bound_reason,
         via_chain,
         revoked,
         challenge,

@@ -44,6 +44,7 @@ fn trust_staging() -> TrustRootStore {
         key_id: "rekor-staging".into(),
         public_key: format!("ecdsa-p256:{}", URL_SAFE_NO_PAD.encode(der)),
         kind: TrustRootKind::TransparencyLog,
+        agent: None,
         label: String::new(),
         added_at: String::new(),
     }])

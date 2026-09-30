@@ -939,6 +939,7 @@ mod tests {
             key_id: "test_hub".into(),
             public_key: encode_ed25519_pubkey(pk),
             kind: TrustRootKind::HubOrg,
+            agent: None,
             label: "test pin".into(),
             added_at: "2026-05-15T00:00:00Z".into(),
         }])
@@ -1022,6 +1023,7 @@ mod tests {
                 key_id: "h".into(),
                 public_key: encode_ed25519_pubkey(&pk),
                 kind,
+                agent: None,
                 label: String::new(),
                 added_at: "2026-05-15T00:00:00Z".into(),
             }])

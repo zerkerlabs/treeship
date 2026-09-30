@@ -61,30 +61,31 @@ pub fn chain_verify_card(
     // The card must claim the key that signed it (same rule as is_key_bound):
     // a chain-verified signer vouches only for cards that bind themselves to
     // that exact key.
-    let card_signer = card_env.signatures.first().map(|s| s.keyid.as_str())?;
-    if card_keyid.is_empty() || card_keyid != card_signer {
+    // Any of the card's signatures may name that key; which one is
+    // irrelevant, since a one-key verifier under that key decides below.
+    if card_keyid.is_empty() || !card_env.signatures.iter().any(|s| s.keyid == card_keyid) {
         return None;
     }
+    let card_signer = card_keyid;
 
     for (cert_id, cert_env) in certs {
         // 1. Cert envelope must verify against a PINNED CertIssuer root. The
-        //    pubkey comes from my trust store, never from the wire.
-        let cert_signer = match cert_env.signatures.first() {
-            Some(s) => s.keyid.as_str(),
-            None => continue,
-        };
-        let Some(ship_root) = trust
-            .roots()
-            .iter()
-            .find(|r| r.key_id == cert_signer && r.kind == TrustRootKind::CertIssuer)
-        else {
-            continue;
-        };
-        let Ok(ship_vk) = decode_ed25519_pubkey(&ship_root.public_key) else {
-            continue;
-        };
+        //    pubkey comes from my trust store, never from the wire. A cert
+        //    may carry several signatures; every pinned CertIssuer among
+        //    them is loaded, under its own pubkey only.
         let mut cert_verifier = Verifier::new(HashMap::new());
-        cert_verifier.add_key(cert_signer.to_string(), ship_vk);
+        for sig in &cert_env.signatures {
+            let Some(ship_root) = trust
+                .roots()
+                .iter()
+                .find(|r| r.key_id == sig.keyid && r.kind == TrustRootKind::CertIssuer)
+            else {
+                continue;
+            };
+            if let Ok(ship_vk) = decode_ed25519_pubkey(&ship_root.public_key) {
+                cert_verifier.add_key(sig.keyid.clone(), ship_vk);
+            }
+        }
         if cert_verifier.verify_any(cert_env).is_err() {
             continue;
         }
@@ -156,6 +157,19 @@ pub struct ResolutionBundle {
 /// The trust verdict for a resolution bundle: is the card authentic (directly
 /// pinned or chain-certified), and is it revoked? Capability grading and
 /// provenance are the caller's concern; this is only the trust decision.
+/// A revocation whose reason is `compromised` and whose signed `keyid` is
+/// this card's key revokes every card of that key, older or newer: a
+/// compromised key mints cards at will, so a re-mint must not outrun the
+/// revocation. `treeship trust remove <key_id>` is the definitive answer.
+pub fn revokes_key(rev: &ReceiptStatement, card_keyid: &str) -> bool {
+    let Some(p) = rev.payload.as_ref() else {
+        return false;
+    };
+    !card_keyid.is_empty()
+        && p.get("reason").and_then(|v| v.as_str()) == Some("compromised")
+        && p.get("keyid").and_then(|v| v.as_str()) == Some(card_keyid)
+}
+
 #[derive(serde::Serialize)]
 pub struct ResolutionVerdict {
     /// The card envelope signature verified against the caller's roots
@@ -170,6 +184,9 @@ pub struct ResolutionVerdict {
     pub revoked: bool,
     /// The revocation reason, when revoked.
     pub revocation_reason: Option<String>,
+    /// Why the card is not key-bound (`key_not_verified`, `not_pinned`,
+    /// `pin_unscoped`, `pin_scoped_to_other`); None when it is.
+    pub key_bound_reason: Option<String>,
 }
 
 /// Decide whether a resolution bundle's card is trustworthy against the
@@ -183,7 +200,14 @@ pub fn verify_resolution(
     now: &str,
 ) -> Result<ResolutionVerdict, String> {
     let verifier = verifier_from_trust(trust);
-    let mut sig_ok = verifier.verify_any(&bundle.card).is_ok();
+    // Everything below is judged on the keys that VERIFIED, never on the
+    // keyid a signature merely names: `verify_any` accepts an envelope as
+    // soon as any one signature verifies against any known key, so which
+    // key signed has to come from its result.
+    let card_res = verifier.verify_any(&bundle.card).ok();
+    let mut sig_ok = card_res.is_some();
+    let mut card_artifact_id: Option<String> = card_res.as_ref().map(|r| r.artifact_id.clone());
+    let card_verified: Vec<String> = card_res.map(|r| r.verified_key_ids).unwrap_or_default();
 
     let stmt: ReceiptStatement = bundle
         .card
@@ -197,13 +221,9 @@ pub fn verify_resolution(
     }
     let card = stmt.payload.unwrap_or(serde_json::Value::Null);
     let card_keyid = card.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
-    let signer = bundle
-        .card
-        .signatures
-        .first()
-        .map(|s| s.keyid.as_str())
-        .unwrap_or("");
-    let mut key_bound = sig_ok && is_key_bound(card_keyid, signer, trust);
+    let card_agent = card.get("agent").and_then(|v| v.as_str()).unwrap_or("");
+    let mut key_bound = card_verified.iter().any(|k| k == card_keyid)
+        && is_key_bound(card_keyid, card_keyid, card_agent, trust);
 
     // Chain walk when the leaf key is not directly pinned. The revocation
     // verifier gains the chain-certified subject key so a self-revocation
@@ -221,8 +241,14 @@ pub fn verify_resolution(
         ) {
             sig_ok = true;
             key_bound = true;
-            rev_verifier.add_key(signer.to_string(), verdict.subject_key);
+            rev_verifier.add_key(card_keyid.to_string(), verdict.subject_key);
             chain_cert_id = Some(verdict.cert_id);
+            if card_artifact_id.is_none() {
+                card_artifact_id = rev_verifier
+                    .verify_any(&bundle.card)
+                    .ok()
+                    .map(|r| r.artifact_id);
+            }
         }
     }
     let verifier = rev_verifier;
@@ -230,26 +256,35 @@ pub fn verify_resolution(
     // Honor an authorized, verifying revocation.
     let mut revocation_reason: Option<String> = None;
     for rev_env in &bundle.revocations {
-        if verifier.verify_any(rev_env).is_err() {
+        // The keys that VERIFIED this revocation, not the keyid it names.
+        let Ok(rev_res) = verifier.verify_any(rev_env) else {
             continue; // unverified revocation -> ignored
-        }
+        };
         let Ok(rev_stmt) = rev_env.unmarshal_statement::<ReceiptStatement>() else {
             continue;
         };
         if rev_stmt.kind != "agent_card_revocation.v1" {
             continue;
         }
-        let rev_signer = rev_env
-            .signatures
-            .first()
-            .map(|s| s.keyid.as_str())
-            .unwrap_or("");
-        let self_revoke = !card_keyid.is_empty() && rev_signer == card_keyid;
+        // The revocation must name THIS card: the artifact id the card's
+        // signed bytes re-derive to. One for another card of the same agent
+        // does not revoke this one.
+        let names_this_card = match (&card_artifact_id, rev_stmt.payload.as_ref()) {
+            (Some(id), Some(p)) => p.get("card").and_then(|v| v.as_str()) == Some(id.as_str()),
+            _ => false,
+        };
+        if !names_this_card && !revokes_key(&rev_stmt, card_keyid) {
+            continue;
+        }
+        let self_revoke =
+            !card_keyid.is_empty() && rev_res.verified_key_ids.iter().any(|k| k == card_keyid);
         // Issuer revocation is scoped to the `Revoker` kind.
-        let issuer = trust
-            .roots()
-            .iter()
-            .any(|r| r.key_id == rev_signer && r.kind == TrustRootKind::Revoker);
+        let issuer = rev_res.verified_key_ids.iter().any(|k| {
+            trust
+                .roots()
+                .iter()
+                .any(|r| &r.key_id == k && r.kind == TrustRootKind::Revoker)
+        });
         if self_revoke || issuer {
             revocation_reason = Some(
                 rev_stmt
@@ -264,12 +299,24 @@ pub fn verify_resolution(
         }
     }
 
+    let key_bound_reason = if key_bound {
+        None
+    } else {
+        crate::capability::key_bound_reason(
+            card_keyid,
+            card_verified.iter().any(|k| k == card_keyid),
+            card_agent,
+            trust,
+        )
+        .map(str::to_string)
+    };
     Ok(ResolutionVerdict {
         sig_ok,
         key_bound,
         chain_cert_id,
         revoked: revocation_reason.is_some(),
         revocation_reason,
+        key_bound_reason,
     })
 }
 
@@ -318,6 +365,7 @@ mod chain_tests {
                 URL_SAFE_NO_PAD.encode(ship.public_key_bytes())
             ),
             kind,
+            agent: None,
             label: "test ship".into(),
             added_at: String::new(),
         }])
@@ -555,10 +603,20 @@ mod chain_tests {
         assert!(!v.revoked);
 
         // A self-revocation signed by the agent's own (chain-certified) key is
-        // honored even though that key is not directly pinned.
+        // honored even though that key is not directly pinned. It names the
+        // card by the id its signed bytes re-derive to.
+        let card_id = crate::attestation::verify_with_key(
+            &card,
+            "key_agent",
+            ed25519_dalek::VerifyingKey::from_bytes(
+                agent_key.public_key_bytes()[..].try_into().unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .artifact_id;
         let mut rev_stmt = ReceiptStatement::new("ship://ship_test", "agent_card_revocation.v1");
-        rev_stmt.payload =
-            Some(serde_json::json!({ "card_ref": "card_x", "reason": "key-rotation" }));
+        rev_stmt.payload = Some(serde_json::json!({ "card": card_id, "reason": "key-rotation" }));
         let rev = sign(&payload_type("receipt"), &rev_stmt, &agent_key)
             .unwrap()
             .envelope;

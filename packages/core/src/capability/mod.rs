@@ -8,7 +8,7 @@
 //! caller passes in), never completeness.
 
 use crate::statements::ActionStatement;
-use crate::trust::{TrustRootKind, TrustRootStore};
+use crate::trust::TrustRootStore;
 
 /// `family.*` matches `family.write`; otherwise an exact match. A bare `*`
 /// matches anything.
@@ -33,15 +33,48 @@ pub fn tool_matches(declared: &str, actual: &str) -> bool {
     }
 }
 
-/// A card is **key-bound** only when its `keyid` is the envelope signer AND
-/// that key is pinned under `AgentCert`. Anything else is self-asserted.
-pub fn is_key_bound(card_keyid: &str, signer_keyid: &str, trust: &TrustRootStore) -> bool {
+/// A card is **key-bound** only when its `keyid` is the (verified) signer AND
+/// that key is pinned under `AgentCert` AS the card's `agent`. A key pinned
+/// as one agent signing a card that claims another name is self-asserted,
+/// and so is a card whose key sits on a pin scoped to no agent. Anything
+/// else is self-asserted.
+pub fn is_key_bound(
+    card_keyid: &str,
+    signer_keyid: &str,
+    agent: &str,
+    trust: &TrustRootStore,
+) -> bool {
+    let Ok(agent) = crate::trust::canonical_agent_uri(agent) else {
+        return false;
+    };
     !card_keyid.is_empty()
         && signer_keyid == card_keyid
-        && trust
-            .roots()
-            .iter()
-            .any(|r| r.key_id == card_keyid && r.kind == TrustRootKind::AgentCert)
+        && trust.agent_pin(card_keyid) == crate::trust::AgentPin::Scoped(agent)
+}
+
+/// Why a card is NOT key-bound, as a stable token for machine readers
+/// (`key_bound_reason` in the resolution and presentation verdicts), or
+/// None when it is. `key_verified` says whether the card's own key produced
+/// a verifying signature.
+pub fn key_bound_reason(
+    card_keyid: &str,
+    key_verified: bool,
+    agent: &str,
+    trust: &TrustRootStore,
+) -> Option<&'static str> {
+    use crate::trust::AgentPin;
+    if card_keyid.is_empty() || !key_verified {
+        return Some("key_not_verified");
+    }
+    let Ok(agent) = crate::trust::canonical_agent_uri(agent) else {
+        return Some("agent_uri_invalid");
+    };
+    match trust.agent_pin(card_keyid) {
+        AgentPin::NotPinned => Some("not_pinned"),
+        AgentPin::Unscoped => Some("pin_unscoped"),
+        AgentPin::Scoped(a) if a == agent => None,
+        AgentPin::Scoped(_) => Some("pin_scoped_to_other"),
+    }
 }
 
 /// Generic dispatch labels: an `action` field whose value is one of these is a
@@ -262,29 +295,78 @@ mod tests {
         assert!(!tool_matches("Bash(git:status)", "Bash(git:log)"));
     }
 
-    fn root(key_id: &str, kind: TrustRootKind) -> TrustRoot {
+    fn root(key_id: &str, kind: TrustRootKind, agent: Option<&str>, label: &str) -> TrustRoot {
         TrustRoot {
             key_id: key_id.into(),
             public_key: "ed25519:AAAA".into(),
             kind,
-            label: String::new(),
+            agent: agent.map(str::to_string),
+            label: label.into(),
             added_at: String::new(),
         }
     }
 
     #[test]
-    fn key_bound_needs_signer_match_and_agentcert() {
-        let agentcert = TrustRootStore::with_roots(vec![root("key_x", TrustRootKind::AgentCert)]);
-        assert!(is_key_bound("key_x", "key_x", &agentcert));
-        assert!(!is_key_bound("key_x", "key_y", &agentcert));
-        assert!(!is_key_bound("", "", &agentcert));
-        let ship = TrustRootStore::with_roots(vec![root("key_x", TrustRootKind::Ship)]);
-        assert!(!is_key_bound("key_x", "key_x", &ship));
+    fn key_bound_needs_signer_match_and_an_agentcert_pin_scoped_to_the_agent() {
+        let x = TrustRootStore::with_roots(vec![root(
+            "key_x",
+            TrustRootKind::AgentCert,
+            Some("agent://x"),
+            "",
+        )]);
+        assert!(is_key_bound("key_x", "key_x", "agent://x", &x));
+        assert!(!is_key_bound("key_x", "key_y", "agent://x", &x));
+        assert!(!is_key_bound("", "", "agent://x", &x));
+        assert!(!is_key_bound("key_x", "key_x", "", &x));
+        // A key pinned as agent://x cannot sign itself into agent://alice.
+        assert!(!is_key_bound("key_x", "key_x", "agent://alice", &x));
+        let ship = TrustRootStore::with_roots(vec![root(
+            "key_x",
+            TrustRootKind::Ship,
+            Some("agent://x"),
+            "",
+        )]);
+        assert!(!is_key_bound("key_x", "key_x", "agent://x", &ship));
         assert!(!is_key_bound(
             "key_x",
             "key_x",
+            "agent://x",
             &TrustRootStore::with_roots(vec![])
         ));
+    }
+
+    #[test]
+    fn legacy_pins_bind_only_through_a_register_style_label() {
+        // `agent register` wrote the bare agent name as the label.
+        let bare =
+            TrustRootStore::with_roots(vec![root("key_x", TrustRootKind::AgentCert, None, "x")]);
+        assert!(is_key_bound("key_x", "key_x", "agent://x", &bare));
+        assert!(!is_key_bound("key_x", "key_x", "agent://y", &bare));
+        let uri = TrustRootStore::with_roots(vec![root(
+            "key_x",
+            TrustRootKind::AgentCert,
+            None,
+            "agent://x",
+        )]);
+        assert!(is_key_bound("key_x", "key_x", "agent://x", &uri));
+        // Any other label scopes to nothing: pinned, but never key-bound.
+        for label in ["", "the counterparty", "acme/x", "https://x"] {
+            let unscoped = TrustRootStore::with_roots(vec![root(
+                "key_x",
+                TrustRootKind::AgentCert,
+                None,
+                label,
+            )]);
+            assert!(
+                !is_key_bound("key_x", "key_x", "agent://x", &unscoped),
+                "{label:?}"
+            );
+            assert_eq!(
+                unscoped.agent_pin("key_x"),
+                crate::trust::AgentPin::Unscoped,
+                "{label:?}"
+            );
+        }
     }
 
     #[test]

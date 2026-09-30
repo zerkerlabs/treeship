@@ -542,6 +542,7 @@ mod trust_pin_tests {
             key_id: signer.key_id().to_string(),
             public_key: encode_ed25519_pubkey(&vk),
             kind: TrustRootKind::HubCheckpoint,
+            agent: None,
             label: "trusted hub".into(),
             added_at: "2026-05-15T00:00:00Z".into(),
         }])
@@ -607,6 +608,7 @@ mod trust_pin_tests {
             key_id: signer.key_id().to_string(),
             public_key: encode_ed25519_pubkey(&vk),
             kind: TrustRootKind::AgentCert, // wrong kind!
+            agent: None,
             label: "trusted for agent certs only".into(),
             added_at: "2026-05-15T00:00:00Z".into(),
         }]);
@@ -749,6 +751,7 @@ mod canonical_v3_tests {
             key_id: signer.key_id().to_string(),
             public_key: encode_ed25519_pubkey(&vk),
             kind: TrustRootKind::HubCheckpoint,
+            agent: None,
             label: "trusted hub".into(),
             added_at: "2026-05-15T00:00:00Z".into(),
         }])

@@ -183,6 +183,13 @@ pub struct TrustRoot {
     /// What this root is allowed to verify.
     pub kind: TrustRootKind,
 
+    /// For `agent_cert`: the agent URI this key is pinned AS. A card is
+    /// key-bound only when its `agent` equals this scope; a key pinned as one
+    /// agent cannot sign itself into another agent's name. Absent on pins
+    /// from before the field; see [`TrustRoot::agent_scope`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+
     /// Human-readable label. Shown by `treeship trust list`. Optional in
     /// the file format; defaults to the empty string.
     #[serde(default)]
@@ -195,6 +202,105 @@ pub struct TrustRoot {
 
 /// On-disk wire format. A separate type so we can evolve the file without
 /// breaking the public `TrustRoot` API.
+/// The one form an agent (or provider) URI takes in a pin and in a card
+/// comparison: `scheme://authority[/path]`, scheme lower-cased, one trailing
+/// slash dropped, no whitespace, query, fragment, empty or `..` segments, and
+/// only URL-safe characters. Anything else is refused, so a pin and the card
+/// it is compared with cannot differ by an accident of spelling.
+pub fn canonical_agent_uri(raw: &str) -> Result<String, String> {
+    let s = raw.trim();
+    let Some((scheme, rest)) = s.split_once("://") else {
+        return Err(format!("{raw:?} is not a URI such as agent://deployer"));
+    };
+    if scheme.is_empty()
+        || !scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        || !scheme
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+    {
+        return Err(format!(
+            "{raw:?}: the scheme must be letters, digits, + - ."
+        ));
+    }
+    if rest
+        .chars()
+        .any(|c| c.is_whitespace() || matches!(c, '?' | '#'))
+    {
+        return Err(format!(
+            "{raw:?}: no whitespace, query (?) or fragment (#) in an agent URI"
+        ));
+    }
+    if !rest.chars().all(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~' | ':' | '@' | '+' | '/')
+    }) {
+        return Err(format!(
+            "{raw:?}: only ASCII letters, digits and - . _ ~ : @ + / are allowed (no percent-encoding, no non-ASCII look-alikes); names are case-sensitive"
+        ));
+    }
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    if rest.is_empty() {
+        return Err(format!("{raw:?} names no agent"));
+    }
+    if rest
+        .split('/')
+        .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+    {
+        return Err(format!(
+            "{raw:?}: empty, `.` or `..` path segments are not allowed"
+        ));
+    }
+    Ok(format!("{}://{rest}", scheme.to_ascii_lowercase()))
+}
+
+impl TrustRoot {
+    /// The agent this `agent_cert` pin is scoped to, in canonical form. The
+    /// explicit `agent` field when set; otherwise, for a pin written before
+    /// the field, the label `treeship agent register` wrote: an `agent://`
+    /// URI, or a bare agent name (letters, digits, - . _), read as
+    /// `agent://<name>`. Any other unscoped pin scopes to nothing and
+    /// key-binds nothing.
+    pub fn agent_scope(&self) -> Option<String> {
+        if let Some(a) = &self.agent {
+            return canonical_agent_uri(a).ok();
+        }
+        let label = self.label.trim();
+        if label.is_empty() {
+            return None;
+        }
+        if label.starts_with("agent://") {
+            return canonical_agent_uri(label)
+                .ok()
+                .filter(|u| !u["agent://".len()..].contains('/'));
+        }
+        if label.contains("://") {
+            return None;
+        }
+        if label
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_'))
+        {
+            return Some(format!("agent://{label}"));
+        }
+        None
+    }
+}
+
+/// How a key is pinned under `agent_cert`, for the key-bound decision and
+/// for telling the operator what to fix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentPin {
+    /// No `agent_cert` pin for this key.
+    NotPinned,
+    /// Pinned, but scoped to no agent (a pin from before the `agent` field
+    /// with a label that is not an agent name). Binds nothing.
+    Unscoped,
+    /// Pinned as this agent.
+    Scoped(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TrustRootFile {
     /// Schema version. Currently `1`.
@@ -480,6 +586,21 @@ impl TrustRootStore {
         &self.roots
     }
 
+    /// The `agent_cert` pin state of `key_id`.
+    pub fn agent_pin(&self, key_id: &str) -> AgentPin {
+        match self
+            .roots
+            .iter()
+            .find(|r| r.key_id == key_id && r.kind == TrustRootKind::AgentCert)
+        {
+            None => AgentPin::NotPinned,
+            Some(r) => match r.agent_scope() {
+                Some(a) => AgentPin::Scoped(a),
+                None => AgentPin::Unscoped,
+            },
+        }
+    }
+
     /// Number of roots configured.
     pub fn len(&self) -> usize {
         self.roots.len()
@@ -643,6 +764,7 @@ mod tests {
             key_id: key_id.into(),
             public_key: encode_ed25519_pubkey(&pk),
             kind,
+            agent: None,
             label: format!("test root {key_id}"),
             added_at: "2026-05-15T00:00:00Z".into(),
         };
@@ -867,6 +989,7 @@ mod tests {
             key_id: key_id.into(),
             public_key: format!("ecdsa-p256:{}", URL_SAFE_NO_PAD.encode(der)),
             kind: TrustRootKind::TransparencyLog,
+            agent: None,
             label: String::new(),
             added_at: String::new(),
         }
@@ -924,5 +1047,53 @@ mod tests {
             TrustRootStore::open(&path),
             Err(TrustRootError::Malformed { .. })
         ));
+    }
+}
+
+#[cfg(test)]
+mod agent_uri_tests {
+    use super::canonical_agent_uri as c;
+
+    #[test]
+    fn canonical_form_is_one_spelling() {
+        assert_eq!(c("agent://alice").unwrap(), "agent://alice");
+        assert_eq!(c("agent://alice/").unwrap(), "agent://alice");
+        assert_eq!(c("AGENT://alice").unwrap(), "agent://alice");
+        assert_eq!(c(" agent://alice ").unwrap(), "agent://alice");
+        assert_eq!(c("system://zmem").unwrap(), "system://zmem");
+        assert_eq!(c("agent://org/team/bot").unwrap(), "agent://org/team/bot");
+    }
+
+    #[test]
+    fn spelling_tricks_are_refused() {
+        for bad in [
+            "alice",
+            "agent://",
+            "agent:///",
+            "agent://vic tim",
+            "agent://alice?x=1",
+            "agent://alice#frag",
+            "agent://a/../alice",
+            "agent://a//alice",
+            "agent://a/./alice",
+            "agent://vic\ttim",
+            "://alice",
+            "1agent://alice",
+        ] {
+            assert!(c(bad).is_err(), "{bad:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn look_alikes_and_encodings_are_refused_and_names_keep_their_case() {
+        for bad in [
+            "agent://vic%74im",
+            "agent://v\u{456}ctim",
+            "agent://agent://alice",
+        ] {
+            assert!(c(bad).is_err(), "{bad:?} must be refused");
+        }
+        assert_eq!(c("agent://Alice").unwrap(), "agent://Alice");
+        assert_ne!(c("agent://Alice").unwrap(), c("agent://alice").unwrap());
     }
 }

@@ -239,6 +239,7 @@ fn a_genuine_package_verifies_every_signature_and_the_chain() {
             URL_SAFE_NO_PAD.encode(signer.public_key_bytes())
         ),
         kind: TrustRootKind::CertIssuer,
+        agent: None,
         label: "test".into(),
         added_at: "2026-09-09T00:00:00Z".into(),
     }]);
@@ -458,6 +459,7 @@ fn pinned(signer: &Ed25519Signer) -> TrustRootStore {
             URL_SAFE_NO_PAD.encode(signer.public_key_bytes())
         ),
         kind: TrustRootKind::CertIssuer,
+        agent: None,
         label: "producer".into(),
         added_at: "2026-09-25T00:00:00Z".into(),
     }])
@@ -604,6 +606,7 @@ fn pinned_all(signers: &[&Ed25519Signer]) -> TrustRootStore {
                 key_id: s.key_id().into(),
                 public_key: format!("ed25519:{}", URL_SAFE_NO_PAD.encode(s.public_key_bytes())),
                 kind: TrustRootKind::CertIssuer,
+                agent: None,
                 label: "pinned".into(),
                 added_at: "2026-09-26T00:00:00Z".into(),
             })

@@ -15,7 +15,7 @@ use treeship_core::capability::{declared_tools, is_key_bound, matched_capability
 use treeship_core::merkle::{MerkleTree, ProofFile};
 use treeship_core::statements::{payload_type, ActionStatement, ReceiptStatement};
 use treeship_core::trust::{TrustRootKind, TrustRootStore};
-use treeship_core::verify::resolution::{verify_resolution, ResolutionBundle};
+use treeship_core::verify::resolution::{verify_resolution, ResolutionBundle, ResolutionVerdict};
 
 type CmdResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -39,7 +39,7 @@ pub fn resolve(
     let key_id = crate::commands::cards::registered_key_for_actor(&agents_dir, agent);
     let key_bound = key_id
         .as_deref()
-        .map(|k| is_key_bound(k, k, &trust))
+        .map(|k| is_key_bound(k, k, agent, &trust))
         .unwrap_or(false);
     let key_grade = match (&key_id, key_bound) {
         (Some(_), true) => "captured (key-bound under AgentCert)",
@@ -48,8 +48,28 @@ pub fn resolve(
     };
 
     // --- Current card: latest agent_card.v1 for this agent, signed by its key -
+    // Cards and actions are attributed by the keys whose signatures
+    // VERIFIED (this ship's own keys and the pinned roots), never by the
+    // keyid a signature merely names.
+    let local_verifier = crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)?;
+    let verified_ids = |env: &treeship_core::attestation::Envelope| -> Vec<String> {
+        local_verifier
+            .as_ref()
+            .and_then(|v| v.verify_any(env).ok())
+            .map(|r| r.verified_key_ids)
+            .unwrap_or_default()
+    };
+    let pinned_verifier = treeship_core::verify::resolution::verifier_from_trust(&trust);
+
     let receipt_pt = payload_type("receipt");
-    let mut current: Option<(String, serde_json::Value, String, String)> = None;
+    // Every card a trusted key verified: (card id, payload, keys that
+    // verified it against the PINNED roots, signed_at). The current card is
+    // the newest KEY-BOUND one; only when the agent has no key-bound card
+    // does the newest asserted card stand in. Otherwise a newer card any
+    // pinned party signed for this agent would displace the agent's own
+    // card, and with it the agent's own revocation of that card.
+    type Candidate = (String, serde_json::Value, Vec<String>, String);
+    let mut candidates: Vec<Candidate> = Vec::new();
     for entry in ctx.storage.list_by_type(&receipt_pt) {
         let Ok(rec) = ctx.storage.read(&entry.id) else {
             continue;
@@ -66,28 +86,43 @@ pub fn resolve(
         if payload.get("agent").and_then(|v| v.as_str()) != Some(agent) {
             continue;
         }
-        let signer = rec
-            .envelope
-            .signatures
-            .first()
-            .map(|s| s.keyid.clone())
-            .unwrap_or_default();
-        // If the agent has a registered key, only count cards it actually signed.
+        let verified = verified_ids(&rec.envelope);
+        if verified.is_empty() {
+            continue; // no key this ship trusts signed it
+        }
+        // If the agent has a registered key, only count cards that key signed.
         if let Some(kid) = &key_id {
-            if &signer != kid {
+            if !verified.iter().any(|k| k == kid) {
                 continue;
             }
         }
-        let newer = current
-            .as_ref()
-            .map(|(_, _, _, t)| entry.signed_at > *t)
-            .unwrap_or(true);
-        if newer {
-            current = Some((entry.id.clone(), payload, signer, entry.signed_at.clone()));
-        }
+        let pinned: Vec<String> = pinned_verifier
+            .verify_any(&rec.envelope)
+            .map(|r| r.verified_key_ids)
+            .unwrap_or_default();
+        candidates.push((entry.id.clone(), payload, pinned, entry.signed_at.clone()));
     }
+    let bound_to_own_key = |c: &Candidate| -> bool {
+        let kid = c.1.get("keyid").and_then(|v| v.as_str()).unwrap_or("");
+        let card_agent = c.1.get("agent").and_then(|v| v.as_str()).unwrap_or("");
+        c.2.iter().any(|k| k == kid) && is_key_bound(kid, kid, card_agent, &trust)
+    };
+    let newest = |mut v: Vec<Candidate>| -> Option<Candidate> {
+        v.sort_by(|a, b| b.3.cmp(&a.3));
+        v.into_iter().next()
+    };
+    let key_bound_cards: Vec<Candidate> = candidates
+        .iter()
+        .filter(|c| bound_to_own_key(c))
+        .cloned()
+        .collect();
+    let current = if key_bound_cards.is_empty() {
+        newest(candidates)
+    } else {
+        newest(key_bound_cards)
+    };
 
-    let Some((card_id, card, card_signer, _)) = current else {
+    let Some((card_id, card, card_pinned_signers, _)) = current else {
         // An agent with no card cannot be resolved. Say so on the exit
         // code: a script doing `treeship resolve $agent && deploy` must
         // not deploy on a typo. (Exited 0 through 0.31.9.)
@@ -112,13 +147,7 @@ pub fn resolve(
         let Ok(arec) = ctx.storage.read(&entry.id) else {
             continue;
         };
-        let asigner = arec
-            .envelope
-            .signatures
-            .first()
-            .map(|s| s.keyid.as_str())
-            .unwrap_or("");
-        if asigner != card_keyid {
+        if card_keyid.is_empty() || !verified_ids(&arec.envelope).iter().any(|k| k == card_keyid) {
             continue;
         }
         let Ok(action) = arec.envelope.unmarshal_statement::<ActionStatement>() else {
@@ -131,7 +160,13 @@ pub fn resolve(
         }
     }
     let out_of_scope = total - in_scope;
-    let card_key_bound = is_key_bound(card_keyid, &card_signer, &trust);
+    // Key-bound: the card's own key produced a signature that verifies
+    // against the PINNED roots and that key is pinned under AgentCert.
+    let card_key_bound = card_pinned_signers.iter().any(|k| k == card_keyid)
+        && is_key_bound(card_keyid, card_keyid, agent, &trust);
+    if let Some(hint) = crate::commands::capability::unscoped_pin_hint(card_keyid, agent, &trust) {
+        printer.hint(&hint);
+    }
 
     // Capability provenance: captured (read off the card) vs exercised (from
     // captured receipts) vs declared-only. See docs/specs/capability-provenance.md.
@@ -277,29 +312,30 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         .into_json()
         .map_err(|e| format!("hub returned invalid JSON: {e}"))?;
 
-    let Some(card_entry) = bundle.get("current_card").filter(|v| !v.is_null()) else {
+    // The hub's `current_card` is a hint chosen by the caller-supplied
+    // signed_at, which the hub does not verify. The client picks: among the
+    // served cards (newest first), the newest one that verifies KEY-BOUND
+    // here; failing that, the newest a trusted key signed; failing that,
+    // the hub's hint, reported as unverified. A newer card any pinned party
+    // pushed for this agent would otherwise displace the agent's own card
+    // and its revocation.
+    let mut served_cards: Vec<serde_json::Value> = bundle
+        .get("cards")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if served_cards.is_empty() {
+        if let Some(c) = bundle.get("current_card").filter(|v| !v.is_null()) {
+            served_cards.push(c.clone());
+        }
+    }
+    if served_cards.is_empty() {
         printer.hint("the hub holds no agent_card.v1 for this agent.");
         return Err(format!("no capability card for {agent} on hub {base}").into());
-    };
-    let card_id = card_entry
-        .get("artifact_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let env_json = card_entry
-        .get("envelope_json")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let env: Envelope = serde_json::from_str(env_json)
-        .map_err(|e| format!("hub returned an unparseable card envelope: {e}"))?;
-
-    // Parse the card statement for the capability display below.
-    let stmt: ReceiptStatement = env.unmarshal_statement()?;
-    if stmt.kind != "agent_card.v1" {
-        return Err(format!("hub returned a `{}`, not an agent_card.v1", stmt.kind).into());
     }
-    let card = stmt.payload.unwrap_or(serde_json::Value::Null);
-    let tools = declared_tools(&card);
+    served_cards.sort_by_key(|c| {
+        std::cmp::Reverse(c.get("signed_at").and_then(|v| v.as_i64()).unwrap_or(0))
+    });
 
     // The single core trust-decision: verify the card (direct pin or chain
     // walk), then honor an authorized revocation. Same code path the WASM
@@ -335,17 +371,58 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
             .map(|d| d.as_secs())
             .unwrap_or(0),
     );
-    let verdict = verify_resolution(
-        &ResolutionBundle {
-            agent: agent.to_string(),
-            card: env.clone(),
-            certs: served_certs,
-            revocations: revocation_envs,
-        },
-        trust,
-        &now,
-    )
-    .map_err(|e| format!("hub returned an invalid card bundle: {e}"))?;
+    type Picked = (String, Envelope, serde_json::Value, ResolutionVerdict);
+    let mut key_bound_pick: Option<Picked> = None;
+    let mut signed_pick: Option<Picked> = None;
+    let mut any_pick: Option<Picked> = None;
+    for c in &served_cards {
+        let id = c
+            .get("artifact_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let Some(ej) = c.get("envelope_json").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Ok(env) = serde_json::from_str::<Envelope>(ej) else {
+            continue;
+        };
+        let Ok(stmt) = env.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        if stmt.kind != "agent_card.v1" {
+            continue;
+        }
+        let card = stmt.payload.unwrap_or(serde_json::Value::Null);
+        if card.get("agent").and_then(|v| v.as_str()) != Some(agent) {
+            continue;
+        }
+        let Ok(v) = verify_resolution(
+            &ResolutionBundle {
+                agent: agent.to_string(),
+                card: env.clone(),
+                certs: served_certs.clone(),
+                revocations: revocation_envs.clone(),
+            },
+            trust,
+            &now,
+        ) else {
+            continue;
+        };
+        let item = (id, env, card, v);
+        if item.3.key_bound {
+            key_bound_pick = Some(item);
+            break;
+        } else if item.3.sig_ok && signed_pick.is_none() {
+            signed_pick = Some(item);
+        } else if any_pick.is_none() {
+            any_pick = Some(item);
+        }
+    }
+    let Some((card_id, _env, card, verdict)) = key_bound_pick.or(signed_pick).or(any_pick) else {
+        return Err(format!("hub returned no agent_card.v1 for {agent} on {base}").into());
+    };
+    let tools = declared_tools(&card);
     let sig_ok = verdict.sig_ok;
     let key_bound = verdict.key_bound;
     let chain_cert_id = verdict.chain_cert_id;
@@ -388,6 +465,14 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
         (None, true) => "yes (AgentCert)",
         (None, false) => "no",
     };
+    let key_bound_reason = verdict.key_bound_reason.clone();
+    if let Some(hint) = crate::commands::capability::unscoped_pin_hint(
+        card.get("keyid").and_then(|v| v.as_str()).unwrap_or(""),
+        agent,
+        trust,
+    ) {
+        printer.hint(&hint);
+    }
     let tools_str = if tools.is_empty() {
         "(none)".to_string()
     } else {
@@ -476,6 +561,7 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
             "current_card": card_id,
             "signature": sig_str,
             "key_bound": key_bound,
+            "key_bound_reason": key_bound_reason,
             "via_chain": chain_cert_id.is_some(),
             "chain_cert": chain_cert_id,
             "declared_tools": tools,
