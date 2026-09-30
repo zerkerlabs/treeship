@@ -743,7 +743,7 @@ pub fn verify_capability(card_json: &str, actions_json: &str, trust_roots_json: 
         .unwrap_or_default();
     let key_bound = !card_keyid.is_empty()
         && card_verified.iter().any(|k| k == card_keyid)
-        && is_key_bound(card_keyid, card_keyid, &trust);
+        && is_key_bound(card_keyid, card_keyid, card_agent, &trust);
 
     // Cross-check the provided action envelopes signed by the card's key.
     let actions: Vec<Envelope> = match serde_json::from_str(actions_json) {
@@ -880,6 +880,7 @@ pub fn verify_presentation(
         "card_id": verdict.card_id,
         "sig_ok": verdict.sig_ok,
         "key_bound": verdict.key_bound,
+        "key_bound_reason": verdict.key_bound_reason,
         "via_chain": verdict.via_chain,
         "revoked": verdict.revoked,
         "challenge": { "outcome": outcome, "signed_at": signed_at, "reason": reason },
@@ -1065,7 +1066,7 @@ mod tests {
             "roots": [{
                 "key_id":     "key_demo",
                 "public_key": format!("ed25519:{pk_b64}"),
-                "kind":       "agent_cert",
+                "kind":       "agent_cert", "agent": "agent://agent-007",
                 "label":      "test issuer",
                 "added_at":   "2026-05-15T00:00:00Z",
             }]
@@ -1401,9 +1402,9 @@ mod tests {
         let mut card = ReceiptStatement::new("ship://ship_test", "agent_card.v1");
         card.payload =
             Some(serde_json::json!({ "agent": "agent://a", "keyid": agent_key.key_id() }));
-        let card_env = sign(&payload_type("receipt"), &card, &agent_key)
-            .unwrap()
-            .envelope;
+        let card_signed = sign(&payload_type("receipt"), &card, &agent_key).unwrap();
+        let card_id = card_signed.artifact_id.clone();
+        let card_env = card_signed.envelope;
 
         let trust = serde_json::json!({
             "version": 1,
@@ -1420,7 +1421,7 @@ mod tests {
         let pres = serde_json::json!({
             "type": "treeship/presentation/v1",
             "agent": "agent://a",
-            "card": { "artifact_id": "art_card", "envelope_json": serde_json::to_string(&card_env).unwrap() },
+            "card": { "artifact_id": card_id, "envelope_json": serde_json::to_string(&card_env).unwrap() },
             "certs": [{ "artifact_id": "art_cert", "envelope_json": serde_json::to_string(&cert_env).unwrap() }],
             "revocations": [],
         })
@@ -1502,6 +1503,7 @@ mod tests {
                 "key_id": keyid,
                 "public_key": format!("ed25519:{real_pk}"),
                 "kind": "agent_cert",
+                "agent": "agent://deployer",
                 "label": "",
                 "added_at": ""
             }]
@@ -1579,6 +1581,7 @@ mod tests {
                 "key_id": "key_victim",
                 "public_key": format!("ed25519:{victim_pk}"),
                 "kind": "agent_cert",
+                "agent": "agent://agent-007",
                 "label": "",
                 "added_at": ""
             }]

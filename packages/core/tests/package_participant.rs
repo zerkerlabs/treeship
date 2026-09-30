@@ -388,6 +388,7 @@ fn a_cross_ship_room_verifies_with_only_the_host_pinned() {
         key_id: host.key_id().into(),
         public_key: format!("ed25519:{}", b64(&host)),
         kind: TrustRootKind::CertIssuer,
+        agent: None,
         label: "host".into(),
         added_at: "2026-09-26T00:00:00Z".into(),
     }]);

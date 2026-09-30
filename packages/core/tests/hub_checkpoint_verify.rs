@@ -37,6 +37,7 @@ fn trust_for_hub(pk: &ed25519_dalek::VerifyingKey) -> TrustRootStore {
         public_key: encode_ed25519_pubkey(pk),
         // Batch 5: hub-org checkpoint promotion is scoped to HubOrg.
         kind: TrustRootKind::HubOrg,
+        agent: None,
         label: "test hub".into(),
         added_at: "2026-05-15T00:00:00Z".into(),
     }])

@@ -328,3 +328,43 @@ func TestMatch_ByExercisedEvidence(t *testing.T) {
 		t.Fatalf("missing exercised must 400, got %d", w.Code)
 	}
 }
+
+// Every revocation naming a card is served, not only the newest by the
+// caller-supplied signed_at: a later revocation from someone else must not
+// hide the card's real one from clients that verify signers themselves.
+func TestResolve_ServesEveryRevocationForACard(t *testing.T) {
+	t.Setenv("TREESHIP_HUB_DB", filepath.Join(t.TempDir(), "hub.db"))
+	database, err := db.Open()
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+	card := makeEnvelope(t, "agent_card.v1", map[string]any{"agent": "agent://a", "keyid": "key_agent"}, "key_agent")
+	insertReceipt(t, database, "art_card", card, 1000)
+	real := makeEnvelope(t, "agent_card_revocation.v1", map[string]any{"card": "art_card", "reason": "rotated"}, "key_agent")
+	insertReceipt(t, database, "art_rev_real", real, 2000)
+	later := makeEnvelope(t, "agent_card_revocation.v1", map[string]any{"card": "art_card", "reason": "not yours"}, "key_stranger")
+	insertReceipt(t, database, "art_rev_later", later, 3000)
+
+	h := &Handlers{DB: database}
+	w := httptest.NewRecorder()
+	h.Resolve(w, httptest.NewRequest(http.MethodGet, "/v1/agents?agent=agent://a", nil))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		Revocations []struct {
+			ArtifactID string `json:"artifact_id"`
+		} `json:"revocations"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, r := range out.Revocations {
+		ids[r.ArtifactID] = true
+	}
+	if len(out.Revocations) != 2 || !ids["art_rev_real"] || !ids["art_rev_later"] {
+		t.Fatalf("want both revocations served, got %+v", out.Revocations)
+	}
+}

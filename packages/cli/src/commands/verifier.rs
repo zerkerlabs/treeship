@@ -62,6 +62,7 @@ mod tests {
                 URL_SAFE_NO_PAD.encode(&signer_info.public_key)
             ),
             kind: TrustRootKind::AgentCert,
+            agent: None,
             label: "counterparty".into(),
             added_at: "2026-01-01T00:00:00Z".into(),
         });

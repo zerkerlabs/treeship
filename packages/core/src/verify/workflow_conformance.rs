@@ -1865,6 +1865,7 @@ mod tests {
             key_id: signer.key_id().into(),
             public_key: encode_ed25519_pubkey(&verifying_key),
             kind: TrustRootKind::HubCheckpoint,
+            agent: None,
             label: "workflow test checkpoint".into(),
             added_at: "2026-08-17T00:00:00Z".into(),
         }]);
@@ -2014,6 +2015,7 @@ mod tests {
                 key_id: proof.declaration.checkpoint.signer.clone(),
                 public_key: proof.declaration.checkpoint.public_key.clone(),
                 kind: TrustRootKind::HubCheckpoint,
+                agent: None,
                 label: "declaration log".into(),
                 added_at: "2026-08-17T00:00:00Z".into(),
             },
@@ -2021,6 +2023,7 @@ mod tests {
                 key_id: proof.first_run.checkpoint.signer.clone(),
                 public_key: proof.first_run.checkpoint.public_key.clone(),
                 kind: TrustRootKind::HubCheckpoint,
+                agent: None,
                 label: "unrelated run log".into(),
                 added_at: "2026-08-17T00:00:00Z".into(),
             },

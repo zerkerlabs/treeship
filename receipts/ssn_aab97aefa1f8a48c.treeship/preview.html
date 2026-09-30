@@ -837,9 +837,28 @@ async function runChecks(){
 }
 
 // ── Helpers ──
-function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+// Every string field on a receipt comes from whoever produced it: it describes what
+// an agent did, and this preview renders a receipt fetched from a hub before
+// any signature is checked (see the "Not proven here" callout below). esc()
+// is the one function every piece of receipt-derived text must pass through
+// before it reaches `h`. It covers attribute contexts too (`"`/`'`), not
+// just text nodes, because several call sites below interpolate into a
+// quoted HTML attribute (e.g. `title="'+esc(x)+'"'`), and escaping quotes in
+// a text node is always harmless (an entity, not a functional change).
+function esc(s){return(s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+// A bare `#id`/relative fragment is safe to place in href; anything else
+// (a javascript: URL, a data: URL, an absolute URL a producer could point a
+// reader to) is not something this page ever needs to link to, so it's
+// refused outright rather than partially sanitized. Not currently wired to
+// any receipt-derived field (every href in this file is a hardcoded anchor),
+// kept as the safe primitive to reach for if that ever changes.
+function safeHref(u){return typeof u==='string'&&/^#[\w-]*$/.test(u)?u:'#'}
 function fmtDur(ms){if(!ms)return'--';const s=Math.floor(ms/1000);if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m '+s%60+'s';return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m'}
-function timeOf(iso){return(iso||'').slice(11,19)}
+// Self-escaping: every call site below inserts this directly into `h`, and
+// a sliced substring of a producer-supplied timestamp string is still
+// producer-supplied. Escaping here once, rather than at each of the seven
+// call sites, is the fix that does not depend on remembering all seven.
+function timeOf(iso){return esc((iso||'').slice(11,19))}
 function renderPath(p){const i=p.lastIndexOf('/');if(i<0)return'<span style="font-weight:600">'+esc(p)+'</span>';return'<span style="color:var(--faint)">'+esc(p.slice(0,i+1))+'</span><span style="font-weight:600">'+esc(p.slice(i+1))+'</span>'}
 const COLORS=['#37454F','#856733','#3B6A4E','#6E4A63','#41607A','#9C5B3B'];
 const SENSITIVE_RE=/\.env|\.ssh|\.pem|\.aws|\.gnupg|credentials|id_rsa|id_ed25519/i;
@@ -942,7 +961,7 @@ async function render(){
   h+='<a class="nav-item" href="#files" data-section="files">Files <span class="nav-count">'+((se.files_written||[]).length+(se.files_read||[]).length)+'</span></a>';
   h+='<a class="nav-item" href="#commands" data-section="commands">Commands <span class="nav-count">'+procs.length+'</span></a>';
   h+='<div class="nav-label">Trust</div>';
-  if(auth)h+='<a class="nav-item" href="#authority" data-section="authority">Authority <span class="nav-count">'+auth.checked+'</span></a>';
+  if(auth)h+='<a class="nav-item" href="#authority" data-section="authority">Authority <span class="nav-count">'+num(auth.checked)+'</span></a>';
   h+='<a class="nav-item" href="#security" data-section="security">Findings <span class="nav-count">'+findings.length+'</span></a>';
   if(fin.rows.length)h+='<a class="nav-item" href="#financial" data-section="financial">Financial <span class="nav-count">'+fin.rows.length+'</span></a>';
   h+='<a class="nav-item" href="#trust-chain" data-section="trust-chain">Trust chain</a>';
@@ -1186,8 +1205,8 @@ async function render(){
     var sumGly = auth.violations?'✗':(auth.unverified?'○':'✓');
     h+='<div class="row-list"><div class="finding">';
     h+='<div class="mono" style="padding-top:1px;color:'+sumCol+'">'+sumGly+'</div><div>';
-    h+='<div style="font-size:.8rem;font-weight:600">'+auth.checked+' authorized action'+(auth.checked===1?'':'s')+'</div>';
-    h+='<div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">'+auth.violations+' outside grant · '+auth.unverified+' with an unchecked layer · '+auth.bearer+' bearer</div></div>';
+    h+='<div style="font-size:.8rem;font-weight:600">'+num(auth.checked)+' authorized action'+(auth.checked===1?'':'s')+'</div>';
+    h+='<div class="mono" style="font-size:.62rem;color:var(--faint);margin-top:3px">'+num(auth.violations)+' outside grant · '+num(auth.unverified)+' with an unchecked layer · '+num(auth.bearer)+' bearer</div></div>';
     h+='<span class="badge '+(auth.violations?'badge-risk':(auth.unverified?'badge-warn':'badge-ok'))+'">'+(auth.violations?'outside grant':(auth.unverified?'unverified':'in scope'))+'</span></div></div>';
     h+='<div class="row-list" style="margin-top:10px">';
     (auth.actions||[]).forEach(function(a){
@@ -1201,7 +1220,7 @@ async function render(){
       // Holder: bearer is a real state, not a blank. Say it.
       h+='<div class="mono" style="font-size:.62rem;margin-top:3px;color:'+(a.holder_bound?'var(--faint)':'var(--warn,#8a6d1f)')+'">holder: '+(a.holder_bound?'bound to a named key':'BEARER — anyone holding the grant could have done this')+'</div>';
       // Delegation: not_claimed is absence of a claim, never a passing check.
-      var dl = a.delegation==='holds' ? ('chain holds · '+(a.delegation_hops||0)+' hop'+((a.delegation_hops||0)===1?'':'s'))
+      var dl = a.delegation==='holds' ? ('chain holds · '+num(a.delegation_hops)+' hop'+(num(a.delegation_hops)===1?'':'s'))
              : a.delegation==='not_claimed' ? 'no lineage claimed'
              : a.delegation==='widened' ? 'CHAIN WIDENS — a hop granted more than it held'
              : 'chain unresolvable';
@@ -1232,7 +1251,7 @@ async function render(){
     h+='<div class="row-list">';
     const byGrant={};uses.forEach(u=>{(byGrant[u.grant_id]=byGrant[u.grant_id]||[]).push(u)});
     grants.forEach(g=>{
-      const gu=byGrant[g.grant_id]||[];const sc=g.scope||{};const max=sc.max_uses!=null?sc.max_uses:null;
+      const gu=byGrant[g.grant_id]||[];const sc=g.scope||{};const max=sc.max_uses!=null?num(sc.max_uses):null;
       const spent=gu.length;const status=spent===0?'granted, unspent':(max!=null&&spent>=max?'spent '+spent+'/'+max:'used '+spent+(max!=null?'/'+max:''));
       const who=g.parsed?esc(g.approver||'')+(g.description?' · '+esc(g.description):''):'grant envelope present, not parsed here';
       const scope=g.parsed?[(sc.allowed_subjects||[]).map(esc).join(', '),(sc.allowed_actions||[]).map(esc).join(', '),(sc.allowed_actors||[]).map(esc).join(', ')].filter(Boolean).join(' · '):'';
@@ -1259,7 +1278,7 @@ async function render(){
     {ok:tl.length>0,label:'Events captured',desc:tl.length+' session events recorded in append-only log'},
     {ok:arts.length>0,label:'Artifacts signed',desc:arts.length+' artifacts signed with Ed25519 ship key'},
     {ok:!!mk.root,label:'Merkle tree built',desc:num(mk.leaf_count)+' leaves hashed into SHA-256 tree'},
-    {ok:allPass,label:'Root committed',desc:'Merkle root: '+(mk.root?esc(mk.root).slice(0,28)+'…':'none')},
+    {ok:allPass,label:'Root committed',desc:'Merkle root: '+(mk.root?esc(String(mk.root).slice(0,28))+'…':'none')},
     {ok:checks.filter(c=>c.n.startsWith('proof:')&&c.s==='pass').length>0,label:'Inclusion proofs verified',desc:(mk.inclusion_proofs||[]).length+' proofs checked client-side via Web Crypto API'},
   ];
   steps.forEach(st=>{
@@ -1316,7 +1335,7 @@ async function render(){
 if(typeof crypto==='undefined'||!crypto.subtle){
   document.getElementById('loading').innerHTML='<div style="color:var(--warn);max-width:500px;text-align:center"><div style="font-family:Georgia,serif;font-size:1.3rem;margin-bottom:.5rem">Verification unavailable</div><div style="font-size:.82rem;color:var(--muted)">Web Crypto API not available on this origin. Try a local HTTP server or use <code>treeship package verify</code>.</div></div>';
 }else{
-  render().catch(e=>{document.getElementById('loading').innerHTML='<div style="color:var(--fail)">Error: '+e.message+'</div>'});
+  render().catch(e=>{document.getElementById('loading').innerHTML='<div style="color:var(--fail)">Error: '+esc(e&&e.message)+'</div>'});
 }
 </script>
 </body>

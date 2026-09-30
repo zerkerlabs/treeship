@@ -4572,4 +4572,253 @@ mod tests {
             "no raw placeholder token should remain after substitution",
         );
     }
+
+    // ── Escaping regression: every receipt-derived string field must be
+    // HTML-escaped before it reaches the DOM. ─────────────────────────────
+    //
+    // The threat model here is not "a receipt this codebase produced" -- a
+    // hub only requires DPoP auth to attach a dock, and the hub stores and
+    // serves whatever JSON that dock PUTs as `receipt.json` verbatim. The
+    // client-side script in preview_template.html parses that JSON directly
+    // with no schema validation, so any string field it interpolates into
+    // the page without escaping renders as markup on the public
+    // preview page, independent of anything this Rust module enforces.
+    //
+    // This test builds a receipt with a payload in every string field the
+    // client-side `render()` touches, runs the REAL shipped template's
+    // inline script against it in Node (stubbing `document`/`crypto`, since
+    // that script only runs in a browser), and asserts the HTML it would
+    // have handed to `insertAdjacentHTML` never contains the payload's `<`
+    // or `"` un-escaped. `render_preview_html_with_approvals`'s own
+    // `<` -> `<` JSON-embedding defense (tested above) is exercised
+    // unchanged; this covers the separate, second layer -- the escaping the
+    // client script itself must do when it turns that parsed JSON into HTML.
+    #[test]
+    fn preview_html_escapes_every_string_field() {
+        const PAYLOAD: &str = "<img src=x onerror=alert(1)>\" onmouseover=\"alert(2)'";
+
+        let receipt = serde_json::json!({
+            "type": "treeship/session-receipt/v1",
+            "schema_version": "1",
+            "session": {
+                "id": PAYLOAD, "name": PAYLOAD,
+                "started_at": format!("2026-04-05T08:00:00Z{PAYLOAD}"),
+                "ended_at": "2026-04-05T08:01:00Z", "duration_ms": 60000, "status": "closed",
+                "narrative": {"headline": PAYLOAD, "summary": PAYLOAD, "review": PAYLOAD},
+                "total_tokens_in": 10, "total_tokens_out": 20,
+            },
+            "participants": {"total_agents": 1},
+            "hosts": [], "tools": [],
+            "agent_graph": {
+                "nodes": [{
+                    "agent_instance_id": PAYLOAD, "agent_name": PAYLOAD, "agent_role": PAYLOAD,
+                    "model": PAYLOAD, "host_id": PAYLOAD, "provider": PAYLOAD,
+                    "status": "completed", "tool_calls": 3, "depth": 0,
+                }],
+                "edges": [],
+            },
+            "timeline": [{
+                "event_id": "evt_1",
+                "timestamp": format!("2026-04-05T08:00:00Z{PAYLOAD}"),
+                "sequence_no": 0, "agent_instance_id": PAYLOAD, "agent_name": PAYLOAD,
+                "event_type": "agent.called_tool", "summary": PAYLOAD,
+            }],
+            "side_effects": {
+                "files_read": [{"file_path": PAYLOAD, "agent_instance_id": PAYLOAD, "timestamp": "2026-04-05T08:00:00Z"}],
+                "files_written": [{"file_path": PAYLOAD, "agent_instance_id": PAYLOAD, "operation": "created", "additions": 1, "deletions": 0, "timestamp": "2026-04-05T08:00:00Z"}],
+                "network_connections": [{"destination": PAYLOAD, "agent_instance_id": PAYLOAD, "port": 443, "timestamp": format!("2026-04-05T08:00:00Z{PAYLOAD}")}],
+                "ports_opened": [{"port": 8080, "agent_instance_id": PAYLOAD, "timestamp": "2026-04-05T08:00:00Z"}],
+                "processes": [{"command": PAYLOAD, "process_name": PAYLOAD, "agent_instance_id": PAYLOAD, "exit_code": 1, "duration_ms": 10, "started_at": "2026-04-05T08:00:00Z"}],
+                "tool_invocations": [{"tool_name": PAYLOAD, "agent_instance_id": PAYLOAD, "timestamp": "2026-04-05T08:00:00Z"}],
+            },
+            "artifacts": [{"artifact_id": "art_001", "payload_type": "action"}],
+            "proofs": {"signature_count": 1},
+            "merkle": {"root": format!("mroot_{PAYLOAD}"), "merkle_version": 2, "leaf_count": 1, "inclusion_proofs": []},
+            "render": {},
+            "tool_usage": {
+                "declared": [PAYLOAD],
+                "actual": [{"tool_name": PAYLOAD, "count": 1}],
+                "unauthorized": [PAYLOAD],
+            },
+            // authority's counters are typed u32 in AuthoritySection, but a
+            // hostile dock's raw JSON is under no such constraint -- the
+            // client script must not assume they are numbers either.
+            "authority": {
+                "checked": PAYLOAD, "violations": PAYLOAD, "unverified": PAYLOAD, "bearer": PAYLOAD,
+                "actions": [{
+                    "action": PAYLOAD, "scope": [PAYLOAD], "audience": PAYLOAD,
+                    "holder_bound": false, "delegation": "holds", "delegation_hops": PAYLOAD,
+                    "effect_finality": PAYLOAD, "resolution": "pending", "reasons": [PAYLOAD],
+                    "grant_id": PAYLOAD, "verdict": "pass",
+                }],
+            },
+        });
+
+        let approvals = serde_json::json!({
+            "grants": [{
+                "grant_id": PAYLOAD, "parsed": true, "approver": PAYLOAD, "description": PAYLOAD,
+                "timestamp": format!("2026-04-05T08:00:00Z{PAYLOAD}"),
+                "scope": {
+                    // A hostile dock's raw JSON is under no obligation to
+                    // make this a number either (u32 in Rust's Grant type
+                    // doesn't apply to a hand-crafted approvals bundle) --
+                    // this is the field N-1 of the independent review found
+                    // reaching `h` unescaped via '/'+max at the use-count
+                    // line, skipping every other field's esc()/num().
+                    "max_uses": PAYLOAD,
+                    "allowed_subjects": [PAYLOAD], "allowed_actions": [PAYLOAD], "allowed_actors": [PAYLOAD],
+                },
+            }],
+            "uses": [{
+                "grant_id": PAYLOAD, "action": PAYLOAD, "subject": PAYLOAD, "actor": PAYLOAD,
+                "action_artifact_id": PAYLOAD, "use_id": PAYLOAD,
+            }],
+        });
+
+        // Same defense-in-depth the production path applies
+        // (render_preview_html_with_approvals, above) before embedding into
+        // the `<script type="application/json">` data blocks.
+        let receipt_text = receipt.to_string().replace('<', "\\u003c");
+        let approvals_text = approvals.to_string().replace('<', "\\u003c");
+
+        let html = PREVIEW_TEMPLATE
+            .replacen("__RECEIPT_JSON__", &receipt_text, 1)
+            .replacen("__APPROVALS_JSON__", &approvals_text, 1)
+            .replace("__FONT_FRAUNCES__", "data:font/woff2;base64,AAAA");
+
+        let script = html
+            .split("<script>\n")
+            .nth(1)
+            .and_then(|s| s.split("</script>\n</body>").next())
+            .expect("template must have exactly one plain <script> block");
+
+        let rendered = run_client_render_in_node(script, &receipt_text, &approvals_text)
+            .expect("node must be available to run this escaping regression test");
+
+        assert!(
+            !rendered.contains("<img"),
+            "unescaped <img tag reached the page -- unescaped markup:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("&lt;img") || !rendered.contains("onmouseover=\"alert"),
+            "a live onmouseover attribute was injected via an unescaped quote:\n{rendered}"
+        );
+        // Positive control: the payload really did reach rendering (as
+        // escaped text), so a passing test means the escaper ran, not that
+        // the field was silently dropped.
+        assert!(
+            rendered.contains("&lt;img src=x onerror=alert(1)&gt;&quot;"),
+            "payload never reached the page at all; test may not be exercising the code path:\n{rendered}"
+        );
+    }
+
+    /// Extracts the inline script and evaluates it in Node with a minimal
+    /// `document`/`crypto` stub, capturing whatever string the script would
+    /// have handed to `document.body.insertAdjacentHTML`. Returns `None` if
+    /// `node` isn't on PATH.
+    fn run_client_render_in_node(
+        script: &str,
+        receipt_text: &str,
+        approvals_text: &str,
+    ) -> Option<String> {
+        use std::io::Write;
+
+        const HARNESS: &str = r#"
+import { readFileSync } from 'node:fs';
+import { webcrypto } from 'node:crypto';
+import vm from 'node:vm';
+
+const script = readFileSync(process.argv[2], 'utf8');
+const receiptText = readFileSync(process.argv[3], 'utf8');
+const approvalsText = readFileSync(process.argv[4], 'utf8');
+
+let captured = null;
+let loadingHTML = '';
+
+function makeEl(textContent) {
+  return {
+    textContent,
+    style: {},
+    set innerHTML(v) { loadingHTML = v; },
+    get innerHTML() { return loadingHTML; },
+  };
+}
+
+const fakeDocument = {
+  getElementById(id) {
+    if (id === 'receipt-data') return makeEl(receiptText);
+    if (id === 'approvals-data') return makeEl(approvalsText);
+    if (id === 'loading') return makeEl('');
+    return null;
+  },
+  querySelectorAll() { return []; },
+  set title(_v) {}, get title() { return ''; },
+  body: { insertAdjacentHTML(_where, html) { captured = html; } },
+};
+
+const sandbox = {
+  document: fakeDocument,
+  crypto: webcrypto,
+  console,
+  TextEncoder,
+  navigator: { clipboard: { writeText() {} } },
+};
+sandbox.window = sandbox;
+vm.createContext(sandbox);
+vm.runInContext(script, sandbox, { filename: 'preview_script.js' });
+
+let tries = 0;
+(function check() {
+  tries++;
+  if (captured !== null || loadingHTML.includes('color:var(--fail)') || tries > 400) {
+    process.stdout.write(JSON.stringify({ captured, loadingHTML }));
+    return;
+  }
+  setTimeout(check, 25);
+})();
+"#;
+
+        let dir = std::env::temp_dir().join(format!(
+            "treeship-preview-escape-test-{}",
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir_all(&dir).ok()?;
+        let write = |name: &str, contents: &str| -> Option<std::path::PathBuf> {
+            let path = dir.join(name);
+            let mut f = std::fs::File::create(&path).ok()?;
+            f.write_all(contents.as_bytes()).ok()?;
+            Some(path)
+        };
+        let harness_path = write("harness.mjs", HARNESS)?;
+        let script_path = write("script.js", script)?;
+        let receipt_path = write("receipt.json", receipt_text)?;
+        let approvals_path = write("approvals.json", approvals_text)?;
+
+        let output = std::process::Command::new("node")
+            .arg(&harness_path)
+            .arg(&script_path)
+            .arg(&receipt_path)
+            .arg(&approvals_path)
+            .output()
+            .ok()?;
+        let _ = std::fs::remove_dir_all(&dir);
+        if !output.status.success() {
+            panic!(
+                "node harness failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|e| panic!("harness did not print JSON ({e}): {output:?}"));
+        let captured = parsed.get("captured").and_then(|v| v.as_str());
+        let loading = parsed
+            .get("loadingHTML")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        Some(
+            captured
+                .map(str::to_string)
+                .unwrap_or_else(|| loading.to_string()),
+        )
+    }
 }

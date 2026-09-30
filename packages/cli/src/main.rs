@@ -2982,6 +2982,13 @@ struct TrustAddArgs {
     #[arg(long)]
     label: Option<String>,
 
+    /// For --kind agent_cert: the agent URI this key is pinned as
+    /// (agent://deployer). A capability card is key-bound only when its
+    /// agent equals this scope; a pin without it verifies the key's
+    /// artifacts but binds no card.
+    #[arg(long, value_name = "URI")]
+    agent: Option<String>,
+
     /// Skip the interactive confirmation prompt. Required for
     /// non-interactive use (CI, scripts, JSON output mode).
     #[arg(long)]
@@ -4192,6 +4199,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 &a.public_key,
                 &a.kind,
                 a.label.as_deref(),
+                a.agent.as_deref(),
                 a.yes,
                 a.replace,
                 cli.config.as_deref(),

@@ -59,6 +59,7 @@ pub fn list(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
                     "key_id":     r.key_id,
                     "public_key": r.public_key,
                     "kind":       r.kind.as_str(),
+                    "agent":      r.agent,
                     "label":      r.label,
                     "added_at":   r.added_at,
                 })
@@ -97,6 +98,7 @@ pub fn add(
     public_key: &str,
     kind: &str,
     label: Option<&str>,
+    agent: Option<&str>,
     yes: bool,
     replace: bool,
     config: Option<&str>,
@@ -129,6 +131,27 @@ pub fn add(
     // transparency_log roots are ECDSA P-256 (Rekor's key type) and are
     // given as `ecdsa-p256:<base64url DER>` or `@<path to PEM>`, which is the
     // form `curl <rekor>/api/v1/log/publicKey` produces.
+    // An agent_cert pin binds cards only for the agent it is scoped to.
+    let agent = match agent {
+        Some(_) if kind != TrustRootKind::AgentCert => {
+            return Err(crate::exit::usage(format!(
+                "--agent applies to --kind agent_cert only (got --kind {})",
+                kind.as_str()
+            )));
+        }
+        Some(a) => Some(
+            treeship_core::trust::canonical_agent_uri(a)
+                .map_err(|e| crate::exit::usage(format!("--agent: {e}")))?,
+        ),
+        None => None,
+    };
+    if kind == TrustRootKind::AgentCert && agent.is_none() {
+        printer.warn(
+            "no --agent: this pin lets the key's artifacts verify and import, but binds no capability card (a card is key-bound only to the agent its key is pinned as). Add --agent agent://<name> to bind one.",
+            &[],
+        );
+    }
+
     let canonical_pk = if kind == TrustRootKind::TransparencyLog {
         canonical_transparency_log_key(public_key)?
     } else {
@@ -228,6 +251,38 @@ pub fn add(
     // Confirmation gate. JSON callers MUST pass --yes; an interactive
     // y/N prompt on stdout/stdin doesn't compose with --output json
     // anyway.
+    // A different agent scope on the same key id changes what the pin
+    // vouches for: it needs --replace, like a different public key does.
+    if let Some(prev) = &replacing {
+        if prev.agent_scope() != agent && !replace {
+            return Err(format!(
+                "{key_id} is already pinned under {} as {}; re-pinning it as {} changes what the pin vouches for. If that is intended, re-run with --replace",
+                kind.as_str(),
+                prev.agent_scope().unwrap_or_else(|| "no agent (unscoped)".into()),
+                agent.clone().unwrap_or_else(|| "no agent (unscoped)".into()),
+            )
+            .into());
+        }
+    }
+    // One public key pinned under two key ids as two different agents is a
+    // key that claims to be two agents; say so.
+    if kind == TrustRootKind::AgentCert {
+        for other in store.roots().iter().filter(|r| {
+            r.kind == TrustRootKind::AgentCert && r.key_id != key_id && r.public_key == canonical_pk
+        }) {
+            if other.agent_scope() != agent {
+                printer.warn(
+                    &format!(
+                        "this public key is also pinned as {} under key id {}; one key cannot be two agents",
+                        other.agent_scope().unwrap_or_else(|| "no agent (unscoped)".into()),
+                        other.key_id
+                    ),
+                    &[],
+                );
+            }
+        }
+    }
+
     if !yes {
         if printer.format == Format::Json {
             return Err(
@@ -276,6 +331,7 @@ pub fn add(
         key_id: key_id.into(),
         public_key: canonical_pk.clone(),
         kind,
+        agent: agent.clone(),
         label: label.unwrap_or("").into(),
         added_at: now_rfc3339(),
     };

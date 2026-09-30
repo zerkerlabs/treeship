@@ -176,7 +176,7 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
     if json {
         let mut bundle = serde_json::json!({
             "cert_issuer": format!("treeship trust add {ship_key} {ship_pub} --kind cert_issuer --yes"),
-            "agent_cert": format!("treeship trust add {key_id} {agent_pub} --kind agent_cert --yes"),
+            "agent_cert": format!("treeship trust add {key_id} {agent_pub} --kind agent_cert --agent {actor} --yes"),
         });
         if args.publish {
             bundle["hub_checkpoint"] = serde_json::json!(format!(
@@ -224,7 +224,7 @@ pub fn onboard(args: OnboardArgs, printer: &Printer) -> Result<(), Box<dyn std::
         .info("    # A ship key rotation invalidates the CA pin above until re-pinned; this pin");
     printer.info("    # survives it. One per agent:");
     printer.info(&format!(
-        "    treeship trust add {key_id} {agent_pub} --kind agent_cert --yes"
+        "    treeship trust add {key_id} {agent_pub} --kind agent_cert --agent {actor} --yes"
     ));
     printer.blank();
     printer.success(

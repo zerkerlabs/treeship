@@ -1111,6 +1111,7 @@ pub fn trust_with_own_keys(
             key_id: key.id.clone(),
             public_key: format!("ed25519:{}", URL_SAFE_NO_PAD.encode(&key.public_key)),
             kind: TrustRootKind::SessionHost,
+            agent: None,
             label: treeship_core::session::package::OWN_KEY_LABEL.into(),
             added_at: crate::commands::session::now_rfc3339(),
         });

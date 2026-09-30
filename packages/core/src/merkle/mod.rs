@@ -30,6 +30,7 @@ mod tests {
             key_id: signer.key_id().to_string(),
             public_key: encode_ed25519_pubkey(&vk),
             kind: TrustRootKind::HubCheckpoint,
+            agent: None,
             label: "test".into(),
             added_at: "2026-05-15T00:00:00Z".into(),
         }])

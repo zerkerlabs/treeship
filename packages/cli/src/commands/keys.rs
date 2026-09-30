@@ -80,7 +80,7 @@ pub fn export(
             "trust_kinds": kinds,
             "trust_add_commands": kinds
                 .iter()
-                .map(|k| format!("treeship trust add {resolved_id} {pinnable} --kind {k} --yes"))
+                .map(|k| format!("treeship trust add {resolved_id} {pinnable} --kind {k}{} --yes", agent_scope_flag(k, &subject)))
                 .collect::<Vec<_>>(),
         }));
         return Ok(());
@@ -106,7 +106,8 @@ pub fn export(
             _ => "",
         };
         printer.info(&format!(
-            "    treeship trust add {resolved_id} {pinnable} --kind {k} --yes{note}"
+            "    treeship trust add {resolved_id} {pinnable} --kind {k}{} --yes{note}",
+            agent_scope_flag(k, &subject)
         ));
     }
     printer.blank();
@@ -256,4 +257,14 @@ fn rotation_lock(keys_dir: &str) -> Result<std::fs::File, Box<dyn std::error::Er
         }
     }
     Ok(file)
+}
+
+/// ` --agent <uri>` for an agent_cert pin line when the exported key is an
+/// agent's: the pin binds that agent's cards and no other's.
+fn agent_scope_flag(kind: &str, subject: &str) -> String {
+    if kind == "agent_cert" && subject.starts_with("agent://") {
+        format!(" --agent {subject}")
+    } else {
+        String::new()
+    }
 }

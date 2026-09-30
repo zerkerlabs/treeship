@@ -174,8 +174,10 @@ export interface ResolutionBundleInput {
 export interface ResolutionVerdict {
   /** Card signature verified against your roots (directly or via the chain). */
   sig_ok: boolean;
-  /** Card is key-bound: signer pinned under AgentCert, or chain-certified. */
+  /** Card is key-bound: signer pinned under AgentCert as the card's agent, or chain-certified. */
   key_bound: boolean;
+  /** Why not key-bound: `key_not_verified` | `not_pinned` | `pin_unscoped` | `pin_scoped_to_other`; null when bound. */
+  key_bound_reason?: string | null;
   /** If verified via the certificate chain, the cert artifact that vouched. */
   chain_cert_id: string | null;
   /** An authorized, verifying revocation was found. */
@@ -217,6 +219,8 @@ export interface PresentationVerdict {
   card_id: string;
   sig_ok: boolean;
   key_bound: boolean;
+  /** Why not key-bound; null when bound. */
+  key_bound_reason?: string | null;
   via_chain: boolean;
   revoked: string | null;
   challenge: PresentationChallenge;

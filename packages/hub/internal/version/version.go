@@ -19,7 +19,7 @@ import (
 // stamps it with every other version site. It is the answer when the build
 // did not pass -ldflags (Railway builds the Dockerfile without them), so
 // /v1/version never reads "dev" for a released binary.
-const Release = "0.31.11"
+const Release = "0.31.12"
 
 var (
 	Version = ""

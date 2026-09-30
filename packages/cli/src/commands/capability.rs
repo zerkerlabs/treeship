@@ -114,7 +114,10 @@ pub fn verify_capability(card_id: &str, config: Option<&str>, printer: &Printer)
         .unwrap_or_default();
     let key_bound = !card_keyid.is_empty()
         && card_verified_keys.iter().any(|k| k == card_keyid)
-        && is_key_bound(card_keyid, card_keyid, &trust);
+        && is_key_bound(card_keyid, card_keyid, card_agent, &trust);
+    if let Some(hint) = unscoped_pin_hint(card_keyid, card_agent, &trust) {
+        printer.hint(&hint);
+    }
 
     // --- Cross-check captured action receipts signed by this key -----------
     let action_pt = payload_type("action");
@@ -473,7 +476,7 @@ pub fn revoke_capability(
     let self_revoke = signer.key_id() == card_keyid;
     // An asserted card's key is the ship's default key; "agent key" would
     // claim a per-agent key that does not exist.
-    let key_bound = self_revoke && is_key_bound(card_keyid, card_keyid, &trust);
+    let key_bound = self_revoke && is_key_bound(card_keyid, card_keyid, card_agent, &trust);
     printer.success(
         "capability card revoked",
         &[
@@ -523,10 +526,13 @@ pub(crate) fn find_revocation(
         if stmt.kind != "agent_card_revocation.v1" {
             continue;
         }
-        let Some(payload) = stmt.payload else {
+        let Some(payload) = stmt.payload.as_ref() else {
             continue;
         };
-        if payload.get("card").and_then(|v| v.as_str()) != Some(card_id) {
+        // The revocation names this card, or it retires the card's key
+        // outright (`compromised`): then every card of that key is revoked.
+        let names_this_card = payload.get("card").and_then(|v| v.as_str()) == Some(card_id);
+        if !names_this_card && !treeship_core::verify::resolution::revokes_key(&stmt, card_keyid) {
             continue;
         }
         // The revoker's key must have produced a VALID signature over the
@@ -589,6 +595,31 @@ pub(crate) fn find_revocation(
     None
 }
 
+/// A pin that exists but cannot key-bind this agent's card, and the command
+/// that fixes it. None when the key is unpinned or pinned as this agent.
+pub(crate) fn unscoped_pin_hint(
+    card_keyid: &str,
+    agent: &str,
+    trust: &TrustRootStore,
+) -> Option<String> {
+    use treeship_core::trust::AgentPin;
+    let pk = trust
+        .roots()
+        .iter()
+        .find(|r| r.key_id == card_keyid && r.kind == TrustRootKind::AgentCert)
+        .map(|r| r.public_key.clone())?;
+    match trust.agent_pin(card_keyid) {
+        AgentPin::Scoped(a) if a == agent => None,
+        AgentPin::Scoped(other) => Some(format!(
+            "{card_keyid} is pinned under agent_cert as {other}, not as {agent}: a key pinned as one agent does not bind another agent's card"
+        )),
+        AgentPin::Unscoped => Some(format!(
+            "{card_keyid} is pinned under agent_cert with no agent scope, so it binds no card; if this key is {agent}'s, re-pin it: treeship trust add {card_keyid} {pk} --kind agent_cert --agent {agent} --replace --yes"
+        )),
+        AgentPin::NotPinned => None,
+    }
+}
+
 /// Is a receipt's `actor` cryptographically proven, i.e. signed by the actor's
 /// registered, AgentCert-pinned per-agent key? Used by `verify` to label the
 /// actor proven vs asserted. False for non-agent actors, unregistered agents,
@@ -601,7 +632,7 @@ pub fn actor_proven(ctx: &crate::ctx::Ctx, actor: &str, signer_keyid: &str) -> b
     // key is pinned under AgentCert.
     let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);
     if let Some(registered) = crate::commands::cards::registered_key_for_actor(&agents_dir, actor) {
-        if registered == signer_keyid && is_key_bound(signer_keyid, signer_keyid, &trust) {
+        if registered == signer_keyid && is_key_bound(signer_keyid, signer_keyid, actor, &trust) {
             return true;
         }
     }
@@ -646,10 +677,18 @@ fn actor_proven_by_cert(
         let Some(cert_signer) = rec.envelope.signatures.first().map(|s| s.keyid.clone()) else {
             continue;
         };
+        // A CertIssuer pin vouches for the certificates the ship issues. A
+        // self-signed certificate is vouched for only by an agent_cert pin
+        // scoped to this very actor: a key pinned as agent://a cannot
+        // certify itself as agent://b.
+        let actor_canonical = treeship_core::trust::canonical_agent_uri(actor).ok();
         let Some(root) = trust.roots().iter().find(|r| {
             r.key_id == cert_signer
                 && (r.kind == TrustRootKind::CertIssuer
-                    || (r.kind == TrustRootKind::AgentCert && r.key_id == signer_keyid))
+                    || (r.kind == TrustRootKind::AgentCert
+                        && r.key_id == signer_keyid
+                        && actor_canonical.is_some()
+                        && r.agent_scope() == actor_canonical))
         }) else {
             continue;
         };
