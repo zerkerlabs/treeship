@@ -136,15 +136,54 @@ mod imp {
         opts
     }
 
-    /// Create `path` with `bytes` at `mode`, failing with `AlreadyExists`
+    /// Create `path` holding `bytes` at `mode`, failing with `AlreadyExists`
     /// when anything is there (a file, a link, a directory): the one-shot
     /// write of an id several processes may race to mint. The winner's
-    /// bytes are the ones every loser should then read back.
+    /// bytes are the ones every loser should then read back, so `path`
+    /// never exists without them: the bytes go to a temp file in the same
+    /// directory first, and the name is published by hard-linking the
+    /// temp file to `path`, which fails when `path` exists and leaves the
+    /// complete content there when it succeeds. A loser therefore reads a
+    /// finished file, never an empty one that was created and not yet
+    /// written. Where the filesystem has no hard links, the name is
+    /// created exclusively and written in place.
     pub fn create_exclusive_nofollow(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
         use std::io::Write;
-        let mut f = exclusive_options(mode).open(path)?;
-        f.write_all(bytes)?;
-        f.sync_all()
+        let dir = path.parent().filter(|d| !d.as_os_str().is_empty());
+        let name = path.file_name().and_then(|n| n.to_str());
+        let (Some(dir), Some(name)) = (dir, name) else {
+            let mut f = exclusive_options(mode).open(path)?;
+            f.write_all(bytes)?;
+            return f.sync_all();
+        };
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let tmp = dir.join(format!(
+            ".{name}.{}.{nanos}.{}.tmp",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let mut f = exclusive_options(mode).open(&tmp)?;
+        let written = f.write_all(bytes).and_then(|()| f.sync_all());
+        drop(f);
+        let published = written.and_then(|()| fs::hard_link(&tmp, path));
+        let _ = fs::remove_file(&tmp);
+        match published {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(e),
+            Err(_) => {
+                // No hard links here (some FUSE and removable filesystems):
+                // create the name exclusively and write in place; the
+                // reader's retry covers the short window. A directory that
+                // cannot be written fails the same way on this path.
+                let mut f = exclusive_options(mode).open(path)?;
+                f.write_all(bytes)?;
+                f.sync_all()
+            }
+        }
     }
 
     /// Read at most `max` bytes of a regular file, never through a link
@@ -365,6 +404,74 @@ mod tests {
 
     fn tmp() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    /// The exclusive create never publishes an unwritten name: every
+    /// reader that sees the file sees the whole content, a second creator
+    /// gets AlreadyExists and changes nothing, and no temp file stays.
+    #[test]
+    fn an_exclusive_create_publishes_the_whole_content_or_nothing() {
+        let d = tmp();
+        let path = d.path().join("id");
+        let racers: Vec<_> = (0..8)
+            .map(|i| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let mine = format!("id_{i:016x}\n");
+                    match create_exclusive_nofollow(&path, mine.as_bytes(), 0o600) {
+                        Ok(()) => Ok(mine),
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                            // A loser reads a finished file, never an empty one.
+                            Err(String::from_utf8(read_small_nofollow(&path, 64).unwrap()).unwrap())
+                        }
+                        Err(e) => panic!("{e}"),
+                    }
+                })
+            })
+            .collect();
+        let outcomes: Vec<_> = racers.into_iter().map(|t| t.join().unwrap()).collect();
+        let winners: Vec<_> = outcomes.iter().filter_map(|o| o.as_ref().ok()).collect();
+        assert_eq!(winners.len(), 1, "{outcomes:?}");
+        let kept = fs::read_to_string(&path).unwrap();
+        assert_eq!(&kept, winners[0]);
+        for seen in outcomes.iter().filter_map(|o| o.as_ref().err()) {
+            assert_eq!(seen, &kept, "a loser read a partial file");
+        }
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let meta = fs::metadata(&path).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        assert_eq!(meta.nlink(), 1, "the temp name was left behind");
+        let leftovers: Vec<_> = fs::read_dir(d.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n != "id")
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    /// Whatever is at the name already, a link included, stays.
+    #[test]
+    fn an_exclusive_create_never_replaces_what_is_there() {
+        let d = tmp();
+        let victim = d.path().join("victim");
+        fs::write(&victim, b"keep").unwrap();
+        let link = d.path().join("link");
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+        let plain = d.path().join("plain");
+        fs::write(&plain, b"keep").unwrap();
+        for target in [&link, &plain] {
+            let err = create_exclusive_nofollow(target, b"new\n", 0o600).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists, "{err}");
+        }
+        assert!(link.is_symlink());
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+        assert_eq!(fs::read(&plain).unwrap(), b"keep");
+        assert_eq!(
+            fs::read_dir(d.path()).unwrap().count(),
+            3,
+            "a temp file was left behind"
+        );
     }
 
     #[test]
