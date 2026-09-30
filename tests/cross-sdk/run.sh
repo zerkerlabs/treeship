@@ -190,7 +190,9 @@ echo "" >&2
 echo "==> Phase B: roundtrip attest+verify" >&2
 PHASE_B_OUT="$SCRIPT_DIR/.roundtrip-output.jsonl"
 phase_b_status=0
-TREESHIP_CONFIG="$(python3 -c 'import json; print(json.load(open("'"$SCRIPT_DIR/corpus.json"'"))["config_path"])')" \
+CORPUS_CONFIG="$(python3 -c 'import json; print(json.load(open("'"$SCRIPT_DIR/corpus.json"'"))["config_path"])')"
+TREESHIP_CONFIG="$CORPUS_CONFIG" \
+  HOME="$(d="$(dirname "$CORPUS_CONFIG")"; [[ "$(basename "$d")" == ".treeship" ]] && dirname "$d" || echo "$d")" \
   PATH="$REPO_ROOT/target/debug:$PATH" \
   "$SCRIPT_DIR/roundtrip.sh" > "$PHASE_B_OUT" 2>&1 || phase_b_status=$?
 cat "$PHASE_B_OUT" >&2
