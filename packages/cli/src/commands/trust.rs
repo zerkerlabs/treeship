@@ -7,9 +7,7 @@
 //!
 //! Operators configure trust out-of-band: verify the issuer's public key
 //! fingerprint via a channel they trust, then run `treeship trust add
-//! <key_id> <pubkey> --kind <kind>`. There is no remote sync in this
-//! release; the planned `treeship hub sync-trust` is referenced in
-//! error messages but unimplemented.
+//! <key_id> <pubkey> --kind <kind>`. There is no remote sync.
 //!
 //! Audit lane J fix-up: `add` and `remove` print the affected key's
 //! fingerprint and require either `--yes` or an interactive y/N

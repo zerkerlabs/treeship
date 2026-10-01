@@ -46,8 +46,11 @@
 //! mandate degrades to `Unverified` exactly as it did before.
 //!
 //! Closing that needs a published, fetchable revocation list. The Hub's
-//! `/.well-known/treeship/revoked.json` is currently hardcoded empty and
-//! unsigned (audit item 6), so there is nothing to fetch yet.
+//! `/.well-known/treeship/revoked.json` now serves real, individually-signed
+//! `grant_revocation.v1` entries from its own store -- but [`fetch_hub_revocations`]
+//! below, which can parse that response, has no caller yet. Resolving
+//! `Unknown` for another ship's grant is still the correct answer until
+//! something wires that fetch into [`for_ctx`].
 
 use treeship_core::statements::{RevocationSource, RevocationStatus};
 use treeship_core::storage::Store;

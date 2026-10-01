@@ -871,6 +871,14 @@ struct InitArgs {
     #[arg(long, default_value_t = false)]
     force: bool,
 
+    /// Link this git worktree to the main checkout's ship and store.
+    ///
+    /// Writes `.treeship/config.json` here as a stub that extends the main
+    /// checkout's config. No new key is minted. Session state (`session.json`,
+    /// the event log) stays in this worktree.
+    #[arg(long, default_value_t = false)]
+    worktree: bool,
+
     /// Explicitly target the user-global keystore (`~/.treeship/`).
     ///
     /// Required to overwrite the global config when combined with
@@ -1987,6 +1995,11 @@ struct AttestActionArgs {
     /// up the reserved use and finishes signing the action against it.
     #[arg(long, value_name = "KEY")]
     idempotency_key: Option<String>,
+
+    /// Sign a v2 action that is outside the grant's scope, so the violation
+    /// is on the receipt. Without this, an out-of-scope action is refused.
+    #[arg(long)]
+    record_violation: bool,
 
     /// This action retries the attempt with this artifact id. Signed into
     /// the statement with --attempt, --retry-cause and --backoff-ms, so a
@@ -3419,6 +3432,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             cli.config.clone(),
             a.force,
             a.global,
+            a.worktree,
             a.template.clone(),
             printer,
         ),
@@ -3920,6 +3934,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                         parent_id: a.parent.clone(),
                         approval_nonce: a.approval_nonce.clone(),
                         idempotency_key: a.idempotency_key.clone(),
+                        record_violation: a.record_violation,
                         retry_of: a.retry_of.clone(),
                         attempt: a.attempt,
                         retry_cause: a.retry_cause.clone(),

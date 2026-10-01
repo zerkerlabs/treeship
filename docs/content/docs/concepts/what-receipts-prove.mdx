@@ -22,8 +22,11 @@ of a chain, reorder two receipts, or splice in a new one without breaking
 verification of everything after it.
 
 **Its inclusion in a checkpoint**, when one exists. A Merkle inclusion proof
-shows this artifact was in the log at a published checkpoint — so a receipt
-cannot be back-dated into history that was already anchored. {/* claims:rekor-artifact-anchoring */}
+shows this artifact was in the tree the checkpoint's root commits to. {/* claims:checkpoint-not-witnessed */}
+A checkpoint is the publisher's own signed assertion of a tree state and a
+time — the hub stores it and signs nothing, and doesn't record an
+independent received-at time to check it against — so a checkpoint alone
+shows what its signer claims, not independently when it was published. Per-artifact Rekor anchoring is the part of this that is independently timestamped, and only covers the specific pushed artifacts it applies to. {/* claims:rekor-artifact-anchoring */}
 
 **That a specific input produced a specific output** — as hashes. `args_hash`
 and `output_hash` let you confirm later that a claimed input really is the one

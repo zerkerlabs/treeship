@@ -620,6 +620,48 @@ pub(crate) fn unscoped_pin_hint(
     }
 }
 
+/// True when a capability card for this actor and key has an authorized
+/// revocation. Signing and `actor_proven` both stop.
+pub(crate) fn actor_signing_blocked(
+    ctx: &crate::ctx::Ctx,
+    actor: &str,
+    signer_keyid: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let trust = TrustRootStore::open_default_or_empty()?;
+    Ok(actor_card_revoked(ctx, actor, signer_keyid, &trust))
+}
+
+fn actor_card_revoked(
+    ctx: &crate::ctx::Ctx,
+    actor: &str,
+    signer_keyid: &str,
+    trust: &TrustRootStore,
+) -> bool {
+    if find_revocation(ctx, "", signer_keyid, trust).is_some() {
+        return true;
+    }
+    let receipt_pt = payload_type("receipt");
+    for entry in ctx.storage.list_by_type(&receipt_pt) {
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        if stmt.kind != "agent_card.v1" {
+            continue;
+        }
+        let Some(p) = stmt.payload else { continue };
+        if p.get("agent").and_then(|v| v.as_str()) != Some(actor) {
+            continue;
+        }
+        if find_revocation(ctx, &entry.id, signer_keyid, trust).is_some() {
+            return true;
+        }
+    }
+    false
+}
+
 /// Is a receipt's `actor` cryptographically proven, i.e. signed by the actor's
 /// registered, AgentCert-pinned per-agent key? Used by `verify` to label the
 /// actor proven vs asserted. False for non-agent actors, unregistered agents,
@@ -628,6 +670,9 @@ pub fn actor_proven(ctx: &crate::ctx::Ctx, actor: &str, signer_keyid: &str) -> b
     let Ok(trust) = TrustRootStore::open_default_or_empty() else {
         return false;
     };
+    if actor_card_revoked(ctx, actor, signer_keyid, &trust) {
+        return false;
+    }
     // Producer's machine: the local registry binds actor to key, and the
     // key is pinned under AgentCert.
     let agents_dir = crate::commands::cards::agents_dir_for(&ctx.config_path);

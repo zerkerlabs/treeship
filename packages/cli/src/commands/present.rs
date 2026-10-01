@@ -25,7 +25,6 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 use crate::{ctx, printer::Printer};
 use treeship_core::attestation::Envelope;
-use treeship_core::merkle::MerkleTree;
 use treeship_core::statements::{parse_rfc3339_to_unix, payload_type, ReceiptStatement};
 use treeship_core::trust::TrustRootStore;
 use treeship_core::verify::presentation::{
@@ -199,56 +198,40 @@ pub fn present(
     let (staple_json, staple_desc): (serde_json::Value, String) = if disclose.is_empty() {
         let checkpoint = crate::commands::merkle::load_latest_checkpoint()?
             .ok_or("no checkpoints found -- run: treeship checkpoint")?;
-        let (_, artifact_ids) = crate::commands::merkle::build_tree(&ctx)?;
-        let leaf_index = artifact_ids
-            .iter()
-            .position(|id| id == &card_id)
-            .ok_or("card artifact not found in the local Merkle tree")?;
-        if leaf_index >= checkpoint.tree_size {
-            return Err(format!(
-                "the current card ({card_id}) is newer than the latest checkpoint (#{}, tree_size {})\n\n  Fix: treeship checkpoint  (then re-run present)",
-                checkpoint.index, checkpoint.tree_size
-            )
-            .into());
-        }
         // The checkpoint can legitimately describe a larger tree than this
         // store holds: `load_latest_checkpoint` reads
-        // ~/.treeship/merkle/checkpoints unconditionally, while `build_tree`
-        // reads the artifacts for THIS context -- so `--config`, a second
-        // workspace, or a pruned store all produce tree_size > len.
-        //
-        // Slicing on that panicked with "range end index N out of range",
-        // which is a crash where the honest answer is "these two stores do
-        // not describe the same history". The guard above only checked that
-        // the card is not newer than the checkpoint; it never checked the
-        // other direction.
-        if checkpoint.tree_size > artifact_ids.len() {
+        // ~/.treeship/merkle/checkpoints unconditionally, while the store is
+        // the one for THIS context -- so `--config`, a second workspace, or a
+        // pruned store all produce tree_size > len. Say so plainly instead of
+        // slicing past the end.
+        let held = ctx.storage.list().len();
+        if checkpoint.tree_size > held {
             return Err(format!(
                 "checkpoint #{} describes {} artifact(s) but this store holds {}.\n\n  Checkpoints live in ~/.treeship/merkle/checkpoints and are NOT scoped by --config, so a checkpoint written from another workspace does not describe this one.\n\n  Fix: treeship checkpoint  (write one for this store)",
                 checkpoint.index,
                 checkpoint.tree_size,
-                artifact_ids.len()
+                held
             )
             .into());
         }
-        let mut cp_tree = MerkleTree::new();
-        for id in &artifact_ids[..checkpoint.tree_size] {
-            cp_tree.append(id);
+        if !ctx.storage.exists(&card_id) {
+            return Err("card artifact not found in the local Merkle tree".into());
         }
-        let computed_root = cp_tree
-            .root()
-            .map(hex::encode)
-            .ok_or("checkpoint-sized tree has no root")?;
-        let cp_root_hex = checkpoint
-            .root
-            .strip_prefix("sha256:")
-            .unwrap_or(&checkpoint.root);
-        if computed_root != cp_root_hex {
-            return Err(
+        // The checkpoint's own leaves in its order, cross-checked against
+        // its signed root.
+        let (cp_tree, cp_leaves) = crate::commands::merkle::checkpoint_leaves(&ctx, &checkpoint)
+            .map_err(|_| {
                 "local tree root does not match the latest checkpoint (artifacts changed since checkpointing)\n\n  Fix: treeship checkpoint  (then re-run present)"
-                    .into(),
-            );
-        }
+            })?;
+        let leaf_index = cp_leaves
+            .iter()
+            .position(|id| id == &card_id)
+            .ok_or_else(|| {
+                format!(
+                    "the current card ({card_id}) is newer than the latest checkpoint (#{}, tree_size {})\n\n  Fix: treeship checkpoint  (then re-run present)",
+                    checkpoint.index, checkpoint.tree_size
+                )
+            })?;
         let inclusion_proof = cp_tree
             .inclusion_proof(leaf_index)
             .ok_or("failed to generate inclusion proof")?;

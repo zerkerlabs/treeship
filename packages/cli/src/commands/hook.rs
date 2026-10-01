@@ -13,7 +13,7 @@ use crate::{ctx, printer::Printer};
 /// Only trusts config.yaml from directories that also contain config.json
 /// (indicating treeship was explicitly initialized there). This prevents
 /// a malicious .treeship/config.yaml in a cloned repo from being loaded.
-fn find_project_config() -> Option<PathBuf> {
+pub(crate) fn find_project_config() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
     // The walk stops at the home directory: a project lives under it, and
     // nothing above it (`/Users`, `/`) is the person's to configure. A

@@ -22,7 +22,7 @@ treeship trust remove <key-id> [--yes]
 | `agent_cert` | Accept this agent key's certificates, cards, and receipts (leaf pin). With `--agent <uri>`, the key's capability cards for that agent are key-bound; see below |
 | `cert_issuer` | Accept agent certificates this ship key issues — the chain-walk pin |
 | `hub_checkpoint` | Accept this key's signed Merkle checkpoints (staples, transparency) |
-| `hub_org` | Accept this hub's org-wide single-use approval checkpoints |
+| `hub_org` | Pin an org checkpoint signer. This is not a single-use approval ledger |
 | `revoker` | Honor capability revocations this ship key signs |
 | `session_host` | Honor multi-agent room invitations this host key mints |
 | `transparency_log` | Accept this Rekor log's signed entry timestamps and checkpoints as witnessed time. ECDSA P-256, given as `@rekor.pub` or `ecdsa-p256:<base64url DER>`. Sigstore's public-good log is built in; any pin of this kind replaces it {/* claims:rekor-artifact-anchoring */} |

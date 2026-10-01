@@ -102,7 +102,10 @@ impl std::fmt::Display for JournalError {
                 f,
                 "journal record {index} referenced by head but missing on disk",
             ),
-            Self::LockBusy => write!(f, "journal append lock busy; another process holds it"),
+            Self::LockBusy => write!(
+                f,
+                "journal append lock busy; another process held it for longer than the wait timeout"
+            ),
             Self::MaxUsesExceeded { grant_id, max_uses, current } => write!(
                 f,
                 "approval grant {grant_id} would exceed max_uses ({current}/{max_uses})",
@@ -227,19 +230,60 @@ fn write_head(j: &Journal, head: &Head) -> Result<(), JournalError> {
 // Append
 // ---------------------------------------------------------------------------
 
-/// Acquire the journal append lock for the duration of the closure. Uses
+/// How long an append waits for another process to release the journal
+/// lock before giving up with [`JournalError::LockBusy`]. Appends hold the
+/// lock for a few file writes, so a queue of concurrent consumers drains
+/// well inside this bound; it only trips when a holder is wedged.
+#[cfg(not(target_family = "wasm"))]
+pub const LOCK_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Acquire the journal append lock for the duration of the closure.
+///
+/// Concurrent consumers queue: the lock is polled with
 /// fs2::FileExt::try_lock_exclusive (the same primitive `session::event_log`
-/// uses) so behavior matches what the rest of the codebase already
-/// trusts.
+/// uses) and a short capped backoff until it is free or
+/// [`LOCK_WAIT_TIMEOUT`] passes. A plain blocking `lock_exclusive` would
+/// wait forever behind a wedged holder; failing on the first busy poll
+/// turned ordinary parallel use of a multi-use approval into spurious
+/// "lock busy" errors.
 #[cfg(not(target_family = "wasm"))]
 fn with_lock<F, T>(j: &Journal, body: F) -> Result<T, JournalError>
 where
     F: FnOnce() -> Result<T, JournalError>,
 {
+    with_lock_timeout(j, LOCK_WAIT_TIMEOUT, body)
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn with_lock_timeout<F, T>(
+    j: &Journal,
+    timeout: std::time::Duration,
+    body: F,
+) -> Result<T, JournalError>
+where
+    F: FnOnce() -> Result<T, JournalError>,
+{
+    use std::time::{Duration, Instant};
+
     crate::fs_safe::create_dir_all_below(&j.dir, &j.locks_dir())?;
     let lock = crate::fs_safe::open_rw_nofollow(&j.lock_path(), 0o600)?;
-    if lock.try_lock_exclusive().is_err() {
-        return Err(JournalError::LockBusy);
+    let deadline = Instant::now() + timeout;
+    let mut backoff = Duration::from_millis(2);
+    loop {
+        match lock.try_lock_exclusive() {
+            Ok(()) => break,
+            Err(e) if e.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
+                let now = Instant::now();
+                if now >= deadline {
+                    return Err(JournalError::LockBusy);
+                }
+                std::thread::sleep(backoff.min(deadline - now));
+                backoff = (backoff * 2).min(Duration::from_millis(50));
+            }
+            // Anything other than contention (EBADF, ENOLCK, ...) is a real
+            // I/O failure, not a reason to wait.
+            Err(e) => return Err(JournalError::Io(e)),
+        }
     }
     let result = body();
     let _ = fs2::FileExt::unlock(&lock);
@@ -771,6 +815,22 @@ fn load_use_record(j: &Journal, index: u64) -> Result<Option<ApprovalUse>, Journ
 ///
 /// Verify should call THIS, not check_replay, when reporting on an
 /// action that already has a journal record.
+/// The action id written beside the journal after signing. The use record
+/// itself is not rewritten: its digest is a link in the chain.
+fn backfilled_action_id(j: &Journal, use_id: &str) -> Option<String> {
+    let path = j
+        .indexes_dir()
+        .join("backfill")
+        .join(format!("{use_id}.txt"));
+    let raw = fs::read_to_string(path).ok()?;
+    let id = raw.trim();
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.to_string())
+    }
+}
+
 pub fn find_use_for_action(
     j: &Journal,
     grant_id: &str,
@@ -796,19 +856,20 @@ pub fn find_use_for_action(
     // back to the most recent match, as before.
     let mut named_this: Option<ApprovalUse> = None;
     let mut latest: Option<ApprovalUse> = None;
-    let mut named_other = false;
-    let mut any_unnamed = false;
     for line in raw.lines() {
         let idx: u64 = match line.trim().parse() {
             Ok(n) => n,
             Err(_) => continue,
         };
-        if let Some(rec) = load_use_record(j, idx)? {
+        if let Some(mut rec) = load_use_record(j, idx)? {
+            if rec.action_artifact_id.is_none() {
+                rec.action_artifact_id = backfilled_action_id(j, &rec.use_id);
+            }
             if rec.grant_id == grant_id {
-                match (action_artifact_id, rec.action_artifact_id.as_deref()) {
-                    (Some(want), Some(have)) if want == have => named_this = Some(rec.clone()),
-                    (Some(_), Some(_)) => named_other = true,
-                    _ => any_unnamed = true,
+                if action_artifact_id.is_some()
+                    && rec.action_artifact_id.as_deref() == action_artifact_id
+                {
+                    named_this = Some(rec.clone());
                 }
                 latest = Some(rec);
             }
@@ -816,10 +877,10 @@ pub fn find_use_for_action(
     }
     let rec = match (named_this, latest) {
         (Some(rec), _) => rec,
-        (None, Some(rec)) if named_other && !any_unnamed => {
-            // Every record for this grant and nonce names a different
-            // action. This action's consumption is not in this journal, so
-            // the journal cannot say its use was within max_uses.
+        (None, Some(rec)) if action_artifact_id.is_some() => {
+            // The caller named an action, and no record — including the
+            // post-sign backfill sidecar — names it. An unnamed use must
+            // not vouch for an action this journal never recorded.
             let m = max_uses_hint.or(rec.max_uses);
             let details = format!(
                 "local Approval Use Journal has no use record for this action; use {}{} of this grant and nonce was recorded for {}",
@@ -1116,12 +1177,7 @@ mod tests {
         assert_eq!(g1[1].use_id, "use_3");
     }
 
-    #[test]
-    fn lock_keeps_two_appends_serial() {
-        // Hold the lock externally; an append should fail with LockBusy
-        // rather than racing or silently overwriting.
-        let dir = tempdir().unwrap();
-        let j = Journal::new(dir.path());
+    fn hold_lock(j: &Journal) -> std::fs::File {
         fs::create_dir_all(j.locks_dir()).unwrap();
         let held = std::fs::OpenOptions::new()
             .read(true)
@@ -1131,10 +1187,49 @@ mod tests {
             .open(j.lock_path())
             .unwrap();
         held.try_lock_exclusive().unwrap();
+        held
+    }
 
-        let err = append_use(&j, sample_use("use_1", "g1", "sha256:nn1", 1)).unwrap_err();
+    #[test]
+    fn append_waits_for_a_held_lock() {
+        // A second writer queues behind the holder instead of failing,
+        // and lands after the holder releases.
+        let dir = tempdir().unwrap();
+        let j = Journal::new(dir.path());
+        let held = hold_lock(&j);
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            fs2::FileExt::unlock(&held).unwrap();
+        });
+        let started = std::time::Instant::now();
+        append_use(&j, sample_use("use_1", "g1", "sha256:nn1", 1)).unwrap();
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(250),
+            "append must have waited for the holder"
+        );
+        releaser.join().unwrap();
+        assert_eq!(list_uses_for_grant(&j, "g1").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn lock_wait_is_bounded() {
+        // A wedged holder makes the writer give up with LockBusy after the
+        // timeout rather than hang, and nothing is written.
+        let dir = tempdir().unwrap();
+        let j = Journal::new(dir.path());
+        let held = hold_lock(&j);
+        let started = std::time::Instant::now();
+        let err = with_lock_timeout(&j, std::time::Duration::from_millis(150), || {
+            panic!("the body must not run while another holder has the lock");
+            #[allow(unreachable_code)]
+            Ok::<(), JournalError>(())
+        })
+        .unwrap_err();
         assert!(matches!(err, JournalError::LockBusy));
-
+        let waited = started.elapsed();
+        assert!(waited >= std::time::Duration::from_millis(150));
+        assert!(waited < std::time::Duration::from_secs(5));
+        assert!(list_uses_for_grant(&j, "g1").unwrap().is_empty());
         let _ = fs2::FileExt::unlock(&held);
     }
 
@@ -1318,11 +1413,10 @@ mod tests {
         // and write — exceeding max_uses. With v0.9.10's reserve_use,
         // the check happens INSIDE the lock; exactly one thread wins.
         //
-        // Outcomes for the 7 losers are a mix of:
-        //   - LockBusy: the lock was held when they tried try_lock
-        //   - MaxUsesExceeded: they got the lock after the winner
-        //     released, saw the winner's record, declined to write
-        // Both are correct — neither is a bypass.
+        // The 7 losers queue on the lock, get it after the winner
+        // released, see the winner's record and decline to write
+        // (MaxUsesExceeded). LockBusy is still counted so a regression
+        // shows up as a clear assertion message, not a panic.
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
         use std::thread;
@@ -1376,5 +1470,50 @@ mod tests {
             same_nonce, 1,
             "exactly one record on disk for the contested nonce"
         );
+    }
+
+    #[test]
+    fn reserve_use_concurrent_max_uses_8_all_succeed() {
+        // Eight legitimate consumers of an 8-use grant run at once. They
+        // must queue on the journal lock and all succeed, with use numbers
+        // 1..=8 and an intact chain -- not fail with "lock busy".
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = tempdir().unwrap();
+        let dir_path = Arc::new(dir.path().to_path_buf());
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let dir_path = Arc::clone(&dir_path);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                let j = Journal::new(dir_path.as_path());
+                let rec = sample_use(&format!("use_{i}"), "g8", "sha256:shared8", 0);
+                barrier.wait();
+                reserve_use(&j, rec, Some(8))
+            }));
+        }
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        for r in &results {
+            assert!(
+                r.is_ok(),
+                "every consumer of an 8-use grant must succeed: {r:?}"
+            );
+        }
+        let j = Journal::new(dir.path());
+        let mut numbers: Vec<u32> = list_uses_for_grant(&j, "g8")
+            .unwrap()
+            .iter()
+            .map(|u| u.use_number)
+            .collect();
+        numbers.sort_unstable();
+        assert_eq!(numbers, (1..=8).collect::<Vec<u32>>());
+        verify_integrity(&j).unwrap();
+
+        // A ninth consumer is refused: waiting never bypasses max_uses.
+        let err =
+            reserve_use(&j, sample_use("use_9", "g8", "sha256:shared8", 0), Some(8)).unwrap_err();
+        assert!(matches!(err, JournalError::MaxUsesExceeded { .. }));
     }
 }

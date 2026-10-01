@@ -30,23 +30,227 @@ fn checkpoints_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(dir)
 }
 
-/// Build a MerkleTree from all artifacts in the store, sorted by signed_at.
+/// Returns the directory holding each checkpoint's recorded leaf order:
+/// ~/.treeship/merkle/checkpoints/leaves/
+fn leaves_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let dir = checkpoints_dir()?.join("leaves");
+    crate::safe_fs::create_dir_all_nofollow(&dir)?;
+    Ok(dir)
+}
+
+/// The facts a leaf's position is derived from, all read from inside the
+/// signed DSSE payload: never from `index.json`, which is an unsigned cache
+/// anyone with write access to the store can edit.
+#[derive(Debug, Clone)]
+struct LeafFacts {
+    id: String,
+    /// The chain parent the statement signs (`parentId`, or the edge
+    /// `verify::signed_parent` derives for older statement kinds).
+    parent: Option<String>,
+    /// The statement's own signed time, in unix seconds.
+    time: Option<u64>,
+}
+
+/// Decode the signed statement inside a stored record.
+fn signed_statement(record: &treeship_core::storage::Record) -> Option<serde_json::Value> {
+    let bytes = record.envelope.payload_bytes().ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// The signed time a statement carries. Statement kinds name it
+/// differently; all of them are inside the payload.
+fn signed_time(statement: &serde_json::Value) -> Option<u64> {
+    ["timestamp", "created_at", "issued_at", "signed_at"]
+        .iter()
+        .find_map(|k| statement.get(*k).and_then(|v| v.as_str()))
+        .and_then(crate::validate::parse_rfc3339)
+}
+
+fn leaf_facts(ctx: &ctx::Ctx, id: &str) -> LeafFacts {
+    let statement = ctx.storage.read(id).ok().and_then(|r| signed_statement(&r));
+    let parent = statement
+        .as_ref()
+        .and_then(|s| match treeship_core::verify::signed_parent(s) {
+            treeship_core::verify::SignedParent::Named(p) => Some(p),
+            _ => None,
+        });
+    LeafFacts {
+        id: id.to_string(),
+        parent,
+        time: statement.as_ref().and_then(signed_time),
+    }
+}
+
+/// Order leaves from signed data only: a parent before its children (chain
+/// order), then by signed time, then by artifact id. A leaf whose signed
+/// time cannot be read sorts after every leaf whose time can. The result
+/// depends on nothing an operator can change without breaking a signature.
+fn order_by_signed_facts(facts: Vec<LeafFacts>) -> Vec<String> {
+    use std::cmp::Reverse;
+    use std::collections::{BinaryHeap, HashMap};
+
+    type Key = (bool, u64, String);
+    let key = |f: &LeafFacts| -> Key { (f.time.is_none(), f.time.unwrap_or(0), f.id.clone()) };
+
+    let mut facts = facts;
+    facts.sort_by(|a, b| a.id.cmp(&b.id));
+    facts.dedup_by(|a, b| a.id == b.id);
+    let pos: HashMap<String, usize> = facts
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.id.clone(), i))
+        .collect();
+
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); facts.len()];
+    let mut waiting = vec![false; facts.len()];
+    for (i, f) in facts.iter().enumerate() {
+        if let Some(&p) = f.parent.as_ref().and_then(|p| pos.get(p)) {
+            if p != i {
+                children[p].push(i);
+                waiting[i] = true;
+            }
+        }
+    }
+
+    let mut ready: BinaryHeap<Reverse<(Key, usize)>> = facts
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !waiting[*i])
+        .map(|(i, f)| Reverse((key(f), i)))
+        .collect();
+    let mut placed = vec![false; facts.len()];
+    let mut out = Vec::with_capacity(facts.len());
+    while let Some(Reverse((_, i))) = ready.pop() {
+        placed[i] = true;
+        out.push(facts[i].id.clone());
+        for &c in &children[i] {
+            ready.push(Reverse((key(&facts[c]), c)));
+        }
+    }
+    // A parent cycle cannot come from content-addressed ids, but a store is
+    // input: whatever is left goes last, in key order, rather than vanishing.
+    let mut rest: Vec<&LeafFacts> = facts
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !placed[*i])
+        .map(|(_, f)| f)
+        .collect();
+    rest.sort_by_key(|f| key(f));
+    out.extend(rest.into_iter().map(|f| f.id.clone()));
+    out
+}
+
+/// Every artifact in the store, in signed order.
+fn signed_order(ctx: &ctx::Ctx) -> Vec<String> {
+    let facts = ctx
+        .storage
+        .list()
+        .iter()
+        .map(|e| leaf_facts(ctx, &e.id))
+        .collect();
+    order_by_signed_facts(facts)
+}
+
+/// The order older checkpoints were sealed in: `index.json`'s unsigned
+/// `signed_at`. Kept ONLY to rebuild those checkpoints' trees for
+/// proofs; a candidate order is accepted only when it reproduces the root
+/// the checkpoint signs, so editing the index cannot move a leaf.
+fn legacy_index_order(ctx: &ctx::Ctx) -> Vec<String> {
+    let mut entries = ctx.storage.list();
+    entries.reverse();
+    entries.sort_by(|a, b| a.signed_at.cmp(&b.signed_at));
+    entries.into_iter().map(|e| e.id).collect()
+}
+
+fn tree_of(ids: &[String]) -> MerkleTree {
+    let mut tree = MerkleTree::new();
+    for id in ids {
+        tree.append(id);
+    }
+    tree
+}
+
+/// Build the tree the next checkpoint seals.
+///
+/// The latest checkpoint's leaves stay where they are (a log only appends,
+/// and the consistency proof between the two checkpoints depends on it);
+/// artifacts it does not cover follow in signed order. With no usable
+/// previous checkpoint, the whole store is in signed order.
 pub(crate) fn build_tree(
     ctx: &ctx::Ctx,
 ) -> Result<(MerkleTree, Vec<String>), Box<dyn std::error::Error>> {
-    let mut entries = ctx.storage.list();
-    // list() returns most-recent-first; reverse to get chronological order
-    entries.reverse();
-    // Sort by signed_at for deterministic ordering
-    entries.sort_by(|a, b| a.signed_at.cmp(&b.signed_at));
+    let signed = signed_order(ctx);
+    let mut ids = match load_latest_checkpoint()
+        .ok()
+        .flatten()
+        .and_then(|prev| checkpoint_leaves(ctx, &prev).ok())
+    {
+        Some((_, prefix)) => prefix,
+        None => Vec::new(),
+    };
+    let covered: std::collections::HashSet<String> = ids.iter().cloned().collect();
+    ids.extend(signed.into_iter().filter(|id| !covered.contains(id)));
+    Ok((tree_of(&ids), ids))
+}
 
-    let mut tree = MerkleTree::new();
-    let mut artifact_ids: Vec<String> = Vec::new();
-    for entry in &entries {
-        tree.append(&entry.id);
-        artifact_ids.push(entry.id.clone());
+/// The leaves `checkpoint` covers, in its order, with the tree they form.
+///
+/// Candidates, each accepted only if it reproduces the signed root: the leaf
+/// order recorded when the checkpoint was sealed; the signed order of the
+/// store; the index order older checkpoints were sealed in. The root is the authority,
+/// so none of these unsigned sources can place a leaf the signer did not.
+pub(crate) fn checkpoint_leaves(
+    ctx: &ctx::Ctx,
+    checkpoint: &Checkpoint,
+) -> Result<(MerkleTree, Vec<String>), Box<dyn std::error::Error>> {
+    let k = checkpoint.tree_size;
+    let mut candidates: Vec<Vec<String>> = Vec::new();
+    if let Some(recorded) = load_recorded_leaves(checkpoint) {
+        candidates.push(recorded);
     }
-    Ok((tree, artifact_ids))
+    for order in [signed_order(ctx), legacy_index_order(ctx)] {
+        if order.len() >= k {
+            candidates.push(order[..k].to_vec());
+        }
+    }
+    let mut first_err = None;
+    for ids in candidates {
+        match checkpoint_tree(&ids, checkpoint) {
+            Ok(tree) => return Ok((tree, ids)),
+            Err(e) => {
+                first_err.get_or_insert(e);
+            }
+        }
+    }
+    let held = ctx.storage.list().len();
+    if held < k {
+        return Err(format!(
+            "local store has {} artifacts but checkpoint #{} covers {} — the store no longer matches the checkpoint",
+            held, checkpoint.index, k
+        )
+        .into());
+    }
+    Err(first_err.unwrap_or_else(|| {
+        format!(
+            "local artifacts no longer reproduce checkpoint #{}'s root (artifacts changed since checkpointing)\n\n  Fix: treeship checkpoint  (then re-run this command)",
+            checkpoint.index
+        )
+        .into()
+    }))
+}
+
+/// The leaf order written beside a checkpoint when it was sealed. Unsigned,
+/// so only ever a candidate that `checkpoint_tree` checks against the root.
+fn load_recorded_leaves(checkpoint: &Checkpoint) -> Option<Vec<String>> {
+    let path = leaves_dir()
+        .ok()?
+        .join(format!("{:04}.json", checkpoint.index));
+    let doc: serde_json::Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    if doc.get("root").and_then(|v| v.as_str()) != Some(checkpoint.root.as_str()) {
+        return None;
+    }
+    let ids: Vec<String> = serde_json::from_value(doc.get("leaves")?.clone()).ok()?;
+    (ids.len() == checkpoint.tree_size).then_some(ids)
 }
 
 /// Find the next checkpoint index by scanning existing checkpoints.
@@ -176,6 +380,33 @@ pub fn checkpoint_with(
     }
 }
 
+/// What a verified inclusion proof says about time.
+///
+/// A checkpoint's `signed_at` comes from the signer's own clock, signed with
+/// the signer's own key. Whoever holds that key can re-cut the log and sign
+/// a new checkpoint with any time, so on its own a checkpoint bounds nothing.
+/// Only a root witnessed by someone else (`anchor`, already verified by the
+/// caller) supports "before this time". Nothing in the CLI anchors or checks
+/// an anchor for a checkpoint root today, so every caller passes `None`.
+fn time_statement(checkpoint: &Checkpoint, anchor: Option<&str>) -> Vec<String> {
+    match anchor {
+        Some(witness) => vec![
+            format!(
+                "  This artifact was in the log before {} ({}).",
+                checkpoint.signed_at, witness
+            ),
+            "  It cannot have been inserted or backdated after this time.".to_string(),
+        ],
+        None => vec![
+            format!(
+                "  This checkpoint was signed by {} at its own claimed time, {}.",
+                checkpoint.signer, checkpoint.signed_at
+            ),
+            "  No external anchor for this root was checked, so the time is the signer's claim: whoever holds that key can sign another checkpoint over a different log.".to_string(),
+        ],
+    }
+}
+
 /// What `checkpoint` sealed, for the text and JSON views.
 struct Sealed {
     cp: Checkpoint,
@@ -226,7 +457,7 @@ fn seal_checkpoint(
 ) -> Result<Sealed, Box<dyn std::error::Error>> {
     let _ = printer;
     let ctx = ctx::open(config)?;
-    let (tree, _artifact_ids) = build_tree(&ctx)?;
+    let (tree, artifact_ids) = build_tree(&ctx)?;
 
     if tree.is_empty() {
         return Err("no artifacts to checkpoint -- create some artifacts first".into());
@@ -243,6 +474,15 @@ fn seal_checkpoint(
     let cp_json = serde_json::to_vec_pretty(&cp)?;
     crate::safe_fs::write_under_treeship(&cp_dir.join(&filename), &cp_json, 0o600)?;
 
+    // Record the leaf order beside it, so later proofs rebuild exactly this
+    // tree. Unsigned: a reader accepts it only if it reproduces the root.
+    let leaves_json = serde_json::to_vec_pretty(&serde_json::json!({
+        "index": cp.index,
+        "root": cp.root,
+        "leaves": artifact_ids,
+    }))?;
+    crate::safe_fs::write_under_treeship(&leaves_dir()?.join(&filename), &leaves_json, 0o600)?;
+
     // Save latest.json (copy, not symlink, for portability)
     crate::safe_fs::write_under_treeship(&cp_dir.join("latest.json"), &cp_json, 0o600)?;
 
@@ -250,6 +490,37 @@ fn seal_checkpoint(
         cp,
         file: cp_dir.join(&filename),
     })
+}
+
+/// The human summary a proof file carries, read from the signed statement:
+/// who acted and what they did. Display only — a verifier checks inclusion
+/// of the artifact id, never this summary.
+fn artifact_summary(record: &treeship_core::storage::Record) -> ArtifactSummary {
+    let statement = signed_statement(record).unwrap_or(serde_json::Value::Null);
+    let field = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|k| statement.get(*k).and_then(|v| v.as_str()))
+            .map(str::to_string)
+    };
+    let short_type = record
+        .payload_type
+        .strip_prefix("application/vnd.treeship.")
+        .and_then(|s| s.strip_suffix(".v1+json"))
+        .unwrap_or(&record.payload_type)
+        .to_string();
+    // Each statement kind names its signer role differently.
+    let actor = field(&["actor", "approver", "from", "endorser", "system", "issuer"])
+        .unwrap_or_else(|| "unknown".to_string());
+    // An action names itself; other kinds are described by their kind.
+    let action = field(&["action"]).unwrap_or(short_type);
+    let timestamp = field(&["timestamp", "created_at", "issued_at", "signed_at"])
+        .unwrap_or_else(|| record.signed_at.clone());
+    ArtifactSummary {
+        actor,
+        action,
+        timestamp,
+        key_id: record.key_id.clone(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +574,6 @@ pub fn proof(
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
-    let (_, artifact_ids) = build_tree(&ctx)?;
 
     // Load the checkpoint FIRST: a proof is a statement about membership in
     // a signed checkpoint, so both the membership guard and the tree the
@@ -311,45 +581,34 @@ pub fn proof(
     let checkpoint = load_latest_checkpoint()?
         .ok_or("no checkpoints found -- run 'treeship checkpoint' first")?;
 
-    // Find the artifact's leaf index
-    let leaf_index = artifact_ids
-        .iter()
-        .position(|id| id == artifact_id)
-        .ok_or_else(|| format!("artifact {} not found in store", artifact_id))?;
-
-    // Membership guard: an artifact appended after the checkpoint is not in
-    // the checkpoint's tree — a "proof" against that checkpoint would be one
-    // that verifiably fails.
-    if leaf_index >= checkpoint.tree_size {
-        return Err(format!(
-            "artifact {} is newer than checkpoint #{} (tree_size {})\n\n  Fix: treeship checkpoint  (then re-run this command)",
-            artifact_id, checkpoint.index, checkpoint.tree_size
-        )
-        .into());
+    if !ctx.storage.exists(artifact_id) {
+        return Err(format!("artifact {} not found in store", artifact_id).into());
     }
 
-    // Generate the inclusion proof from the checkpoint's tree.
-    let cp_tree = checkpoint_tree(&artifact_ids, &checkpoint)?;
+    // The checkpoint's own leaves, in its order, root-checked.
+    let (cp_tree, cp_leaves) = checkpoint_leaves(&ctx, &checkpoint)?;
+
+    // Membership guard: an artifact the checkpoint does not cover is not in
+    // its tree — a "proof" against that checkpoint would be one that
+    // verifiably fails.
+    let leaf_index = cp_leaves
+        .iter()
+        .position(|id| id == artifact_id)
+        .ok_or_else(|| {
+            format!(
+                "artifact {} is newer than checkpoint #{} (tree_size {})\n\n  Fix: treeship checkpoint  (then re-run this command)",
+                artifact_id, checkpoint.index, checkpoint.tree_size
+            )
+        })?;
+
     let inclusion_proof = cp_tree
         .inclusion_proof(leaf_index)
         .ok_or("failed to generate inclusion proof")?;
 
-    // Load artifact record for summary
     let record = ctx.storage.read(artifact_id)?;
-    let short_type = record
-        .payload_type
-        .strip_prefix("application/vnd.treeship.")
-        .and_then(|s| s.strip_suffix(".v1+json"))
-        .unwrap_or(&record.payload_type);
-
     let proof_file = ProofFile {
         artifact_id: artifact_id.to_string(),
-        artifact_summary: ArtifactSummary {
-            actor: short_type.to_string(),
-            action: short_type.to_string(),
-            timestamp: record.signed_at.clone(),
-            key_id: record.key_id.clone(),
-        },
+        artifact_summary: artifact_summary(&record),
         inclusion_proof: inclusion_proof.clone(),
         checkpoint: checkpoint.clone(),
     };
@@ -508,9 +767,13 @@ pub fn verify(
 
     if all_valid {
         let root_short = short_hash(&proof_file.checkpoint.root);
+        // No external anchor for a checkpoint root is checked here, so the
+        // time below is the signer's own claim (see `time_statement`).
+        let anchor: Option<&str> = None;
         printer.success(
             "inclusion verified  (offline)",
             &[
+                ("anchor", anchor.unwrap_or("none")),
                 ("artifact", &proof_file.artifact_id),
                 (
                     "position",
@@ -591,11 +854,9 @@ pub fn verify(
             printer.green("ok")
         ));
         printer.blank();
-        printer.info(&format!(
-            "  This artifact was in the log before {}.",
-            proof_file.checkpoint.signed_at
-        ));
-        printer.info("  It cannot have been inserted or backdated after this time.");
+        for line in time_statement(&proof_file.checkpoint, anchor) {
+            printer.info(&line);
+        }
     } else if let (Some(public_key), true, true) = (&unpinned_key, proof_valid, root_matches) {
         // Everything holds except the trust decision. The key comes from the
         // checkpoint itself, so the pin line is not a copy-paste that trusts
@@ -661,8 +922,7 @@ pub fn verify(
 
 pub fn status(config: Option<&str>, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = ctx::open(config)?;
-    let (tree, _artifact_ids) = build_tree(&ctx)?;
-    let total_artifacts = tree.len();
+    let total_artifacts = ctx.storage.list().len();
     let num_checkpoints = count_checkpoints()?;
     let latest_cp = load_latest_checkpoint()?;
 
@@ -891,12 +1151,11 @@ fn publish_report(
 
     // 3. Find and publish all proofs for this checkpoint. Proofs are
     // generated from the tree AS IT WAS at the checkpoint (truncated +
-    // root-cross-checked by checkpoint_tree) — the full current tree would
+    // root-cross-checked by checkpoint_leaves) — the full current tree would
     // yield authentication paths that reconstruct the wrong root whenever
     // artifacts were appended after checkpointing, making the hub serve
     // proofs that verifiably fail for legitimate, in-log artifacts.
-    let (_, artifact_ids) = build_tree(&ctx)?;
-    let cp_tree = checkpoint_tree(&artifact_ids, &checkpoint)?;
+    let (cp_tree, artifact_ids) = checkpoint_leaves(&ctx, &checkpoint)?;
     let proof_url = format!("{}/v1/merkle/proof", endpoint);
     let mut published_count = 0u64;
     let mut local_only_count = 0u64;
@@ -919,20 +1178,9 @@ fn publish_report(
             Err(_) => continue,
         };
 
-        let short_type = record
-            .payload_type
-            .strip_prefix("application/vnd.treeship.")
-            .and_then(|s| s.strip_suffix(".v1+json"))
-            .unwrap_or(&record.payload_type);
-
         let proof_file = ProofFile {
             artifact_id: artifact_id.clone(),
-            artifact_summary: ArtifactSummary {
-                actor: short_type.to_string(),
-                action: short_type.to_string(),
-                timestamp: record.signed_at.clone(),
-                key_id: record.key_id.clone(),
-            },
+            artifact_summary: artifact_summary(&record),
             inclusion_proof: inclusion_proof.clone(),
             checkpoint: checkpoint.clone(),
         };

@@ -941,7 +941,7 @@
   status: stable
   docs:
     - docs/content/docs/integrations/claude-code.mdx
-  notes: "Plugin via Zerker marketplace (SessionStart/PostToolUse/SessionEnd hooks); manual MCP wiring also documented in integrations/claude-code/. SessionEnd auto-publishes the session report when a hub is attached."
+  notes: "Plugin via Zerker marketplace (SessionStart/PostToolUse/SessionEnd hooks); manual MCP wiring also documented in integrations/claude-code/. SessionEnd always closes and writes the local receipt; publishing it to a hub is opt-in via TREESHIP_AUTO_PUBLISH=1, off by default."
 
 - id: integrations-cursor
   name: Integration -- Cursor

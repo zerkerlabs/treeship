@@ -26,6 +26,9 @@ pub const NOT_IN_BUILD: i32 = 5;
 /// a trust decision for the reader, not a broken signature (`merkle verify`,
 /// CLI-5). An invalid signature is still 1.
 pub const NOT_PINNED: i32 = 6;
+/// The actor is halted (`treeship halt <actor>` or `*`): `attest` and
+/// `wrap` refuse to sign for it, and `wrap` does not start the command.
+pub const HALTED: i32 = 7;
 
 /// The wrapped command could not be started (not found, not executable):
 /// 127, as a shell reports it (`wrap`).
@@ -74,6 +77,11 @@ pub fn not_pinned(message: impl Into<String>) -> Box<dyn std::error::Error> {
     boxed(NOT_PINNED, message)
 }
 
+/// The actor is halted here (exit 7).
+pub fn halted(message: impl Into<String>) -> Box<dyn std::error::Error> {
+    boxed(HALTED, message)
+}
+
 /// The exit code for an error that reached `main`.
 pub fn code_for(e: &(dyn std::error::Error + 'static)) -> i32 {
     if let Some(x) = e.downcast_ref::<ExitError>() {
@@ -101,6 +109,7 @@ mod tests {
         assert_eq!(code_for(usage("x").as_ref()), USAGE);
         assert_eq!(code_for(not_in_build("x").as_ref()), NOT_IN_BUILD);
         assert_eq!(code_for(not_pinned("x").as_ref()), NOT_PINNED);
+        assert_eq!(code_for(halted("x").as_ref()), HALTED);
         let plain: Box<dyn std::error::Error> = "required-bot is not required".into();
         assert_eq!(code_for(plain.as_ref()), ERROR);
     }

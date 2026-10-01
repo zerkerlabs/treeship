@@ -4,9 +4,17 @@
 //! session, so the record shows when the switch was thrown and by whom.
 //!
 //! What it reaches: every tool call the harness routes through hooks (the
-//! Claude Code plugin's PreToolUse gate) and, under TREESHIP_STRICT=1, the
-//! MCP bridge. What it does not reach: a process an agent started outside
-//! those paths. The docs say so; this module does not pretend otherwise.
+//! Claude Code plugin's PreToolUse gate), the MCP and A2A bridges, and the
+//! CLI's own signing paths for an actor: `attest action`, `attest decision`,
+//! `attest handoff` (its `--from`) and `wrap` refuse while the actor, or
+//! `*`, is halted, before anything is signed and before `wrap` starts its
+//! command ([`refuse_if_halted`], exit 7). What it does not reach: a process
+//! an agent started outside Treeship, which never asks. The docs say so;
+//! this module does not pretend otherwise.
+//!
+//! `attest receipt` stays open under a halt: the gates sign each refusal
+//! as a `blocked.v1` receipt from `system://treeship-gate`, and a halt that
+//! stopped the record of its own refusals would hide them.
 //!
 //! Only the workspace's own key signs a halt. A halt file written by hand
 //! without a matching signed artifact is ignored by `halt list`, and the
@@ -130,7 +138,12 @@ fn marker_status(ctx: &ctx::Ctx, m: &Marker, own_key: &str) -> Result<(), Marker
     };
     let is_halt = own_halt_statement(ctx, &verifier, &m.halt)
         .and_then(|s| s.payload)
-        .map(|p| p.get("action").and_then(|v| v.as_str()) == Some("halt"))
+        .map(|p| {
+            // The signed payload names whom it halts; the marker's own
+            // `actor` is unsigned and must agree with it.
+            p.get("action").and_then(|v| v.as_str()) == Some("halt")
+                && p.get("actor").and_then(|v| v.as_str()) == Some(m.actor.as_str())
+        })
         .unwrap_or(false);
     if !is_halt {
         return Err(MarkerRejected::NotSignedHere);
@@ -147,19 +160,62 @@ fn marker_status(ctx: &ctx::Ctx, m: &Marker, own_key: &str) -> Result<(), Marker
 /// removed on sight.
 pub fn active_halt(ctx: &ctx::Ctx, actor: &str) -> Option<Marker> {
     let dir = halts_dir_for(&ctx.config_path);
+    // Read the markers first: with none on disk, the common case on every
+    // `attest` and `wrap`, there is nothing to check and no key to load.
+    let markers: Vec<(&str, Marker)> = [actor, ALL]
+        .into_iter()
+        .filter_map(|who| read_marker(&dir, who).map(|m| (who, m)))
+        // Marker file names are sanitised, so two actors can share one;
+        // the marker's own `actor` field says whom it halts.
+        .filter(|(who, m)| m.actor == *who)
+        .collect();
+    if markers.is_empty() {
+        return None;
+    }
     let own_key = ctx.keys.default_signer().ok()?.key_id().to_string();
-    for who in [actor, ALL] {
-        if let Some(m) = read_marker(&dir, who) {
-            match marker_status(ctx, &m, &own_key) {
-                Ok(()) => return Some(m),
-                Err(MarkerRejected::LiftedBy(_)) => {
-                    let _ = std::fs::remove_file(dir.join(marker_name(who)));
-                }
-                Err(MarkerRejected::NotSignedHere) => {}
+    for (who, m) in markers {
+        match marker_status(ctx, &m, &own_key) {
+            Ok(()) => return Some(m),
+            Err(MarkerRejected::LiftedBy(_)) => {
+                let _ = std::fs::remove_file(dir.join(marker_name(who)));
             }
+            Err(MarkerRejected::NotSignedHere) => {}
         }
     }
     None
+}
+
+/// Refuse to sign for, or run under, a halted actor. Called by `attest`
+/// and `wrap` before anything is signed or started; the error carries
+/// exit code 7 and names the halt and how to lift it.
+pub fn refuse_if_halted(
+    ctx: &ctx::Ctx,
+    actor: &str,
+    what: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(m) = active_halt(ctx, actor) else {
+        return Ok(());
+    };
+    let by = if m.actor == ALL {
+        "every actor is halted".to_string()
+    } else {
+        format!("{actor} is halted")
+    };
+    let reason = m
+        .reason
+        .as_deref()
+        .map(|r| format!(", reason: {r}"))
+        .unwrap_or_default();
+    let lift = if m.actor == ALL {
+        "'*'".to_string()
+    } else {
+        m.actor.clone()
+    };
+    Err(crate::exit::halted(format!(
+        "{what} refused: {by} (halt {}, issued {}{reason}); nothing was signed\n  \
+         an operator lifts it with: treeship halt --lift {lift}",
+        m.halt, m.issued_at
+    )))
 }
 
 fn sign_order(
@@ -270,7 +326,7 @@ pub fn halt(
                 ("reason", reason.unwrap_or("(none)")),
             ],
         );
-        printer.hint("every tool call the harness routes through hooks is now refused and signed as blocked.v1; a process started outside the hooks is not reached");
+        printer.hint("every tool call the harness routes through hooks is now refused and signed as blocked.v1, and attest and wrap refuse this actor; a process started outside Treeship is not reached");
         printer.hint(&format!("treeship halt --lift {actor}   to lift it"));
         printer.blank();
     }

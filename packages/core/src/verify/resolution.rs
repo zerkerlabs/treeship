@@ -69,75 +69,100 @@ pub fn chain_verify_card(
     let card_signer = card_keyid;
 
     for (cert_id, cert_env) in certs {
-        // 1. Cert envelope must verify against a PINNED CertIssuer root. The
-        //    pubkey comes from my trust store, never from the wire. A cert
-        //    may carry several signatures; every pinned CertIssuer among
-        //    them is loaded, under its own pubkey only.
-        let mut cert_verifier = Verifier::new(HashMap::new());
-        for sig in &cert_env.signatures {
-            let Some(ship_root) = trust
-                .roots()
-                .iter()
-                .find(|r| r.key_id == sig.keyid && r.kind == TrustRootKind::CertIssuer)
-            else {
-                continue;
-            };
-            if let Ok(ship_vk) = decode_ed25519_pubkey(&ship_root.public_key) {
-                cert_verifier.add_key(sig.keyid.clone(), ship_vk);
-            }
-        }
-        if cert_verifier.verify_any(cert_env).is_err() {
-            continue;
-        }
-
-        // Only now are the payload fields issuer-attested and believable.
-        let Ok(stmt) = cert_env.unmarshal_statement::<ReceiptStatement>() else {
+        // 1 + 3. Issued by a pinned CertIssuer and inside its window.
+        let Some(subject) = certified_subject(cert_env, trust, now) else {
             continue;
         };
-        if stmt.kind != "agent_cert.v1" {
-            continue;
-        }
-        let Some(p) = stmt.payload else { continue };
 
         // 2. Binds this agent to this signer.
-        if p.get("agent").and_then(|v| v.as_str()) != Some(agent)
-            || p.get("subject_key_id").and_then(|v| v.as_str()) != Some(card_signer)
-        {
-            continue;
-        }
-
-        // 3. Validity window. Both bounds required — a cert missing either
-        //    field fails closed. RFC 3339 UTC strings from the same generator
-        //    compare lexicographically.
-        let (Some(issued), Some(until)) = (
-            p.get("issued_at").and_then(|v| v.as_str()),
-            p.get("valid_until").and_then(|v| v.as_str()),
-        ) else {
-            continue;
-        };
-        if now < issued || now > until {
+        if subject.agent != agent || subject.subject_key_id != card_signer {
             continue;
         }
 
         // 4. The certified subject key must verify the card envelope itself.
-        let Some(subject_b64) = p.get("subject_public_key").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Ok(subject_vk) = decode_ed25519_pubkey(&format!("ed25519:{subject_b64}")) else {
-            continue;
-        };
         let mut card_verifier = Verifier::new(HashMap::new());
-        card_verifier.add_key(card_signer.to_string(), subject_vk);
+        card_verifier.add_key(card_signer.to_string(), subject.subject_key);
         if card_verifier.verify_any(card_env).is_err() {
             continue;
         }
 
         return Some(ChainVerdict {
             cert_id: cert_id.clone(),
-            subject_key: subject_vk,
+            subject_key: subject.subject_key,
         });
     }
     None
+}
+
+/// What a verified `agent_cert.v1` vouches for: the agent URI, the subject
+/// key id, and the subject public key the issuer bound to them.
+pub struct CertifiedSubject {
+    pub agent: String,
+    pub subject_key_id: String,
+    pub subject_key: VerifyingKey,
+}
+
+/// Check one `agent_cert.v1` envelope against MY trust roots at `now`,
+/// fail-closed at every step:
+///
+///   1. its signature verifies under a key pinned as `CertIssuer`, with the
+///      PINNED pubkey (never the wire's), before any payload field is read;
+///   2. it is an `agent_cert.v1` with `agent`, `subject_key_id` and a
+///      decodable ed25519 `subject_public_key`;
+///   3. `now` lies inside `issued_at..=valid_until` (both bounds required).
+///
+/// The shared core of every certificate-chain walk: card resolution
+/// (`chain_verify_card`) and bundle import both build on it.
+pub fn certified_subject(
+    cert_env: &Envelope,
+    trust: &TrustRootStore,
+    now: &str,
+) -> Option<CertifiedSubject> {
+    // A cert may carry several signatures; every pinned CertIssuer among
+    // them is loaded, under its own pubkey only.
+    let mut cert_verifier = Verifier::new(HashMap::new());
+    for sig in &cert_env.signatures {
+        let Some(ship_root) = trust
+            .roots()
+            .iter()
+            .find(|r| r.key_id == sig.keyid && r.kind == TrustRootKind::CertIssuer)
+        else {
+            continue;
+        };
+        if let Ok(ship_vk) = decode_ed25519_pubkey(&ship_root.public_key) {
+            cert_verifier.add_key(sig.keyid.clone(), ship_vk);
+        }
+    }
+    cert_verifier.verify_any(cert_env).ok()?;
+
+    // Only now are the payload fields issuer-attested and believable.
+    let stmt = cert_env.unmarshal_statement::<ReceiptStatement>().ok()?;
+    if stmt.kind != "agent_cert.v1" {
+        return None;
+    }
+    let p = stmt.payload?;
+    let agent = p.get("agent").and_then(|v| v.as_str())?;
+    let subject_key_id = p.get("subject_key_id").and_then(|v| v.as_str())?;
+    if agent.is_empty() || subject_key_id.is_empty() {
+        return None;
+    }
+
+    // Validity window. RFC 3339 UTC strings from the same generator compare
+    // lexicographically.
+    let issued = p.get("issued_at").and_then(|v| v.as_str())?;
+    let until = p.get("valid_until").and_then(|v| v.as_str())?;
+    if now < issued || now > until {
+        return None;
+    }
+
+    let subject_b64 = p.get("subject_public_key").and_then(|v| v.as_str())?;
+    let subject_key = decode_ed25519_pubkey(&format!("ed25519:{subject_b64}")).ok()?;
+
+    Some(CertifiedSubject {
+        agent: agent.to_string(),
+        subject_key_id: subject_key_id.to_string(),
+        subject_key,
+    })
 }
 
 /// A resolution bundle: exactly the signed bytes a verifier needs to decide

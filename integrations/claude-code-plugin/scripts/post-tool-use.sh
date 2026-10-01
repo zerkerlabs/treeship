@@ -47,8 +47,10 @@ elif [ ! -d "./.treeship" ] && [ ! -d "${HOME}/.treeship" ]; then
   exit 0
 fi
 
-# No active session means no place to record this event.
+# No active session means no place to record this event. Say so: a worktree
+# that never started a session used to drop every tool call with no output.
 if ! treeship session status --check >/dev/null 2>&1; then
+  echo "treeship: no active session; this tool call was not recorded" >&2
   exit 0
 fi
 

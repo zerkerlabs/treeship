@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS dock_challenges (
   -- consumed and the ship record created. We keep the row (rather than
   -- deleting on finalize) so the browser activation page can poll and see
   -- "attached" instead of a misleading "not found" 404.
-  dock_id         TEXT
+  dock_id         TEXT,
+  -- Shown to the person at the CLI. The browser approval must present it.
+  -- The device_code alone is not enough: it also appears in the activation URL.
+  user_code       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS dpop_jtis (
@@ -225,6 +228,7 @@ func Open() (*sql.DB, error) {
 func migrate(db *sql.DB) error {
 	addColumns := []string{
 		`ALTER TABLE dock_challenges ADD COLUMN dock_id TEXT`,
+		`ALTER TABLE dock_challenges ADD COLUMN user_code TEXT`,
 		// Derived indexing columns (audit items 11, 20, 21).
 		//
 		// Both are computed from the envelope's own signed bytes at
@@ -324,18 +328,19 @@ type Challenge struct {
 	ExpiresAt  int64
 	Approved   bool
 	DockID     string // populated after authorize
+	UserCode   string
 }
 
-func InsertChallenge(db *sql.DB, deviceCode, nonce string, expiresAt int64) error {
+func InsertChallenge(db *sql.DB, deviceCode, nonce, userCode string, expiresAt int64) error {
 	_, err := db.Exec(
-		`INSERT INTO dock_challenges (device_code, nonce, expires_at) VALUES (?, ?, ?)`,
-		deviceCode, nonce, expiresAt,
+		`INSERT INTO dock_challenges (device_code, nonce, expires_at, user_code) VALUES (?, ?, ?, ?)`,
+		deviceCode, nonce, expiresAt, userCode,
 	)
 	return err
 }
 
 func GetChallenge(db *sql.DB, deviceCode string) (*Challenge, error) {
-	const cols = `device_code, nonce, expires_at, approved, COALESCE(dock_id, '')`
+	const cols = `device_code, nonce, expires_at, approved, COALESCE(dock_id, ''), COALESCE(user_code, '')`
 	// Try exact match first (full 16-char code).
 	row := db.QueryRow(
 		`SELECT `+cols+` FROM dock_challenges WHERE device_code = ?`,
@@ -343,7 +348,7 @@ func GetChallenge(db *sql.DB, deviceCode string) (*Challenge, error) {
 	)
 	c := &Challenge{}
 	var approved int
-	if err := row.Scan(&c.DeviceCode, &c.Nonce, &c.ExpiresAt, &approved, &c.DockID); err != nil {
+	if err := row.Scan(&c.DeviceCode, &c.Nonce, &c.ExpiresAt, &approved, &c.DockID, &c.UserCode); err != nil {
 		// If exact match fails and input is 8 chars (legacy CLI prefix),
 		// try prefix match. LIKE is safe here because we already validated
 		// the input as ^[0-9a-f]{8,16}$ before calling this function.
@@ -352,7 +357,7 @@ func GetChallenge(db *sql.DB, deviceCode string) (*Challenge, error) {
 				`SELECT `+cols+` FROM dock_challenges WHERE device_code LIKE ? LIMIT 1`,
 				deviceCode+"%",
 			)
-			if err2 := row.Scan(&c.DeviceCode, &c.Nonce, &c.ExpiresAt, &approved, &c.DockID); err2 != nil {
+			if err2 := row.Scan(&c.DeviceCode, &c.Nonce, &c.ExpiresAt, &approved, &c.DockID, &c.UserCode); err2 != nil {
 				return nil, err // return original error
 			}
 			c.Approved = approved == 1

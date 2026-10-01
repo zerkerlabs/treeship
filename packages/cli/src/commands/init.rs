@@ -15,9 +15,22 @@ pub fn run(
     config_path: Option<String>,
     force: bool,
     global: bool,
+    worktree: bool,
     template: Option<String>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if worktree {
+        if global {
+            return Err("--worktree links a checkout to its main ship; it cannot target the global keystore".into());
+        }
+        if config_path.is_some() {
+            return Err(
+                "--worktree writes .treeship/config.json in this worktree; do not pass --config"
+                    .into(),
+            );
+        }
+        return init_worktree(printer);
+    }
     // Resolve target. Order:
     //   1. --config <path>  (explicit user override; we never second-guess it)
     //   2. --global         (forces user-level path even when a project
@@ -112,6 +125,7 @@ pub fn run(
             return Err(format!(
                 "no Treeship workspace of its own in this directory; the global workspace at {} already exists, so nothing was changed.\n\n  \
                  Create one here:                 treeship init --config .treeship/config.json\n  \
+                 A git worktree of a Treeship repo: treeship init --worktree\n  \
                  Or keep using the global one:    nothing to run; commands here already use it (`treeship init --global` confirms it is set up, `treeship status` shows which store is in use)\n\n  \
                  Until this directory has its own workspace, commands run here use the global one, \
                  so receipts from unrelated projects share one store.",
@@ -417,6 +431,54 @@ fn write_project_config(project_config: &ProjectConfig) -> Result<(), Box<dyn st
         0o600,
     )?;
 
+    Ok(())
+}
+
+/// Point this worktree at the main checkout's ship and store. Session files
+/// stay in this directory's `.treeship`.
+fn init_worktree(printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    let main = crate::config::linked_worktree_main_config()?;
+    let marker = std::env::current_dir()?
+        .join(".treeship")
+        .join("config.json");
+    if marker.is_file() {
+        let raw = std::fs::read(&marker)?;
+        let val: serde_json::Value =
+            serde_json::from_slice(&raw).unwrap_or(serde_json::Value::Null);
+        if config_json_is_real(&marker) {
+            return Err(format!(
+                "this worktree already has its own ship at {}.\n\n  Leave it, or move that .treeship aside before `treeship init --worktree`.",
+                marker.display()
+            )
+            .into());
+        }
+        if let Some(extends) = val.get("extends").and_then(|v| v.as_str()) {
+            let target = crate::config::resolve_extends(&marker, extends);
+            if std::fs::canonicalize(&target).ok().as_ref() == Some(&main) {
+                printer.success("worktree already uses the main checkout's ship", &[]);
+                printer.info(&format!("  config:  {}", main.display()));
+                return Ok(());
+            }
+        }
+        return Err(format!(
+            "{} already exists and does not extend the main checkout.",
+            marker.display()
+        )
+        .into());
+    }
+    let ts_dir = marker.parent().unwrap_or(std::path::Path::new(".treeship"));
+    crate::safe_fs::create_dir_all_nofollow(ts_dir)?;
+    let _ = crate::safe_fs::set_mode_nofollow(ts_dir, 0o700);
+    let stub = serde_json::json!({
+        "extends": main.to_string_lossy(),
+        "project": true,
+    });
+    crate::safe_fs::write_under_treeship(&marker, &serde_json::to_vec_pretty(&stub)?, 0o600)?;
+    printer.blank();
+    printer.success("worktree linked to the main checkout", &[]);
+    printer.info(&format!("  ship:     {}", main.display()));
+    printer.info("  sessions: this worktree's .treeship/ (its own session, the same store)");
+    printer.blank();
     Ok(())
 }
 

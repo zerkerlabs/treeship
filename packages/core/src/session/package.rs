@@ -1052,7 +1052,8 @@ pub fn verify_package_with_options(
     // verify_package wrapper that has Ctx access. The hub-org level is
     // reserved for PR 6 -- not claimed without a real Hub checkpoint.
     let bundle = read_approvals_bundle(pkg_dir).unwrap_or_default();
-    add_approval_evidence_checks(&mut checks, &bundle, trust);
+    let chain_anchor = signed_approval_chain_anchor(pkg_dir);
+    add_approval_evidence_checks(&mut checks, &bundle, trust, chain_anchor.as_deref());
     // Under --structural too: the per-artifact signature rows are still
     // checked in that mode, and a carried grant whose signature fails, or
     // an approval used past its signed limit, is a failure of the bytes
@@ -2888,10 +2889,33 @@ fn finish_package_checks(
 /// resolved config_path. Keeping these two pure means an offline tool
 /// (Hub-side validator, third-party verifier) can run the same checks
 /// without needing a Treeship workspace.
+/// The journal digest the signed close record names as the start of this
+/// session's approval-use window. None unless `record.json` verifies.
+fn signed_approval_chain_anchor(pkg_dir: &Path) -> Option<String> {
+    let raw = std::fs::read(pkg_dir.join(RECORD_FILE)).ok()?;
+    let envelope = crate::attestation::Envelope::from_json(&raw).ok()?;
+    let sig = envelope.signatures.first()?;
+    let keys = package_verifying_keys(pkg_dir);
+    let vk = keys.get(&sig.keyid)?;
+    crate::attestation::verify_with_key(&envelope, &sig.keyid, *vk).ok()?;
+    let statement: serde_json::Value =
+        serde_json::from_slice(envelope.payload_bytes().ok()?.as_slice()).ok()?;
+    let anchor = statement
+        .get("payload")?
+        .get("approval_chain_anchor")?
+        .as_str()?;
+    if anchor.is_empty() {
+        None
+    } else {
+        Some(anchor.to_string())
+    }
+}
+
 pub(crate) fn add_approval_evidence_checks(
     checks: &mut Vec<VerifyCheck>,
     bundle: &ApprovalsBundle,
     trust: &crate::trust::TrustRootStore,
+    chain_anchor: Option<&str>,
 ) {
     if bundle.uses.is_empty() && bundle.checkpoints.is_empty() {
         // Nothing to assert. Stay quiet rather than emit a "skipped"
@@ -3325,9 +3349,18 @@ pub(crate) fn add_approval_evidence_checks(
             });
         }
 
-        let owned: HashSet<&str> = std::iter::once("")
+        let mut owned: HashSet<&str> = std::iter::once("")
             .chain(nodes.iter().map(|n| n.digest))
             .collect();
+        // A later session's first use points at the previous session's last
+        // journal record. That predecessor is not in this package. It counts
+        // as anchored only when the signed close record names that exact
+        // digest. Any other dangling pointer is still a break.
+        if let Some(anchor) = chain_anchor {
+            if !anchor.is_empty() && nodes.iter().any(|n| n.prev == anchor) {
+                owned.insert(anchor);
+            }
+        }
 
         let mut violations: Vec<String> = Vec::new();
         // Dangling prev: pointer not in owned set.
@@ -3381,7 +3414,18 @@ pub(crate) fn add_approval_evidence_checks(
                 .filter(|n| !n.prev.is_empty())
                 .map(|n| (n.prev, n))
                 .collect();
-            let start = genesis.first().copied();
+            let start = if let Some(node) = genesis.first().copied() {
+                Some(node)
+            } else if let Some(anchor) = chain_anchor {
+                let heads: Vec<&Node> = nodes.iter().filter(|n| n.prev == anchor).collect();
+                if heads.len() == 1 {
+                    Some(heads[0])
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             let mut visited: HashSet<&str> = HashSet::new();
             let mut current = start;
             while let Some(node) = current {

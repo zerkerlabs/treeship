@@ -75,6 +75,12 @@ pub enum KeyError {
         path: PathBuf,
         mode: u32,
     },
+    /// The key's grace window has closed. It still verifies receipts it
+    /// signed while it was valid; it must not sign new ones.
+    Expired {
+        id: KeyId,
+        valid_until: String,
+    },
 }
 
 impl std::fmt::Display for KeyError {
@@ -93,6 +99,10 @@ impl std::fmt::Display for KeyError {
                  Set TREESHIP_ALLOW_INSECURE_KEY_PERMS=1 to bypass.",
                 path.display(),
                 mode & 0o777,
+            ),
+            Self::Expired { id, valid_until } => write!(
+                f,
+                "key {id} expired at {valid_until}; it can still verify old receipts, but it cannot sign. Run `treeship keys rotate` and sign with the successor.",
             ),
         }
     }
@@ -606,6 +616,18 @@ impl Store {
     /// matches the pattern in `session/event_log.rs::open_lock_file`.
     pub fn signer(&self, id: &str) -> Result<Box<dyn Signer>, KeyError> {
         let entry = self.read_entry_with_perm_check(id)?;
+        // `valid_until` is stamped at rotation. After that instant the
+        // predecessor still verifies what it already signed; signing with
+        // it would extend a key the operator retired.
+        if let Some(until) = &entry.valid_until {
+            let now = crate::statements::unix_to_rfc3339(unix_now());
+            if until.as_str() <= now.as_str() {
+                return Err(KeyError::Expired {
+                    id: entry.id.clone(),
+                    valid_until: until.clone(),
+                });
+            }
+        }
 
         // Dispatcher: v2 ciphertexts start with magic 0x54, version 0x02
         // and use real AES-256-GCM. Older entries fall through to the
@@ -3064,6 +3086,23 @@ mod tests {
         );
         assert_eq!(valid_after[0].id, result.successor.id);
 
+        cleanup(dir);
+    }
+
+    #[test]
+    fn signer_refuses_a_key_past_its_grace_window() {
+        let (store, dir) = make_store();
+        let original = store.generate(true).unwrap();
+        let result = store.rotate(None, std::time::Duration::ZERO, true).unwrap();
+        let err = match store.signer(&original.id) {
+            Err(e) => e,
+            Ok(_) => panic!("expired key must not sign"),
+        };
+        match err {
+            KeyError::Expired { id, .. } => assert_eq!(id, original.id),
+            other => panic!("expected Expired, got {other:?}"),
+        }
+        store.signer(&result.successor.id).expect("successor signs");
         cleanup(dir);
     }
 

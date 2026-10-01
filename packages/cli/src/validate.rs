@@ -109,7 +109,7 @@ pub fn rfc3339(flag: &str, s: &str) -> Result<String, Box<dyn std::error::Error>
 }
 
 /// `YYYY-MM-DDTHH:MM:SS[.fff][Z|±HH:MM]` to unix seconds (UTC).
-fn parse_rfc3339(s: &str) -> Option<u64> {
+pub(crate) fn parse_rfc3339(s: &str) -> Option<u64> {
     let s = s.trim();
     let (date, rest) = s.split_once(['T', 't', ' '])?;
     let (y, m, d) = parse_date(date)?;

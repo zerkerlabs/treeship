@@ -114,6 +114,98 @@ claims:
     proof: docs/feature-inventory.yml
     not: ["anchored", "witnessed"]
 
+  - id: checkpoint-timestamp-is-claimed
+    status: shipped
+    says: >
+      A Merkle checkpoint's `signed_at` is the publisher's own claim, not
+      an independently recorded time: `GET /v1/merkle/checkpoint/latest`
+      computes `age_seconds` from the checkpoint's own `signed_at` against
+      the current time, because the hub stores and serves the checkpoint
+      verbatim and keeps no separate received-at time to check it against.
+      "This artifact is in the checkpoint's tree" (a real, Merkle-provable
+      membership claim) and "the checkpoint was published at time T" (an
+      unwitnessed assertion by whoever holds the signing key) are two
+      different claims, and only the first is independently checkable from
+      a bare checkpoint. The part that is independently timestamped is
+      per-artifact Rekor anchoring, which covers specific pushed artifacts,
+      not a checkpoint's root or tree as a whole.
+    proof: packages/hub/internal/merkle/handlers.go
+    not: ["anchored", "witnessed"]
+    notes: >
+      Same underlying fact as checkpoint-not-witnessed (a checkpoint is
+      self-signed, nothing countersigns it); registered as its own entry
+      because the final 0.31.12 external docs re-test (D11) found two
+      pages independently overclaiming a general "checkpoints prevent
+      backdating" guarantee that doesn't hold without per-artifact Rekor
+      anchoring, which is coverage-dependent and doesn't anchor the root.
+
+  - id: use-action-binding
+    status: shipped
+    says: >
+      Consuming an approval grant reserves an Approval Use record before
+      the action is signed, then signs the action, then backfills the
+      use record's `action_artifact_id` with the signed action's id as a
+      sidecar write that does not change the use record's own
+      digest-stable bytes. A verifier given a specific action matches it
+      to the use record naming it. A use record with no name on it --
+      the backfill never completed (a crash between signing and the
+      backfill write), or it predates this field -- falls back to
+      matching the grant's most recent use instead of the action's own
+      identity, which is a weaker claim: recency is not the same thing
+      as "this specific action consumed this specific use."
+    proof: packages/core/src/journal/mod.rs
+    not: []
+    notes: >
+      find_use_for_action's own comment documents the fallback
+      ("Records without an action id ... fall back to the most recent
+      match, as before") and the bug it exists to avoid re-introducing
+      (a second journal directory's unrelated `use 1/1` vouching for an
+      action it never recorded). Final 0.31.12 external docs re-test
+      (D12) found approval-authority.mdx describing the backfill step
+      without noting it can be absent or what happens when it is.
+
+  - id: identity-verification-not-implemented
+    status: designed
+    says: >
+      Domain-ownership, voice-fingerprint and tool-manifest verification
+      for published agent identities (a DNS TXT challenge, a style
+      fingerprint, a manifest probe, each served from hub routes like
+      `/identity/{slug}/verify-domain`) are not implemented: the hub has
+      no `/v1/identity*` routes or equivalent at all. A bare agent
+      certificate proves an Ed25519 signature; stronger third-party
+      verification signals beyond that are a documented design
+      direction, not a shipped feature.
+    proof: packages/hub/main.go
+    not: []
+    notes: >
+      Final 0.31.12 external docs re-test (D1) found
+      concepts/agent-identity.mdx describing this as a working "Trust
+      amplifiers" feature set. Verified by grep: no route in
+      packages/hub/main.go matches identity, verify-domain, verify-voice,
+      verify-tools or voice-fingerprint.
+
+  - id: hook-cannot-block
+    status: shipped
+    says: >
+      The installed shell hooks (`treeship install`'s zsh `preexec`,
+      bash `DEBUG` trap, fish `fish_preexec`) call `treeship hook pre`
+      before a matched command runs, but none of the three act on its
+      exit code to stop that command -- zsh preexec and fish
+      `fish_preexec` are informational hooks with no cancel mechanism,
+      and the bash snippet doesn't enable `extdebug`, the one bash
+      mechanism that lets a DEBUG trap's exit status skip the next
+      command. `hook pre` exiting 1 on an unapproved `require_approval`
+      match is a signal written to a pending-state file for the local
+      approval workflow and `hook post`, not an enforcement point: the
+      hook records what it saw, it does not gate what runs.
+    proof: packages/cli/src/commands/install.rs
+    not: []
+    notes: >
+      Final 0.31.12 external docs re-test (D3) found cli/hook.mdx
+      saying exit 1 is "surfaced as a blocked command" by "most shells",
+      without noting that none of the three installed hook mechanisms
+      act on that exit code to prevent the command from running.
+
   - id: zk-groth16-quarantined
     status: retired
     says: >
@@ -163,6 +255,33 @@ claims:
       and pass the Merkle check." N-30 (final 0.31.11 re-test) found
       the unscoped claim, unqualified, in api/overview.mdx, api/verify.mdx,
       api/receipt-get.mdx, concepts/trust-model.mdx and AGENTS.md.
+
+  - id: replay-posture-rows
+    status: shipped
+    says: >
+      `package verify` reports replay protection for a consumed approval
+      grant as one of three rows, in increasing scope:
+      `replay-package-local` (duplicate uses inside this one package),
+      `replay-local-journal` (the producer machine's own append-only
+      Approval Use Journal, not present in a package verified elsewhere),
+      and `replay-hub-org` (an embedded, self-signed hub-org checkpoint
+      naming this grant's uses, when one happens to be in the package).
+      The third row's name names a trust *kind* the client can verify a
+      checkpoint against, not a Hub *service*: nothing in the Hub mints,
+      serves or enforces hub-org checkpoints today, so a package with no
+      embedded one reports `hub-org not checked`, not a failure -- there
+      is no live, central replay enforcement to report on.
+    proof: packages/core/src/session/package.rs
+    not: []
+    notes: >
+      Real row names confirmed by grep (`replay-package-local`,
+      `replay-local-journal`, `replay-hub-org`); no hub-org route exists
+      in packages/hub/main.go or packages/hub/internal/. Final 0.31.12
+      external docs re-test (D2) found capabilities.mdx inventing a
+      fourth, non-existent posture name ("hub-verified") and
+      trust-model.mdx describing hub_org as "this hub's org-wide
+      single-use approval checkpoints" as though the Hub produces and
+      enforces them.
 
   - id: package-verify-binds-receipt
     status: shipped

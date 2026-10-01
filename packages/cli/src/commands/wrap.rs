@@ -55,6 +55,34 @@ pub fn run(
             .to_string()
     });
     let actor_uri = actor.unwrap_or_else(|| format!("ship://{}", ctx.config.ship_id));
+    // A halted actor's command is not started at all, not run and then
+    // refused a receipt.
+    crate::commands::halt::refuse_if_halted(&ctx, &actor_uri, "wrap")?;
+
+    // A project rule that requires approval applies to wrap the same way it
+    // applies to the shell hook. The command is not started until an
+    // approval for this exact command line has been recorded.
+    let command_line = args.join(" ");
+    if let Some(config_path) = crate::commands::hook::find_project_config() {
+        if let Ok(project) = treeship_core::rules::ProjectConfig::load(&config_path) {
+            if let Some(matched) = project.match_command(&command_line) {
+                if matched.require_approval
+                    && crate::commands::approve::check_approved(&command_line).is_none()
+                {
+                    let _ = crate::commands::approve::write_pending(
+                        &command_line,
+                        &matched.label,
+                        None,
+                    );
+                    return Err(format!(
+                        "approval required for: {command_line}\n\n  label: {}\n  treeship approve    to allow this action",
+                        matched.label
+                    )
+                    .into());
+                }
+            }
+        }
+    }
 
     // ── 2. Auto-chaining: resolve parent_id ────────────────────────────
     let parent_id = resolve_parent(&ctx, parent_id);

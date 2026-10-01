@@ -417,10 +417,11 @@ The session receipt now records:
 - The verification result for every vendor's prior session
 - The quotes returned by each trusted vendor (with full agent attribution)
 - The selection logic and the chosen vendor
-- A zero-knowledge proof that the spend ($87) was less than or equal to the cap ($500), without revealing either number on-chain
-- A proof that the spend was under the auto-approve threshold so no human approval was required, and a record of that fact
+- A record that the spend was under the auto-approve threshold so no human approval was required
 
 If an auditor ever asks "who authorized this $87 charge?" the answer is the receipt URL. Months later. Years later.
+
+> **Editor's note (2026-10-01).** An earlier version of this list included a zero-knowledge proof that the spend was under the cap without revealing either number on-chain. No such proof ships: Treeship's Circom/Groth16 path is quarantined (no real multi-party ceremony, `treeship prove`/`verify-proof` fail closed) and ships behind a non-default `zk` feature flag. Today the receipt records the amount in the clear, not behind a proof.
 
 ## Example 3: Cross-organization research with trust verification
 

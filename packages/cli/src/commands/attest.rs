@@ -61,6 +61,9 @@ pub(crate) fn resolve_actor_signer(
     if !pinned {
         return Ok(ctx.keys.default_signer()?);
     }
+    if crate::commands::capability::actor_signing_blocked(ctx, actor, &key_id)? {
+        return Err(format!("capability card for {actor} is revoked; refusing to sign").into());
+    }
     // Sign with the agent's own key; fall back to default if the entry is gone.
     Ok(ctx
         .keys
@@ -105,6 +108,9 @@ pub struct ActionArgs {
     /// new one. See attest::action() for the precise crash-recovery
     /// semantics.
     pub idempotency_key: Option<String>,
+    /// Sign an out-of-scope v2 action anyway, so the violation is on the
+    /// record. Without this flag the action is refused before it is signed.
+    pub record_violation: bool,
     pub meta: Option<String>,
     pub out: Option<String>,
     pub config: Option<String>,
@@ -164,6 +170,12 @@ pub fn action(
     if let Some(d) = args.output_digest.as_deref() {
         crate::validate::sha256_digest("--output-digest", d)?;
     }
+    // A halted actor gets nothing signed, and an approval nonce it names is
+    // not consumed: the check comes before both.
+    {
+        let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
+        crate::commands::halt::refuse_if_halted(&ctx, &args.actor, "attest action")?;
+    }
     // Inside an active session a receipt chains onto the session's head by
     // default. Before this, an action attested without --parent was sealed
     // as `unchained`, and since every documented quickstart omits --parent,
@@ -171,34 +183,27 @@ pub fn action(
     // on dishonest ones (audit follow-up, P3). `--no-parent` keeps the old
     // behaviour for a receipt that is deliberately not part of the chain.
     //
-    // The default is scoped to the session's actor. Another agent attesting
-    // in the same workspace does not become the session's chained step by
-    // omission (retest of 0.31.4, P3); it passes --parent to join the chain
-    // on purpose, or is sealed loose.
-    let mut foreign_actor_in_session = false;
+    // Whoever the actor is: the actor is signed into the statement, so the
+    // chain records who took each step. Filtering on it sealed an honest
+    // session's own receipts loose whenever `--actor` differed from the
+    // session's (a session started without `--actor`, a subagent), and
+    // strict verification then failed the session for it.
     if args.parent_id.is_none() && !args.no_parent {
-        if let Some(manifest) = crate::commands::session::load_session() {
-            if manifest.actor == args.actor {
-                let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
-                args.parent_id = crate::commands::session::session_chain_head(
-                    &ctx,
-                    manifest.root_artifact_id.as_deref(),
-                );
-            } else {
-                foreign_actor_in_session = true;
-            }
-        }
-    }
-    if foreign_actor_in_session {
-        printer.hint(&format!(
-            "{} is not this session's actor, so this receipt is sealed loose; pass --parent <id> to chain it on purpose",
-            args.actor
-        ));
+        let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
+        args.parent_id = session_default_parent(&ctx);
     }
     if args.v2 {
         return action_v2(args, printer);
     }
     action_v1(args, printer)
+}
+
+/// The parent an artifact signed inside an open session takes when the
+/// caller names none: the session's chain head, whoever signs. `None` with
+/// no open session.
+pub(crate) fn session_default_parent(ctx: &ctx::Ctx) -> Option<String> {
+    let manifest = crate::commands::session::load_session()?;
+    crate::commands::session::session_chain_head(ctx, manifest.root_artifact_id.as_deref())
 }
 
 fn validate_v2_flags(args: &ActionArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -466,9 +471,15 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
         .unwrap_or_else(|| "hub://local/revocations".into());
     let mandate = mandate_from_grant(&leaf, chain, &revocation_path);
 
-    // The receipt records the violation either way; the person signing it
-    // should not learn that from `verify` later.
     if !treeship_core::statements::action_v2::action_in_scope(&args.action, &leaf.scope) {
+        if !args.record_violation {
+            return Err(format!(
+                "action '{}' is outside the grant's scope ({}); refusing to sign.\n\n  Pass --record-violation to sign the receipt anyway, so verify can report AUTHORITY INVALID for it.",
+                args.action,
+                leaf.scope.join(", ")
+            )
+            .into());
+        }
         printer.warn(
             "this action is outside the grant's scope",
             &[
@@ -476,7 +487,18 @@ fn action_v2(args: ActionArgs, printer: &Printer) -> Result<String, Box<dyn std:
                 ("scope", &leaf.scope.join(", ")),
             ],
         );
-        printer.hint("the receipt will be signed as it is; `treeship verify` will report AUTHORITY INVALID for it");
+        printer.hint("`treeship verify` will report AUTHORITY INVALID for this receipt");
+    }
+    {
+        use treeship_core::statements::{RevocationSource, RevocationStatus};
+        let source = crate::commands::revocation_source::for_ctx(&ctx);
+        if let RevocationStatus::RevokedAt(at) = source.status(&leaf.grant_id, &revocation_path) {
+            return Err(format!(
+                "grant {} was revoked at {at}; refusing to sign",
+                leaf.grant_id
+            )
+            .into());
+        }
     }
 
     let mut stmt = ActionStatementV2::new(&args.actor, &args.action, mandate);
@@ -937,6 +959,9 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
     if let Some(id) = &args.subject_id {
         stmt.subject.artifact_id = Some(id.clone());
     }
+    // Inside an open session the approval is a step of the session chain,
+    // like any other receipt; signed, so the edge cannot be moved later.
+    stmt.parent_id = session_default_parent(&ctx);
 
     let signer = ctx.keys.default_signer()?;
     let pt = payload_type("approval");
@@ -948,7 +973,7 @@ pub fn approval(args: ApprovalArgs, printer: &Printer) -> Result<(), Box<dyn std
         payload_type: pt,
         key_id: signer.key_id().to_string(),
         signed_at: stmt.timestamp.clone(),
-        parent_id: None,
+        parent_id: stmt.parent_id.clone(),
         envelope: result.envelope,
         hub_url: None,
         anchors: Vec::new(),
@@ -1149,11 +1174,18 @@ pub struct HandoffArgs {
 
 pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
+    crate::commands::halt::refuse_if_halted(&ctx, &args.from, "attest handoff")?;
     // A handoff of artifacts nobody has is signed garbage; verify used to
     // find out later ("not found") with no hint that the input was wrong.
     crate::validate::artifacts_exist(&ctx.storage, &args.artifacts)?;
 
     let mut stmt = HandoffStatement::new(&args.from, &args.to, args.artifacts.clone());
+    // Inside an open session the handoff chains onto the session head. The
+    // artifacts it transfers are named in `artifacts`; chaining onto the
+    // first of them forked the chain and left the session's later steps
+    // unchained. Outside a session there is no head, and the storage edge
+    // stays `artifacts[0]`, as before.
+    stmt.parent_id = session_default_parent(&ctx);
     stmt.approval_ids = args.approvals.clone();
     stmt.obligations = args.obligations.clone();
 
@@ -1246,7 +1278,10 @@ pub fn handoff(args: HandoffArgs, printer: &Printer) -> Result<(), Box<dyn std::
         payload_type: pt,
         key_id: signer.key_id().to_string(),
         signed_at: stmt.timestamp.clone(),
-        parent_id: args.artifacts.first().cloned(),
+        parent_id: stmt
+            .parent_id
+            .clone()
+            .or_else(|| args.artifacts.first().cloned()),
         envelope: result.envelope,
         hub_url: None,
         anchors: Vec::new(),
@@ -1311,28 +1346,18 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
     let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
 
     // Chain rule, the same one `attest action` follows (audit follow-up P3):
-    // inside an active session a receipt minted by the session's own actor
-    // chains onto the session's head by default, so it is sealed as a
-    // linked step and `chain_completeness` holds. Before this, every
-    // `attest receipt` inside a session was sealed loose, and an evaluator's
-    // grade minted in its own grading session failed strict verification on
-    // a stranger's machine. `--parent` chains on purpose; `--no-parent`
-    // keeps a receipt off the chain; a receipt whose --system is not the
-    // session's actor is sealed loose with a hint. Outside a session the
-    // parent is the subject when the subject is an artifact.
+    // inside an active session a receipt chains onto the session's head by
+    // default, whatever `--system` it names, so it is sealed as a linked
+    // step and `chain_completeness` holds. The system is signed into the
+    // statement, so the chain still records who issued each receipt.
+    // `--parent` chains onto a chosen artifact; `--no-parent` keeps a
+    // receipt off the chain; `--chain` is accepted and is now the default.
+    // Outside a session the parent is the subject when the subject is an
+    // artifact.
+    let _ = args.chain;
     let mut parent_id = args.parent_id.clone();
-    let mut foreign_system_in_session = false;
     if parent_id.is_none() && !args.no_parent {
-        if let Some(manifest) = crate::commands::session::load_session() {
-            if manifest.actor == args.system || args.chain {
-                parent_id = crate::commands::session::session_chain_head(
-                    &ctx,
-                    manifest.root_artifact_id.as_deref(),
-                );
-            } else {
-                foreign_system_in_session = true;
-            }
-        }
+        parent_id = session_default_parent(&ctx);
     }
     if parent_id.is_none() && !args.no_parent {
         // A subject is a chain parent only when it is a Treeship artifact.
@@ -1437,12 +1462,6 @@ pub fn receipt(args: ReceiptArgs, printer: &Printer) -> Result<(), Box<dyn std::
     })?;
     write_last(&ctx.config.storage_dir, &result.artifact_id);
 
-    if foreign_system_in_session {
-        printer.hint(&format!(
-            "{} is not this session's actor, so this receipt is sealed loose; pass --parent <id> to chain it on purpose",
-            args.system
-        ));
-    }
     printer.success(
         "receipt attested",
         &[
@@ -1875,6 +1894,7 @@ pub fn decision(args: DecisionArgs, printer: &Printer) -> Result<(), Box<dyn std
         crate::validate::sha256_digest("--prompt-digest", d)?;
     }
     let ctx = crate::commands::session::open_ctx(args.config.as_deref())?;
+    crate::commands::halt::refuse_if_halted(&ctx, &args.actor, "attest decision")?;
     // The deciding agent signs; use its own key when registered.
     let signer = resolve_actor_signer(&ctx, &args.actor)?;
 
@@ -2248,6 +2268,16 @@ fn consume_approval(
     )
 }
 
+fn action_subject_key(action: &ActionStatement) -> String {
+    action
+        .subject
+        .uri
+        .clone()
+        .or_else(|| action.subject.artifact_id.clone())
+        .or_else(|| action.subject.digest.clone())
+        .unwrap_or_default()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn reserve_in_journal(
     ctx: &ctx::Ctx,
@@ -2270,10 +2300,13 @@ fn reserve_in_journal(
     // network or crashed CLI can retry safely.
     if let Some(key) = idempotency_key {
         let existing = journal::list_uses_for_grant(&j, grant_id)?;
-        if let Some(prior) = existing
-            .iter()
-            .find(|u| u.idempotency_key.as_deref() == Some(key))
-        {
+        let subject = action_subject_key(action);
+        if let Some(prior) = existing.iter().find(|u| {
+            u.idempotency_key.as_deref() == Some(key)
+                && u.actor == action.actor
+                && u.action == action.action
+                && u.subject == subject
+        }) {
             printer.dim_info(&format!(
                 "  idempotency: reusing existing use_id {}",
                 prior.use_id,
@@ -2324,13 +2357,7 @@ fn reserve_in_journal(
         nonce_digest,
         actor: action.actor.clone(),
         action: action.action.clone(),
-        subject: action
-            .subject
-            .uri
-            .clone()
-            .or_else(|| action.subject.artifact_id.clone())
-            .or_else(|| action.subject.digest.clone())
-            .unwrap_or_default(),
+        subject: action_subject_key(action),
         session_id: None,         // PR 5 wires this from active session
         action_artifact_id: None, // backfilled after signing
         receipt_digest: None,
@@ -2392,9 +2419,14 @@ fn backfill_action_artifact_id(
 }
 
 /// Write the artifact_id to {storage_dir}/.last for auto-chaining.
+///
+/// Every attest path calls this right after its record is written, which is
+/// the end of the "read head -> sign -> write" section, so it also releases
+/// the workspace chain lock if `session_chain_head` took it.
 fn write_last(storage_dir: &str, artifact_id: &str) {
     let last_path = std::path::Path::new(storage_dir).join(".last");
     let _ = crate::safe_fs::write_under_treeship(&last_path, artifact_id.as_bytes(), 0o600);
+    crate::commands::session::release_chain_lock();
 }
 
 #[cfg(test)]

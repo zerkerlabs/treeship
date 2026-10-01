@@ -262,7 +262,7 @@ Beyond "who did what": who is *allowed* to, single-use permission grants, delega
 ### Scoped approvals with replay protection
 `Since 0.9.6`–`0.9.9`
 
-**What:** `attest approval` mints a signed permission grant scoped to a specific actor, action, and subject, with a `--max-uses` limit. `attest action` consumes a grant *before* signing, via a local **Approval Use Journal** that is append-only, so a grant with `--max-uses 1` cannot be replayed even across separate runs. `verify` reports the replay posture: package-local, journal-local, or hub-verified.
+**What:** `attest approval` mints a signed permission grant scoped to a specific actor, action, and subject, with a `--max-uses` limit. `attest action` consumes a grant *before* signing, via a local **Approval Use Journal** that is append-only, so a grant with `--max-uses 1` cannot be replayed even across separate runs. `verify` reports the replay posture it actually checked: package-local, or the producer's local Approval Use Journal when that journal is present. There is no hub-verified replay ledger.
 
 **Use:**
 ```bash

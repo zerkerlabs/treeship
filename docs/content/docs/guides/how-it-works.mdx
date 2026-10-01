@@ -228,11 +228,22 @@ Checkpoints are created **by the publisher, not by Hub** — the Hub holds no Me
 
 ### Inclusion proofs
 
-Given an artifact and a checkpoint, anyone can verify that the artifact was included in the checkpoint's Merkle tree. This proves the artifact existed at the time the checkpoint was created, even if Hub later tries to deny it.
+Given an artifact and a checkpoint, anyone can verify that the artifact was included in the checkpoint's Merkle tree, even if Hub later tries to deny storing it -- the Hub cannot serve an inclusion proof for an artifact that was never in the tree the publisher signed.
 
-### Anti-backdating
+### What a checkpoint's time does and doesn't prove
 
-Because checkpoints are published at known intervals, you can prove that an artifact existed *before* a certain time. If your artifact appears in checkpoint N, and checkpoint N was published at time T, then the artifact must have been pushed before T. This prevents anyone (including Hub) from inserting artifacts after the fact and claiming they were always there.
+{/* claims:checkpoint-not-witnessed */}
+A checkpoint carries a `signed_at` the publisher chose and signed -- it isn't
+independently timestamped by the Hub (the Hub stores and serves the
+checkpoint verbatim and doesn't record its own received-at time to check
+`signed_at` against), and isn't published on any enforced schedule. A
+checkpoint alone shows what its signer claims, not independently when it was
+published.
+
+The part of this that is independently timestamped is per-artifact Rekor
+anchoring (`package verify`'s `anchoring` row, `verify --max-unwitnessed`): an anchored artifact's existence-by-then is attested by Sigstore's public log, not just by the publisher. {/* claims:rekor-artifact-anchoring */}
+That only covers the specific artifacts
+pushed with anchoring enabled, not a checkpoint's root or tree as a whole -- anchoring the root itself is a documented design direction, not something that ships today. {/* claims:checkpoint-root-anchoring */}
 
 ### How it works in practice
 
