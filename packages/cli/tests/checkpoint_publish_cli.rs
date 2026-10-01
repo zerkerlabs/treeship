@@ -126,9 +126,7 @@ impl Ship {
             .map(|d| {
                 d.flatten()
                     .filter(|e| {
-                        e.path()
-                            .extension()
-                            .is_some_and(|ext| ext == "json")
+                        e.path().extension().is_some_and(|ext| ext == "json")
                             && e.file_name() != "latest.json"
                     })
                     .count()
