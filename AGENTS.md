@@ -54,8 +54,8 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 | Python SDK | `packages/sdk-python/` | treeship-sdk, parity-tested vs TS via cross-SDK suite |
 | Cross-SDK contract suite | `tests/cross-sdk/` | runs in CI matrix (Ubuntu+macOS, Node 20/22, Python 3.11/3.12) |
 | MCP bridge | `bridges/mcp/` | @treeship/mcp |
-| Fumadocs site | `docs/` | 62 pages + 18 blog posts |
-| Website | (separate repo) | 8 pages |
+| Fumadocs site | `docs/` | 149 pages + 55 blog posts |
+| Website | separate repo (`treeship.dev`) | marketing site, not this checkout |
 
 ### What is NOT built yet
 

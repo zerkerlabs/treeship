@@ -18,7 +18,7 @@ This package downloads the prebuilt Treeship CLI binary for your platform. No Ru
 | --- | --- |
 | macOS arm64 / x64 | Supported |
 | Linux x86_64 (any distro, glibc or musl) | Supported as of v0.10.1. Single static binary covers Ubuntu, Debian, Fedora, RHEL/Rocky, Amazon Linux, Alpine. |
-| Linux ARM64 | Not yet shipped. |
+| Linux ARM64 | Supported. `@treeship/cli-linux-arm64` is a published platform package. |
 | Windows | Not supported natively. Use WSL. |
 
 The `preinstall` script exits with a clear message on Windows rather than yielding a broken install. The Linux build is statically linked against musl (verified at release time), so there is no GLIBC requirement; if you see `GLIBC_2.39 not found`, you have a pre-0.10.1 install — `npm install -g treeship@latest` to upgrade.
