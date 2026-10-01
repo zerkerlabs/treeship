@@ -96,7 +96,7 @@ Loads the certificate from `researcher.agent/certificate.json`, checks that the 
 Trust pinning is mandatory and fail-closed: if the issuer key is not in your trust store, verification fails — with `no trust roots configured for agent certificates` when the store has nothing for kind `agent_cert`, or `untrusted issuer` when it has other keys. Pin an issuer first:
 
 ```bash
-treeship trust add <key_id> <pubkey> --kind agent_cert
+treeship trust add <key_id> <pubkey> --kind agent_cert --agent <agent-uri>
 ```
 
 The issuer gets you those two values by running `treeship keys export` on their

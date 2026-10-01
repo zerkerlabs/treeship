@@ -29,6 +29,10 @@ setup_workspace() {
   # each other's state. CONFIG points the CLI at this isolated tree.
   WORKSPACE="$(mktemp -d -t treeship-acceptance.XXXXXX)"
   export CONFIG="${WORKSPACE}/.treeship/config.json"
+  # HOME too: the CLI keeps per-install state (host_id) under ~/.treeship,
+  # and a test must never write the developer's real one.
+  export HOME="${WORKSPACE}"
+  export TREESHIP_CONFIG="${CONFIG}"
   cd "${WORKSPACE}"
   "${CLI}" init --config "${CONFIG}" --name "acceptance-test" >/dev/null
 }

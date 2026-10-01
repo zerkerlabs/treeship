@@ -53,7 +53,7 @@ Every envelope must verify against a pinned trust root, or the import is refused
 ```
 ✗ envelope 2 is signed by key_agent_9c1e…, which is not a pinned trust root on this machine.
   Ask the producer for the line `treeship keys export` prints for that key and run it here:
-    treeship trust add key_agent_9c1e… ed25519:<their public key> --kind agent_cert --yes
+    treeship trust add key_agent_9c1e… ed25519:<their public key> --kind agent_cert --agent agent://<their agent> --yes
 ```
 
 An agent-signed envelope needs the agent's own key pinned under `agent_cert`; a ship-signed one needs the ship's key under `cert_issuer`.
