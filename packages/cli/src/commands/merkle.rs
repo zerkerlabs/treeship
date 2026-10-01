@@ -767,13 +767,10 @@ pub fn verify(
 
     if all_valid {
         let root_short = short_hash(&proof_file.checkpoint.root);
-        // No external anchor for a checkpoint root is checked here, so the
-        // time below is the signer's own claim (see `time_statement`).
-        let anchor: Option<&str> = None;
         printer.success(
             "inclusion verified  (offline)",
             &[
-                ("anchor", anchor.unwrap_or("none")),
+                ("anchor", "none"),
                 ("artifact", &proof_file.artifact_id),
                 (
                     "position",
@@ -854,7 +851,7 @@ pub fn verify(
             printer.green("ok")
         ));
         printer.blank();
-        for line in time_statement(&proof_file.checkpoint, anchor) {
+        for line in time_statement(&proof_file.checkpoint, None) {
             printer.info(&line);
         }
     } else if let (Some(public_key), true, true) = (&unpinned_key, proof_valid, root_matches) {

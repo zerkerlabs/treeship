@@ -225,7 +225,7 @@ fn unbacked_finalized_claim_is_downgraded_in_the_json_surface() {
 }
 
 #[test]
-fn readback_backed_finalized_claim_survives_end_to_end() {
+fn readback_alone_does_not_keep_a_finalized_claim() {
     let ws = Workspace::new();
     let mut stmt = action(vec!["payments.charge"], "payments.charge");
     stmt.effect = Some(Effect {
@@ -238,9 +238,10 @@ fn readback_backed_finalized_claim_survives_end_to_end() {
 
     let j = ws.verify_json(&id);
     let effect = &j["checks"][0]["effect"];
-    assert_eq!(effect["effective_finality"], "finalized", "{j}");
-    assert_eq!(effect["effective_confidence"], "verified", "{j}");
-    assert_eq!(effect["finality_downgraded"], false, "{j}");
+    assert_eq!(effect["effective_finality"], "indeterminate", "{j}");
+    assert_eq!(effect["effective_confidence"], "not-verified", "{j}");
+    assert_eq!(effect["finality_downgraded"], true, "{j}");
+    assert_eq!(effect["downgraded"], true, "{j}");
 }
 
 #[test]

@@ -35,10 +35,10 @@ fn session_path() -> Option<PathBuf> {
     loop {
         let candidate = dir.join(".treeship").join("session.json");
         let config_json = dir.join(".treeship").join("config.json");
-        if candidate.exists() || dir.join(".treeship").is_dir() {
-            if project_config_trusted(&config_json) {
-                return Some(candidate);
-            }
+        if (candidate.exists() || dir.join(".treeship").is_dir())
+            && project_config_trusted(&config_json)
+        {
+            return Some(candidate);
         }
         // A repo boundary ends the walk. A `.treeship` above the checkout
         // belongs to a different project.
