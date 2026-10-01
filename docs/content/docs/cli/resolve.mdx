@@ -56,6 +56,8 @@ The Hub serves raw signed envelopes ([`GET /v1/agents`](/docs/api/agents)); your
 Local: `{ verdict, ok, agent, key, key_provenance, current_card, declared_tools, capabilities, capability_mix, captured_actions, in_scope, out_of_scope, revocation }`.
 Network adds: `{ hub, signature, key_bound, via_chain, chain_cert, transparency }`.
 
+When a card is not key-bound, `key_bound_reason` says why: `pin_unscoped` (the key is pinned as `agent_cert` with no `--agent`; re-pin with the command `resolve` prints), `pin_scoped_to_other` (the key is pinned for a different agent), `not_pinned`, or `key_not_verified` (no signature from the card's own key verified). It is `null` when the card is key-bound.
+
 ## Exit codes
 
 | Code | Meaning |

@@ -40,7 +40,7 @@ treeship onboard deployer --from-harness ~/.claude/settings.json --publish
 
     # narrower alternative — trust ONLY this agent. Needs a fresh pin per
     # agent and breaks on rotation:
-    treeship trust add key_… ed25519:… --kind agent_cert --yes
+    treeship trust add key_… ed25519:… --kind agent_cert --agent agent://<name> --yes
 ✓ agent onboarded
     treeship resolve --hub https://api.treeship.dev agent://deployer
 ```

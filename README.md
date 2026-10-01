@@ -96,7 +96,7 @@ treeship onboard deployer --tools 'deploy.*,git.push'
 
     # narrower alternative — trust ONLY agent://deployer, not everything this
     # ship certifies. Needs a fresh pin per agent and breaks on rotation:
-    treeship trust add key_97fe3be93ca7e2b7 ed25519:K8V6D33O1k2LsQY5y9i2WTigc2CoYvIwdT_-yGgDbPQ --kind agent_cert --yes
+    treeship trust add key_97fe3be93ca7e2b7 ed25519:K8V6D33O1k2LsQY5y9i2WTigc2CoYvIwdT_-yGgDbPQ --kind agent_cert --agent agent://deployer --yes
 ```
 
 From then on, that agent's actions verify as **proven**, not asserted:
