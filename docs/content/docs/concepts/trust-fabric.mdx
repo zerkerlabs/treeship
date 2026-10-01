@@ -15,7 +15,7 @@ Treeship's trust fabric has two public artifacts. They bind into a single verifi
 
 | | Identity layer | Activity layer |
 |---|---|---|
-| **URL** | `treeship.dev/agent/<slug>` | `treeship.dev/receipt/<id>` |
+| **URL** | `treeship resolve <agent>`. There is no general hosted agent page; `treeship.dev/agent/<slug>` is one hard-coded demo | `treeship.dev/receipt/<id>` shows a structural check of a fetched receipt, not a full signature verdict |
 | **Answers** | Who this agent represents and what it's allowed to do | What this agent actually did |
 | **Built from** | `treeship agent register` (CLI) → signed `.agent` package | Session events from hooks + MCP + git, sealed in a Merkle tree |
 | **Signed under** | The ship's ed25519 key | The same key, plus per-artifact ed25519 signatures inside the session |

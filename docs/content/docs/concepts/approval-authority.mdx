@@ -65,9 +65,20 @@ Each layer answers exactly one question, and the report format makes it impossib
    j. stamp approval_use_id into action.meta
 ```
 
+{/* claims:use-action-binding */}
+Step (i) names the action a use record belongs to, by writing its id onto
+the already-reserved record. A verifier that is given a specific action and
+asks "which use consumed it" matches on that name. A record with no name on
+it (the backfill never completed, or it predates this field) falls back to
+matching the grant's most recent use instead of the action's own identity --
+weaker than the named case, since recency isn't the same claim as "this
+specific action."
+
 ## Crash semantics
 
 If the process dies between **g.** (reserve) and **h.** (sign), the use is on disk. A retry **without** an idempotency key — or with a different one — sees the use as already-consumed and refuses if `max_uses` would be exceeded. A retry with the **same** `--idempotency-key` collapses to that record and signs a fresh action against it.
+
+If the process dies between **h.** (sign) and **i.** (backfill), the action is validly signed but its use record's `action_artifact_id` never gets written -- the unnamed-record case above.
 
 This is the **reserved-counts-as-consumed** rule: the trust property is "nobody can sign two actions against a single-use grant by racing," and we get that property by writing the use first. The retry primitive (idempotency key) gives crash-safety without weakening the trust property.
 

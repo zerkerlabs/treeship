@@ -58,10 +58,10 @@ pub use session_participant::{
 // `Unverified` rather than a false `Pass` for any layer it cannot check.
 pub mod action_v2;
 pub use action_v2::{
-    action_in_scope, check_resolution, payload_type_v2, resolve_grant_chain, verify_effect,
-    verify_grant_chain, verify_mandate, ActionStatementV2, ChainResolveError, Cost, DeadlineEvent,
-    Effect, EffectConfidence, EffectFinality, EffectVerdict, Grant, GrantChainError, Mandate,
-    MandateVerdict, NoRevocationSource, NoWitnessAuthority, Resolution, ResolutionStatus,
+    action_in_scope, check_resolution, grant_links_to_parent, payload_type_v2, resolve_grant_chain,
+    verify_effect, verify_grant_chain, verify_mandate, ActionStatementV2, ChainResolveError, Cost,
+    DeadlineEvent, Effect, EffectConfidence, EffectFinality, EffectVerdict, Grant, GrantChainError,
+    Mandate, MandateVerdict, NoRevocationSource, NoWitnessAuthority, Resolution, ResolutionStatus,
     Revocation, RevocationSource, RevocationStatus, RuntimeIdentity, Witness, WitnessAuthority,
     TYPE_ACTION_V2,
 };
@@ -294,6 +294,13 @@ pub struct ApprovalStatement {
     #[serde(default, skip_serializing_if = "is_empty_subject")]
     pub subject: SubjectRef,
 
+    /// The session chain step this approval follows, when it was signed
+    /// inside an open session. Absent outside a session and on every
+    /// approval minted before approvals chained; absent is omitted from the
+    /// signed bytes, so those approvals verify unchanged.
+    #[serde(rename = "parentId", default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
@@ -373,6 +380,14 @@ pub struct HandoffStatement {
     pub from: String,
     /// Destination actor URI
     pub to: String,
+
+    /// The session chain step this handoff follows, when it was signed
+    /// inside an open session. The transferred artifacts stay in
+    /// `artifacts`; chaining onto the first of them instead forked the
+    /// session chain. Absent outside a session and on older handoffs, whose
+    /// edge is still `artifacts[0]` (see `verify::signed_parent`).
+    #[serde(rename = "parentId", default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 
     /// IDs of artifacts being transferred
     pub artifacts: Vec<String>,
@@ -797,6 +812,7 @@ impl ApprovalStatement {
             timestamp: now_rfc3339(),
             approver: approver.into(),
             subject: SubjectRef::default(),
+            parent_id: None,
             description: None,
             expires_at: None,
             delegatable: false,
@@ -817,6 +833,7 @@ impl HandoffStatement {
             timestamp: now_rfc3339(),
             from: from.into(),
             to: to.into(),
+            parent_id: None,
             artifacts,
             approval_ids: vec![],
             obligations: vec![],

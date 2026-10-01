@@ -97,6 +97,10 @@
       "description": "Tool names actually invoked during the session, computed from captured events (never hand-written). Feeds capability cards' `exercised` grade.",
       "type": "array"
     },
+    "approval_chain_anchor": {
+      "description": "record_digest of the journal record immediately before this session's approval uses. Signed so a later session continues the chain without embedding earlier history. Absent when the uses in this session start at genesis, or the session consumed no approval.",
+      "type": "string"
+    },
     "receipt_digest": {
       "description": "Digest of the sealed session receipt (receipt.json) this record summarizes; binds the record to its evidence.",
       "type": "string"

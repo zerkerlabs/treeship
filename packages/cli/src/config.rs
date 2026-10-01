@@ -584,7 +584,7 @@ fn resolve_store_paths(cfg: &mut Config, config_path: &Path) {
 /// relative paths are joined against the *directory* containing the
 /// referring config so `{"extends": "../base.json"}` works the way an
 /// editor user expects.
-fn resolve_extends(referrer: &Path, extends: &str) -> PathBuf {
+pub(crate) fn resolve_extends(referrer: &Path, extends: &str) -> PathBuf {
     let p = Path::new(extends);
     if p.is_absolute() {
         p.to_path_buf()
@@ -681,6 +681,16 @@ pub fn refuse_store_dirs_outside_project(
         if global.is_some() && cfg.extends_target == global {
             return Ok(());
         }
+        // A linked worktree extends the main checkout's config on purpose:
+        // one ship, one store, session state in the worktree. Only that
+        // exact file, and only when the operator owns it.
+        if let Some(target) = &cfg.extends_target {
+            if linked_worktree_main_config().ok().as_ref() == Some(target)
+                && owner_writable_only(target)
+            {
+                return Ok(());
+            }
+        }
     }
     for (field, dir) in [
         ("keys_dir", &cfg.keys_dir),
@@ -752,6 +762,80 @@ fn canonicalize_existing_prefix(path: &Path) -> Option<PathBuf> {
             return None;
         }
     }
+}
+
+/// The main checkout's `config.json` when the cwd is a linked git worktree
+/// and that file is a real ship config the current user owns.
+pub(crate) fn linked_worktree_main_config() -> Result<PathBuf, String> {
+    let common = git_rev_path(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .or_else(|| git_rev_path(&["rev-parse", "--git-common-dir"]))
+        .ok_or_else(|| "not inside a git checkout".to_string())?;
+    let git_dir = git_rev_path(&["rev-parse", "--path-format=absolute", "--git-dir"])
+        .or_else(|| git_rev_path(&["rev-parse", "--git-dir"]))
+        .ok_or_else(|| "not inside a git checkout".to_string())?;
+    if common == git_dir {
+        return Err("this directory is the main checkout, not a linked worktree".into());
+    }
+    let main = common
+        .parent()
+        .ok_or_else(|| "could not find the main checkout".to_string())?;
+    let cfg = main.join(".treeship").join("config.json");
+    if !owner_writable_only(&cfg) {
+        return Err(format!(
+            "the main checkout's config at {} is missing, or not a file you own that only you can write",
+            cfg.display()
+        ));
+    }
+    let raw = fs::read(&cfg).map_err(|e| e.to_string())?;
+    let val: serde_json::Value = serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
+    let ship = val.get("ship_id").and_then(|v| v.as_str()).unwrap_or("");
+    if ship.is_empty() {
+        return Err(format!("{} is not a Treeship ship config", cfg.display()));
+    }
+    fs::canonicalize(&cfg).map_err(|e| e.to_string())
+}
+
+fn git_rev_path(args: &[&str]) -> Option<PathBuf> {
+    let out = std::process::Command::new("git").args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(out.stdout).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(text);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    Some(fs::canonicalize(&path).unwrap_or(path))
+}
+
+fn owner_writable_only(path: &Path) -> bool {
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.mode() & 0o022 != 0 {
+            return false;
+        }
+        if let Some(home) = home::home_dir() {
+            if let Ok(home_meta) = fs::metadata(home) {
+                if meta.uid() != home_meta.uid() {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 /// The `extends` a project stub at `path` names, if it is one.

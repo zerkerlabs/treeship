@@ -77,7 +77,10 @@ impl Ship {
         std::fs::read_dir(self.home.path().join(".treeship/merkle/checkpoints"))
             .map(|d| {
                 d.flatten()
-                    .filter(|e| e.file_name() != "latest.json")
+                    .filter(|e| {
+                        e.path().extension().is_some_and(|ext| ext == "json")
+                            && e.file_name() != "latest.json"
+                    })
                     .count()
             })
             .unwrap_or(0)

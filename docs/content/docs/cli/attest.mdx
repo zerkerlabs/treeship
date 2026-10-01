@@ -25,7 +25,7 @@ treeship attest action \
 |--------|-------------|
 | `--actor <uri>` | Who performed the action (required) |
 | `--action <label>` | What action occurred (required) |
-| `--parent <id>` | Parent artifact ID for chain linking. Inside an active session, when `--actor` is the session's actor, the default is the session's chain head; another actor's receipt is sealed loose unless it passes `--parent` |
+| `--parent <id>` | Parent artifact ID for chain linking. Inside an active session the default is the session's chain head, whoever the actor is; `--no-parent` keeps the receipt off the chain |
 | `--no-parent` | Do not chain onto the session's head; the receipt is sealed at close as unchained |
 | `--approval-nonce <nonce>` | Nonce from an existing approval |
 | `--retry-of <id>` | This action retries the attempt with that artifact id. Signed into the statement, so a verifier can tell a recovery from a duplicate |
@@ -271,10 +271,10 @@ treeship attest receipt \
 | `--payload <json>` | Receipt payload as a JSON object |
 | `--payload-file <path>` | Read receipt payload JSON from a file |
 | `--payload-digest <digest>` | Digest of the external payload, for example `sha256:<hex>` |
-| `--parent <id>` | Parent artifact ID for chain linking. Inside an active session whose actor is this `--system`, the default is the session's chain head; otherwise the default is `--subject` when it is an artifact id |
+| `--parent <id>` | Parent artifact ID for chain linking. Inside an active session the default is the session's chain head, whoever `--system` names; otherwise the default is `--subject` when it is an artifact id |
 | `--no-parent` | Do not chain onto the session's head; the receipt is sealed at close as unchained |
-| `--chain` | Chain onto the active session's head even when `--system` is not the session's actor. For a trusted component recording inside the agent's session, such as the Claude Code gate's `blocked.v1` refusals |
+| `--chain` | Accepted for compatibility. Inside an active session a receipt already chains onto the session head, whoever `--system` names |
 
-A receipt minted inside a session by the session's own actor (`session start --actor system://evaluator` then `attest receipt --system system://evaluator`) is a linked step of that session, the same rule `attest action` follows. A receipt whose `--system` is another party is sealed loose with a hint, and joins the chain only with an explicit `--parent`.
+A receipt minted inside a session is a linked step of that session, whoever `--system` names. The system is signed into the statement. `--no-parent` keeps it off the chain. Outside a session the parent is `--subject` when that subject is an artifact id.
 </Tab>
 </Tabs>

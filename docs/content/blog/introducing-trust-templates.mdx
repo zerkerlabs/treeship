@@ -71,7 +71,7 @@ We're shipping 14 templates across three categories.
 
 **`legal-workflow`** — Contract review and attorney authorization chain. Proves document was reviewed by AI (document digest, not content), attorney approved, action taken in sequence.
 
-**`financial-agent`** — Payment workflow with authorization gates and ZK TLS on payment confirmations. The ZK proof is the one place where "the server actually returned this" needs to be provable independently of the agent.
+**`financial-agent`** — Payment workflow with authorization gates. Proving "the server actually returned this" independently of the agent needs a TLS notary step (`treeship zk-tls-setup` prints the setup for one); no template wires that in automatically today.
 
 **`data-pipeline`** — ETL and ML lineage. Input data digest → each transform step's output digest → final output. Proves what input produced what output through what sequence of transforms.
 
@@ -102,8 +102,8 @@ Output digest, file content digest, git state, environment fingerprint — pick 
 **Which moments need a human to authorize before proceeding?**
 Anything consequential. Deployments, payments, clinical decisions, publications.
 
-**Does any moment need ZK TLS?**
-Only if the verifier doesn't trust the agent, the server's exact response is legally significant, and the domain is a REST JSON API. Most workflows: no.
+**Does any moment need a TLS notary?**
+Only if the verifier doesn't trust the agent, the server's exact response is legally significant, and the domain is a REST JSON API. `treeship zk-tls-setup` prints the setup for running one yourself; it's a manual step today, not something a template wires in. Most workflows: no.
 
 Once you've answered those, the YAML writes itself.
 

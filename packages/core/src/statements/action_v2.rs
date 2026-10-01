@@ -429,18 +429,17 @@ pub fn check_resolution(effect: &Effect, now_unix: i64) -> ResolutionStatus {
 }
 
 impl Effect {
-    /// True when the effect carries a signal the actor could not have minted
-    /// itself (an external read-back). This is what lets a verifier honor a
-    /// `Verified` confidence claim; without it, `Verified` is downgraded.
+    /// True when this effect block itself carries evidence the actor could
+    /// not have minted.
     ///
-    /// Deliberately gated on `readback` alone, NOT on `witnesses`: a witness
-    /// only becomes evidence once verify confirms its signature against a
-    /// trusted non-actor key, which this pure-data check cannot do. Counting
-    /// an unverified witness here would let the actor inflate its own ceiling
-    /// with a fabricated observer -- exactly the "ok for the wrong reason" we
-    /// refuse.
+    /// A `readback` digest does not qualify: the actor supplies it, and a
+    /// digest of a state the actor never observed still parses. A witness
+    /// does not qualify here either. A witness is evidence only after
+    /// [`verify_effect`] accepts it through a [`WitnessAuthority`], which
+    /// this pure-data check cannot do. Counting either one here let an
+    /// actor claim `Verified` by typing a hash.
     pub fn has_independent_evidence(&self) -> bool {
-        self.readback.is_some()
+        false
     }
 
     /// The witnesses that at least carry a signature verify can attempt to
@@ -824,6 +823,21 @@ pub fn verify_mandate(
                             m.audience, leaf.audience
                         ));
                     }
+                    // The last link: the mandate's holder is the leaf's
+                    // grantee. The holder check below and in the CLI compares
+                    // the receipt signer against `m.grantee`, a field the
+                    // signer wrote. Unreconciled, an actor could name itself
+                    // as holder of a grant issued to someone else, or turn a
+                    // bearer grant into one that reads as bound to it.
+                    let leaf_holder = leaf.grantee.as_deref().filter(|g| !g.is_empty());
+                    let claimed_holder = m.grantee.as_deref().filter(|g| !g.is_empty());
+                    if leaf_holder != claimed_holder {
+                        fail.push(format!(
+                            "mandate holder '{}' does not match the leaf grant's grantee '{}'",
+                            claimed_holder.unwrap_or("(none)"),
+                            leaf_holder.unwrap_or("(none: bearer)")
+                        ));
+                    }
                     // Same attenuation rule as between grants: adding an
                     // objective narrows and is fine; changing or dropping one
                     // spends authority minted for one task on another.
@@ -974,9 +988,9 @@ pub fn verify_effect(stmt: &ActionStatementV2, witnesses: &dyn WitnessAuthority)
         ));
     }
 
-    // The verify layer knows more than the pure-data ceiling: a witness the
-    // authority vouched for is also actor-unmintable evidence.
-    let has_evidence = effect.has_independent_evidence() || trusted_witnesses > 0;
+    // A readback is the actor's own digest. Only a witness the authority
+    // vouched for is evidence the actor could not mint.
+    let has_evidence = trusted_witnesses > 0;
 
     let claimed = effect.effect_confidence;
     let effective = match claimed {
@@ -987,7 +1001,7 @@ pub fn verify_effect(stmt: &ActionStatementV2, witnesses: &dyn WitnessAuthority)
         Some(EffectConfidence::Verified) if !has_evidence => {
             notes.push(
                 "actor claimed Verified but bundled no independent evidence \
-                 (no readback, no trusted witness); downgraded to NotVerified"
+                 (no trusted witness); downgraded to NotVerified"
                     .into(),
             );
             EffectConfidence::NotVerified
@@ -1009,7 +1023,7 @@ pub fn verify_effect(stmt: &ActionStatementV2, witnesses: &dyn WitnessAuthority)
         Some(EffectFinality::Finalized) if !has_evidence => {
             notes.push(
                 "actor claimed the effect Finalized but bundled no independent evidence \
-                 (no readback, no trusted witness); downgraded to Indeterminate"
+                 (no trusted witness); downgraded to Indeterminate"
                     .into(),
             );
             Some(EffectFinality::Indeterminate)
@@ -1372,6 +1386,20 @@ pub enum GrantChainError {
     /// unconstrained by one, so removing it widens authority exactly as
     /// extending an expiry does.
     ObjectiveChanged { parent: usize },
+    /// The child was not issued by the party the parent was issued to.
+    ///
+    /// Delegation means the holder of a grant passes part of it on. When the
+    /// parent names a `grantee`, only that key holds it, so the child's
+    /// `grantor` must be that key. Without this rule any key -- the parent's
+    /// issuer included -- could mint a "child" of a grant it was never given,
+    /// and the chain would read as a delegation by the holder when the holder
+    /// took no part in it.
+    ///
+    /// A bearer parent (no `grantee`) names no holder, so there is nothing to
+    /// link to. The only issuer that can then be shown to hold it is the one
+    /// who signed it; a child from any other key is refused rather than
+    /// trusted on possession of the bytes.
+    GrantorNotParentGrantee { parent: usize },
 }
 
 impl std::fmt::Display for GrantChainError {
@@ -1424,6 +1452,13 @@ impl std::fmt::Display for GrantChainError {
             Self::AudienceChanged { parent } => {
                 write!(f, "audience changes at hop {}->{}", parent, parent + 1)
             }
+            Self::GrantorNotParentGrantee { parent } => write!(
+                f,
+                "hop {}->{} is not linked: the child grant was not issued by the key the \
+                 parent grant was issued to",
+                parent,
+                parent + 1
+            ),
         }
     }
 }
@@ -1434,7 +1469,12 @@ impl std::error::Error for GrantChainError {}
 /// `chain[last]` is the leaf the action was minted from). Every adjacent pair
 /// must satisfy: scope narrows (child ⊆ parent), expiry does not extend,
 /// delegation depth increments by exactly one and stays within the parent's
-/// `max_delegation`, and audience is preserved. All checks fail closed.
+/// `max_delegation`, audience is preserved, and the child was issued by the
+/// parent's holder (see [`grant_links_to_parent`]). All checks fail closed.
+///
+/// This does not say whether the root grantor is anyone the verifier trusts:
+/// a self-consistent chain can be minted from any key. Callers report that
+/// separately (the CLI's "rooted" / "unrooted").
 ///
 /// This validates the *shape* of the delegation. Signature verification of
 /// each grant is a separate concern ([`Grant::verify_canonical`]); a full
@@ -1480,6 +1520,10 @@ pub fn verify_grant_chain(chain: &[Grant]) -> Result<(), GrantChainError> {
             return Err(GrantChainError::AudienceChanged { parent: i });
         }
 
+        if !grant_links_to_parent(parent, child) {
+            return Err(GrantChainError::GrantorNotParentGrantee { parent: i });
+        }
+
         // Objective attenuation. A child may ADD an objective the parent did
         // not declare -- that narrows. It may not change one, and it may not
         // drop one, because both let a grant issued for task A be spent on
@@ -1496,6 +1540,19 @@ pub fn verify_grant_chain(chain: &[Grant]) -> Result<(), GrantChainError> {
     }
 
     Ok(())
+}
+
+/// Whether `child` was issued by the key that holds `parent`.
+///
+/// A parent that names a `grantee` is held by that key alone, so the child's
+/// `grantor` must equal it. A bearer parent names no holder; the only key that
+/// demonstrably holds it is its own issuer, so a child is linked only when the
+/// parent's grantor issued it too (an issuer narrowing its own grant).
+pub fn grant_links_to_parent(parent: &Grant, child: &Grant) -> bool {
+    match parent.grantee.as_deref() {
+        Some(g) if !g.is_empty() => child.grantor == g,
+        _ => child.grantor == parent.grantor,
+    }
 }
 
 /// True iff every entry of `child` is covered by some entry of `parent`. An
@@ -1528,14 +1585,17 @@ mod tests {
 
     #[test]
     fn effect_confidence_ceiling_gates_on_independent_evidence() {
-        // A readback the actor could not mint lets the evidence support Verified.
-        let with_evidence = Effect {
+        // A readback is the actor's own digest. It does not raise the ceiling.
+        let self_reported = Effect {
             readback: Some("sha256:observed".into()),
             effect_confidence: Some(EffectConfidence::Verified),
             ..Default::default()
         };
-        assert!(with_evidence.has_independent_evidence());
-        assert_eq!(with_evidence.evidence_ceiling(), EffectConfidence::Verified);
+        assert!(!self_reported.has_independent_evidence());
+        assert_eq!(
+            self_reported.evidence_ceiling(),
+            EffectConfidence::NotVerified
+        );
 
         // No independent evidence: the honest ceiling is NotVerified, so a
         // `Verified` CLAIM here must be treated as inflated (ack != act).
@@ -1651,7 +1711,7 @@ mod tests {
     }
 
     #[test]
-    fn finalized_backed_by_readback_survives() {
+    fn finalized_backed_only_by_readback_is_downgraded() {
         let mut s = good_stmt();
         s.effect = Some(Effect {
             readback: Some("sha256:observed".into()),
@@ -1659,7 +1719,7 @@ mod tests {
             ..Default::default()
         });
         let v = verify_effect(&s, &NoWitnessAuthority);
-        assert_eq!(v.effective_finality, Some(EffectFinality::Finalized));
+        assert_eq!(v.effective_finality, Some(EffectFinality::Indeterminate));
     }
 
     #[test]
@@ -1817,7 +1877,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_effect_honors_verified_backed_by_readback() {
+    fn verify_effect_downgrades_verified_backed_only_by_readback() {
         let mut s = good_stmt();
         s.effect = Some(Effect {
             readback: Some("sha256:observed".into()),
@@ -1825,8 +1885,8 @@ mod tests {
             ..Default::default()
         });
         let v = verify_effect(&s, &NoWitnessAuthority);
-        assert_eq!(v.effective_confidence, EffectConfidence::Verified);
-        assert!(v.is_verified());
+        assert_eq!(v.effective_confidence, EffectConfidence::NotVerified);
+        assert!(!v.is_verified());
     }
 
     #[test]
@@ -2781,7 +2841,11 @@ mod tests {
     /// feature together.
     #[test]
     fn a_mandate_within_its_grant_still_passes() {
-        let (root, leaf, _) = chain_fixture();
+        let (root, mut leaf, signer) = chain_fixture();
+        // Bind the leaf to the mandate's holder so the holder link holds too.
+        leaf.grantee = Some("key_holder".into());
+        leaf.grant_id = leaf.derive_grant_id();
+        leaf.issuer_sig = Some(leaf.sign_canonical(&signer).unwrap());
         let mut m = mandate_with(&leaf, vec![root.clone(), leaf.clone()]);
         m.scope = leaf.scope.clone();
         m.audience = leaf.audience.clone();
@@ -2830,5 +2894,164 @@ mod tests {
         let mut same = leaf.clone();
         same.objective_hash = Some("sha256:task-a".into());
         assert_eq!(verify_grant_chain(&[p, same]), Ok(()));
+    }
+
+    // ---- chain linkage: each child is issued by its parent's holder ----
+
+    /// Sign `g` with `signer`, deriving its content id first.
+    fn sealed(mut g: Grant, signer: &Ed25519Signer) -> Grant {
+        g.grant_id = g.derive_grant_id();
+        g.issuer_sig = Some(g.sign_canonical(signer).unwrap());
+        g
+    }
+
+    /// A ship issues a root grant to an agent. The agent may delegate it; the
+    /// ship, having given it away, may not mint a child of it in the agent's
+    /// name.
+    fn ship_and_agent() -> (Ed25519Signer, String, Ed25519Signer, String) {
+        let ship = Ed25519Signer::generate("ship").unwrap();
+        let ship_pk = URL_SAFE_NO_PAD.encode(ship.public_key_bytes());
+        let agent = Ed25519Signer::generate("agent").unwrap();
+        let agent_pk = URL_SAFE_NO_PAD.encode(agent.public_key_bytes());
+        (ship, ship_pk, agent, agent_pk)
+    }
+
+    #[test]
+    fn child_issued_by_someone_other_than_the_parent_grantee_is_unlinked() {
+        let (ship, ship_pk, _agent, agent_pk) = ship_and_agent();
+        let mut root = mk_grant(&ship, &ship_pk, vec!["payments.*"], 0, None);
+        root.grantee = Some(agent_pk.clone());
+        let root = sealed(root, &ship);
+        // The ship signs a "child" of a grant it issued to the agent.
+        let child = mk_grant(
+            &ship,
+            &ship_pk,
+            vec!["payments.charge"],
+            1,
+            Some(&root.grant_id),
+        );
+        assert!(!grant_links_to_parent(&root, &child));
+        assert_eq!(
+            verify_grant_chain(&[root.clone(), child.clone()]),
+            Err(GrantChainError::GrantorNotParentGrantee { parent: 0 })
+        );
+
+        // And the verdict a receipt carrying that chain gets is a failure,
+        // not a pass with a footnote.
+        let mut m = mandate_with(&child, vec![root, child.clone()]);
+        m.grantee = None;
+        m.scope = child.scope.clone();
+        m.audience = child.audience.clone();
+        let mut stmt = good_stmt();
+        stmt.action = "payments.charge".into();
+        stmt.audience = Some(child.audience.clone());
+        stmt.mandate = m;
+        match verify_mandate(&stmt, &StaticRevocation(RevocationStatus::NotRevoked)) {
+            MandateVerdict::Fail(reasons) => assert!(
+                reasons.iter().any(|r| r.contains("not linked")),
+                "failed for the wrong reason: {reasons:?}"
+            ),
+            other => panic!("an unlinked chain must FAIL, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn child_issued_by_the_parent_grantee_is_linked() {
+        let (ship, ship_pk, agent, agent_pk) = ship_and_agent();
+        let mut root = mk_grant(&ship, &ship_pk, vec!["payments.*"], 0, None);
+        root.grantee = Some(agent_pk.clone());
+        let root = sealed(root, &ship);
+        let child = mk_grant(
+            &agent,
+            &agent_pk,
+            vec!["payments.charge"],
+            1,
+            Some(&root.grant_id),
+        );
+        assert!(grant_links_to_parent(&root, &child));
+        assert_eq!(verify_grant_chain(&[root, child]), Ok(()));
+    }
+
+    #[test]
+    fn bearer_parent_links_only_to_its_own_issuer() {
+        let (ship, ship_pk, agent, agent_pk) = ship_and_agent();
+        let root = mk_grant(&ship, &ship_pk, vec!["payments.*"], 0, None);
+        assert!(root.grantee.is_none());
+
+        // The issuer narrowing its own bearer grant: linked.
+        let own = mk_grant(
+            &ship,
+            &ship_pk,
+            vec!["payments.charge"],
+            1,
+            Some(&root.grant_id),
+        );
+        assert_eq!(verify_grant_chain(&[root.clone(), own]), Ok(()));
+
+        // Anyone else holding the bearer bytes: not linked.
+        let other = mk_grant(
+            &agent,
+            &agent_pk,
+            vec!["payments.charge"],
+            1,
+            Some(&root.grant_id),
+        );
+        assert_eq!(
+            verify_grant_chain(&[root, other]),
+            Err(GrantChainError::GrantorNotParentGrantee { parent: 0 })
+        );
+    }
+
+    #[test]
+    fn link_rule_applies_at_every_hop_not_just_the_first() {
+        let (ship, ship_pk, agent, agent_pk) = ship_and_agent();
+        let mut root = mk_grant(&ship, &ship_pk, vec!["payments.*"], 0, None);
+        root.grantee = Some(agent_pk.clone());
+        let root = sealed(root, &ship);
+        let mut mid = mk_grant(
+            &agent,
+            &agent_pk,
+            vec!["payments.charge"],
+            1,
+            Some(&root.grant_id),
+        );
+        mid.grantee = Some("key_third_party".into());
+        let mid = sealed(mid, &agent);
+        // The agent signs a grandchild of a grant it passed to a third party.
+        let leaf = mk_grant(
+            &agent,
+            &agent_pk,
+            vec!["payments.charge"],
+            2,
+            Some(&mid.grant_id),
+        );
+        assert_eq!(
+            verify_grant_chain(&[root, mid, leaf]),
+            Err(GrantChainError::GrantorNotParentGrantee { parent: 1 })
+        );
+    }
+
+    #[test]
+    fn mandate_cannot_name_a_holder_the_leaf_did_not() {
+        let (root, leaf, _) = chain_fixture();
+        assert!(leaf.grantee.is_none(), "fixture leaf is a bearer grant");
+        // The actor claims the bearer grant was issued to it.
+        let mut m = mandate_with(&leaf, vec![root, leaf.clone()]);
+        m.grantee = Some("key_holder".into());
+        m.scope = leaf.scope.clone();
+        m.audience = leaf.audience.clone();
+        let mut stmt = good_stmt();
+        stmt.action = "payments.charge".into();
+        stmt.audience = Some(leaf.audience.clone());
+        stmt.mandate = m;
+        match verify_mandate(&stmt, &StaticRevocation(RevocationStatus::NotRevoked)) {
+            MandateVerdict::Fail(reasons) => assert!(
+                reasons
+                    .iter()
+                    .any(|r| r.contains("does not match the leaf grant's grantee")),
+                "failed for the wrong reason: {reasons:?}"
+            ),
+            other => panic!("a holder the leaf never named must FAIL, got {other:?}"),
+        }
     }
 }

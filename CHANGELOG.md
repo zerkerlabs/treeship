@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.31.13 (2026-10-01)
+
+- **Signing and approvals fail closed.** A halted actor cannot attest or wrap. `wrap` honors `require_approval`. An idempotency key is reused only for the same actor, action, and subject. A journal use vouches only for the action it names. An expired key, a revoked grant, an out-of-scope action, and a revoked capability card cannot sign. A self-supplied readback is not independent evidence. A later approval session continues the journal chain from a signed window start.
+- **A receipt inside a session chains onto the session head whoever signs it.** The actor or `--system` is in the signed statement. `--no-parent` still keeps a receipt off the chain. `--chain` remains and is already the default.
+- **A linked worktree keeps the main checkout's ship.** `treeship init --worktree` writes a local stub that extends the main config. Sessions stay in the worktree. The Claude Code session hook does this itself, and says so when a tool call is not recorded.
+- **The hub does not publish to public Rekor unless `TREESHIP_REKOR_URL` is set.** Device-code approval requires the user code the CLI shows.
+- **A discovered project config is used only when you own it and only you can write it,** and the walk stops at the git root.
+- **Docs match the product.** The site index is 149 pages and 55 posts. Linux ARM64 is a shipped CLI platform. The trust-fabric page no longer presents a hosted agent URL or a receipt page as full verification.
+- **Docs match 0.31.12's agent pins.** Every `--kind agent_cert` example carries `--agent` (README, onboard, bundle, verify, what-to-expect and the five-minute post), `resolve` documents `key_bound_reason`, the 0.31.12 changelog names TS-2026-005, the advisory tells self-hosted hub operators to upgrade, SECURITY.md names 0.31.12 as current, and the trust-fabric acceptance test isolates HOME.
+- **npm lockfiles point at the published 0.31.12 packages.** Refreshed by hand after publish; the release workflow's new lockfile job failed on its first run and is fixed separately.
+- **TS-2026-005 is published** ([GHSA-w356-2hw3-x2v2](https://github.com/zerkerlabs/treeship/security/advisories/GHSA-w356-2hw3-x2v2)), with the regression tests and cross-SDK vectors for the 0.31.12 agent-card fix that were held back until the advisory went out.
+
 ## 0.31.12 (2026-09-30)
 
 Security release: [TS-2026-005](https://github.com/zerkerlabs/treeship/blob/main/docs/security/TS-2026-005.md) / [GHSA-w356-2hw3-x2v2](https://github.com/zerkerlabs/treeship/security/advisories/GHSA-w356-2hw3-x2v2) (agent-card verification and the preview/certificate pages). Upgrade the CLI, the SDKs and `@treeship/verify`, and run any self-hosted hub on 0.31.12.

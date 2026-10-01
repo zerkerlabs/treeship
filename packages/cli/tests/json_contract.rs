@@ -420,10 +420,9 @@ fn every_json_capable_command_emits_json() {
     // is a dry run so nothing on this machine is configured.
     check("add", &["add", "--dry-run", "--all"]);
 
-    // Last, so `verify last` above still saw an honest artifact: the two paths that printed a warning document before the result in
-    // 0.31.10 (`json.load(stdout)` failed with "Extra data"): a v2 action
-    // outside its grant's scope, and a pin replaced with --replace. The
-    // harness rejects anything but one document, so these rows are the test.
+    // Last, so `verify last` above still saw an honest artifact. An
+    // out-of-scope v2 action is refused unless --record-violation; with the
+    // flag it signs and warns on stderr, and stdout stays one document.
     let scoped = ship.run_json(&[
         "grant",
         "issue",
@@ -437,7 +436,7 @@ fn every_json_capable_command_emits_json() {
     ]);
     let scoped_id = scoped["grant_id"].as_str().unwrap().to_string();
     check(
-        "attest action (v2 out of scope warns on stderr)",
+        "attest action (v2 out of scope, recorded)",
         &[
             "attest",
             "action",
@@ -448,6 +447,7 @@ fn every_json_capable_command_emits_json() {
             "admin.delete",
             "--grant",
             &scoped_id,
+            "--record-violation",
         ],
     );
     ship.must(&[

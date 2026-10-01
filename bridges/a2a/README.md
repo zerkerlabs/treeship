@@ -1,6 +1,6 @@
 # @treeship/a2a
 
-Treeship attestation middleware for [A2A](https://a2a.dev) (Agent2Agent) servers and clients. Every task receipt, completion, and handoff becomes a signed Treeship artifact, and every outbound A2A artifact carries a receipt URL peers can fetch and verify.
+Treeship attestation middleware for [A2A](https://a2a.dev) (Agent2Agent) servers and clients. Every task receipt, completion, and handoff becomes a signed Treeship artifact, and every outbound A2A artifact carries a receipt URL a peer can fetch and run `verifyReceipt()` against -- a full cryptographic check where `@treeship/core-wasm` loads, a structural one where it can't (see "Runtime compatibility" below).
 
 > A2A makes agents interoperable. Treeship makes that interoperability trustworthy and auditable.
 

@@ -115,23 +115,11 @@ acme-deploy-bot.agent/
 └── certificate.html    # a self-contained shareable card
 ```
 
-You can publish the `.agent` directory to a Hub (so others can fetch the certificate by slug at `treeship.dev/agent/<slug>`) or distribute it directly. Either way, the trust check is local: anyone with `treeship verify --certificate certificate.json` can confirm the signature.
+You can publish the agent's resolvable set to a Hub with [`treeship publish`](/docs/cli/publish) (so others can fetch it with `treeship resolve <agent-uri> --hub`) or distribute the `.agent` directory directly. Either way, the trust check is local: anyone with `treeship verify --certificate certificate.json` can confirm the signature.
 
 <Callout title="Where does the public key come from?">
-The keypair was generated at `treeship init`. There is no separate CA enrollment step — your machine is its own root of trust. This is intentional: it keeps Treeship installable in five seconds with no upstream dependency. Domain ownership and other trust amplifiers (below) are layered on top, not gating.
+The keypair was generated at `treeship init`. There is no separate CA enrollment step — your machine is its own root of trust. This is intentional: it keeps Treeship installable in five seconds with no upstream dependency.
 </Callout>
-
-## Trust amplifiers (optional)
-
-A bare certificate proves an ed25519 signature. That's enough for offline verification, but a third party reading the cert may want stronger signals. Treeship's identity backend exposes optional verification flows:
-
-| Amplifier | What it proves | How |
-|---|---|---|
-| **Domain ownership** | "This agent represents acme.com" | DNS TXT record challenge at `_treeship-challenge.acme.com`, verified server-side via `/identity/{slug}/verify-domain` |
-| **Voice fingerprint** | "Communications signed under this cert match the agent's stable style fingerprint" | Style-based fingerprinting via `/identity/{slug}/voice-fingerprint` and `/identity/{slug}/verify-voice` |
-| **Tool manifest verification** | "The tools this cert declares are the tools the agent actually exposes" | Manifest probe via `/identity/{slug}/verify-tools` |
-
-Each amplifier produces an independent attestation that the agent card surfaces as a separate badge. Stronger trust without coupling everything into one mechanism — a single failed amplifier doesn't invalidate the cert; it just narrows what the cert claims.
 
 ## Binding to session receipts
 
@@ -151,7 +139,7 @@ This runs `cross_verify_receipt_and_certificate` (in `packages/core/src/verify/`
 
 The function takes `now` as an explicit argument so the check is deterministic and testable: tests pass a fixed value, the CLI passes `SystemTime::now()`, the WASM build passes a JS-supplied timestamp. See [Cross-verification](/docs/concepts/cross-verification) for the full check matrix.
 
-The agent card at `treeship.dev/agent/<slug>` runs this on every recent receipt and surfaces the result as a `✓ no unauthorized calls` badge per row.
+Running this check across every recent receipt is a scripting exercise today, not a built-in dashboard -- there is no hosted page that renders it per row.
 
 ## Per-actor signing: making the `actor` provable
 
@@ -180,21 +168,19 @@ The two-axis gate (agent declaration AND project declaration) lets the same agen
 
 No scope declared means no judgement, never a silent all-clear: the fields stay absent and every connection still stands in `side_effects.network_connections`. The record covers what the harness captured as `agent.connected_network` (a `WebFetch` through the Claude Code plugin, an explicit `session event`); a connection a subprocess made on its own is outside it, as the [coverage receipt](/docs/guides/coverage-levels#the-coverage-receipt) says. The same list on an agent card (`agent register --network`) is what the Claude Code gate enforces before the fetch happens.
 
-## What an agent's URL looks like
+## Fetching a published agent
 
-Once a certificate is published to a Hub, anyone can view it at:
+Once a certificate is published to a Hub, anyone can fetch its resolvable set (identity, current card, revocations) with:
 
+```bash
+treeship resolve agent://acme-deploy-bot --hub https://api.treeship.dev
 ```
-https://www.treeship.dev/agent/<slug>
-```
 
-Where `<slug>` is the canonical sanitization of `agent_name` (lowercase, spaces → dashes, alphanumeric + dash + underscore only). The page renders identity, capabilities, declaration, recent verified receipts, and the `treeship verify --certificate` snippet for the offline check.
-
-This is the URL operators put in their README, in their docs, on their GitHub profile. It's the public face of the agent's identity — the equivalent of a TLS cert viewer for an HTTPS site.
+This re-derives the result from locally re-verified artifacts rather than trusting the Hub's say-so -- see [Resolve](/docs/cli/resolve). There is no hosted, human-readable page for an arbitrary published agent today (`treeship.dev/agent/<slug>` is a single hard-coded demo, not a general lookup); the CLI/JSON result is the current public face of a published agent's identity.
 
 ## What this is not
 
-- **Not a CA-rooted PKI.** There's no globally-trusted root authority. Trust bottoms out in the ship's ed25519 keypair plus optional amplifiers (domain, voice, tool manifest).
+- **Not a CA-rooted PKI.** There's no globally-trusted root authority. Trust bottoms out in the ship's ed25519 keypair.
 - **Not a hosting decision.** The certificate works for cloud agents, local agents, OSS contributors, enterprise deployments. The only requirement is that the issuing machine has a Treeship keystore.
 - **Not a payment identity.** x402 / lobster.cash flows are wrapped by `treeship wrap` and recorded into receipts; the identity of *who is allowed to spend* is a separate concern from *who is allowed to act*. Future certificates may include a `payment` layer; today they don't.
 {/* claims:receipt-tamper-evidence */}

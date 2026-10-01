@@ -68,9 +68,9 @@ treeship attest action \
 
 Both produce a signed receipt that binds the payment to the approval.
 
-### 3b. Spend-limit proof (automatic)
+### 3b. Spend-limit proof (not shipped)
 
-When a payment is attested, Treeship runs the `spend-limit-checker` ZK circuit. This produces a zero-knowledge proof that the amount falls within the approved spend limit, without revealing the exact threshold to third-party verifiers. The proof is embedded in the receipt automatically.
+> **Editor's note (2026-10-01).** The `spend-limit-checker` circuit this section describes is part of the quarantined Circom/Groth16 proving path: its proving keys were generated with no real multi-party ceremony, `treeship prove`/`verify-proof` fail closed rather than trust it, and it ships behind a non-default `zk` feature flag nothing in this flow enables automatically. No zero-knowledge spend-limit proof is embedded in a receipt today. See the [zk-circom README](https://github.com/zerkerlabs/treeship/blob/main/packages/zk-circom/README.md).
 
 ### 4. The receipt chain is complete
 

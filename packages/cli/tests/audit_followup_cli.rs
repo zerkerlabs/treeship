@@ -305,11 +305,11 @@ fn an_unpinned_signer_gets_signatures_pass_not_verified() {
     assert_eq!(v["verdict"], "verified", "{v}");
 }
 
-/// P3: the session's own actions chain by default, another agent's receipt
-/// in the same workspace does not become the session's chained step, and the
-/// root is never `unchained`.
+/// Inside a session every action chains onto the head, whoever the actor
+/// is. The actor is signed into the statement. `--no-parent` stays off the
+/// chain, and the root is never `unchained`.
 #[test]
-fn own_actions_chain_by_default_and_foreign_receipts_stay_loose() {
+fn actions_chain_by_default_whoever_the_actor_is() {
     let ws = Ws::new();
     ws.json(&[
         "session",
@@ -335,9 +335,8 @@ fn own_actions_chain_by_default_and_foreign_receipts_stay_loose() {
         .as_str()
         .unwrap()
         .to_string();
-    // Another actor in the same workspace, no flags at all: the default
-    // parent is scoped to the session's actor, so this is sealed loose
-    // (retest of 0.31.4, P3).
+    // Another actor in the same workspace, no flags: also on the chain.
+    // Filtering on the session actor sealed honest subagent steps loose.
     let foreign = ws.json(&[
         "attest",
         "action",
@@ -387,8 +386,8 @@ fn own_actions_chain_by_default_and_foreign_receipts_stay_loose() {
     );
     assert_eq!(
         flag(&foreign),
-        Some(true),
-        "foreign receipt is loose: {entries:?}"
+        Some(false),
+        "a foreign actor's action is on the chain: {entries:?}"
     );
     assert_eq!(
         flag(&loose),

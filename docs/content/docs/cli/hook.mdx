@@ -74,9 +74,17 @@ silently and does nothing.
 On a match:
 - If the matched rule sets `require_approval: true` and the command hasn't
   already been approved (`treeship approve`), it prints the pending-approval
-  hint and **exits 1**, which most shells surface as a blocked command.
+  hint and **exits 1**.
 - Otherwise it redacts secrets from the command line and writes a
   `.pending_hook` state file for `hook post` to pick up.
+
+{/* claims:hook-cannot-block */}
+`hook pre`'s exit code is not acted on by any of the installed shell
+snippets (`treeship install`'s zsh `preexec`, bash `DEBUG` trap, or fish
+`fish_preexec` hook): none of them abort the command that's about to run on
+a non-zero exit. The hook records; it cannot cancel a command. The pending
+state it writes is a record for `hook post` and the local approval workflow,
+not an enforcement point.
 
 ## treeship hook post
 

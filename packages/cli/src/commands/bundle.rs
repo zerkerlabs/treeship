@@ -83,10 +83,18 @@ pub fn import(args: ImportArgs, printer: &Printer) -> Result<(), Box<dyn std::er
     // counterparties. The old implementation ignored `treeship trust add`
     // entirely and instructed users to run a nonexistent `treeship keys add`,
     // making legitimate third-party imports impossible.
+    //
+    // An agent key need not be pinned on its own: an `agent_cert.v1` that
+    // travels in the bundle (or is already stored here), signed by a key
+    // pinned as `cert_issuer` and inside its validity window, certifies it.
     let trust = TrustRootStore::open_default_or_empty()?;
-    let verifier = crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)
-        .map_err(|e| format!("build verifier: {e}"))?
-        .ok_or(bundle::BundleError::NoTrustRoot)?;
+    let mut certs = bundle_envelopes(&path);
+    certs.extend(crate::commands::verifier::local_agent_certs(&ctx.storage));
+    let now = crate::commands::session::now_rfc3339();
+    let verifier =
+        crate::commands::verifier::from_local_trust_and_certs(&ctx.keys, &trust, &certs, &now)
+            .map_err(|e| format!("build verifier: {e}"))?
+            .ok_or(bundle::BundleError::NoTrustRoot)?;
 
     let bundle_id = bundle::import(&path, &ctx.storage, &verifier).map_err(|e| match &e {
         bundle::BundleError::UnverifiedEnvelope { index, .. } => {
@@ -106,8 +114,9 @@ pub fn import(args: ImportArgs, printer: &Printer) -> Result<(), Box<dyn std::er
                 format!(
                     "{which} is signed by {}, which is not a pinned trust root on this machine.\n  \
                      Ask the producer which key that is and for the line `treeship keys export` prints for it, then run it here:\n    \
-                     treeship trust add {} ed25519:<their public key> --kind agent_cert --yes    # if it is an agent's own key\n    \
-                     treeship trust add {} ed25519:<their public key> --kind cert_issuer --yes   # if it is the ship key",
+                     treeship trust add {} ed25519:<their public key> --kind agent_cert --agent agent://<name> --yes    # if it is an agent's own key\n    \
+                     treeship trust add {} ed25519:<their public key> --kind cert_issuer --yes   # if it is the ship key\n  \
+                     A ship key pinned as cert_issuer also covers its agents' keys when the bundle carries the agent_cert.v1 it issued for them.",
                     keyids.join(", "),
                     keyids[0],
                     keyids[0]
@@ -124,6 +133,21 @@ pub fn import(args: ImportArgs, printer: &Printer) -> Result<(), Box<dyn std::er
     printer.hint(&format!("treeship verify {}", bundle_id));
     printer.blank();
     Ok(())
+}
+
+/// Every envelope in an export file (bundle first), for the certificate
+/// chain. Empty when the file cannot be read or parsed; `bundle::import`
+/// reports that error itself.
+fn bundle_envelopes(path: &std::path::Path) -> Vec<treeship_core::attestation::Envelope> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    match serde_json::from_slice::<bundle::ExportFile>(&bytes) {
+        Ok(export) => std::iter::once(export.bundle)
+            .chain(export.artifacts)
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// The key ids on the signatures of one envelope in an export file, by the

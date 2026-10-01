@@ -1,1 +1,0 @@
-- **TS-2026-005 is published** ([GHSA-w356-2hw3-x2v2](https://github.com/zerkerlabs/treeship/security/advisories/GHSA-w356-2hw3-x2v2)), with the regression tests and cross-SDK vectors for the 0.31.12 agent-card fix that were held back until the advisory went out.

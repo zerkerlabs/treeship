@@ -1,6 +1,6 @@
 # Capability Provenance: captured, not declared
 
-**Status:** draft, not implemented
+**Status:** Shipped -- all three slices below. `treeship attest card --from-harness` stamps `captured` from real harness config (`packages/cli/src/commands/attest.rs`), `--from-a2a` stamps `discovered` from an agent's own published AgentCard, `--tools-json` stamps `declared`; `verify-capability` and `resolve` both compute `exercised` from captured receipts and report the full breakdown (`packages/cli/src/commands/capability.rs`, `resolve.rs`). The schema, grading and surfacing described below all match what ships; the browser-viewer surfacing mentioned as optional in Slice 3 has not been separately verified.
 **Pairs with:** [agent capability cards](./agent-capability-cards.md), [agent resolver](./agent-resolver.md), discovery (`packages/cli/src/commands/discovery.rs`)
 **Last updated:** 2026-06-24
 

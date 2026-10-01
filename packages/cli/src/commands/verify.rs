@@ -452,8 +452,17 @@ pub fn run(
     // state -- reloading mid-chain could have two hops disagree about whether
     // the same grant was live.
     let revocation = crate::commands::revocation_source::for_ctx(&ctx);
-    let verifier = crate::commands::verifier::from_local_and_trust(&ctx.keys, &trust)?
-        .ok_or("no local or trusted verification keys are configured")?;
+    // An agent key certified by a pinned `cert_issuer` (through a stored
+    // agent_cert.v1 inside its window) verifies too: the same universe
+    // `bundle import` accepts, so what imports also verifies.
+    let local_certs = crate::commands::verifier::local_agent_certs(&ctx.storage);
+    let verifier = crate::commands::verifier::from_local_trust_and_certs(
+        &ctx.keys,
+        &trust,
+        &local_certs,
+        &crate::commands::session::now_rfc3339(),
+    )?
+    .ok_or("no local or trusted verification keys are configured")?;
 
     // Resolve starting artifact. A unique prefix (the shape the CLI's own
     // hints print) resolves to the full id; an ambiguous one is refused

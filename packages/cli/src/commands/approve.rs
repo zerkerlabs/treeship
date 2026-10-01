@@ -227,7 +227,7 @@ fn verify_approval_artifact_exists(nonce: &str) -> bool {
             if path.extension().and_then(|e| e.to_str()) == Some("json") {
                 if let Ok(data) = std::fs::read_to_string(&path) {
                     // Check if this artifact contains the nonce
-                    if data.contains(nonce) {
+                    if approval_payload_nonce_is(&data, nonce) {
                         return true;
                     }
                 }
@@ -235,6 +235,26 @@ fn verify_approval_artifact_exists(nonce: &str) -> bool {
         }
     }
     false
+}
+
+/// The nonce has to be the approval statement's `nonce` field, after the
+/// DSSE payload is decoded. A substring search of the base64 payload matched
+/// a nonce that was never the field.
+fn approval_payload_nonce_is(data: &str, nonce: &str) -> bool {
+    let Ok(envelope) = serde_json::from_str::<serde_json::Value>(data) else {
+        return false;
+    };
+    let Some(payload) = envelope.get("payload").and_then(|p| p.as_str()) else {
+        return false;
+    };
+    use base64::Engine;
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload) else {
+        return false;
+    };
+    let Ok(statement) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    statement.get("nonce").and_then(|n| n.as_str()) == Some(nonce)
 }
 
 // ---------------------------------------------------------------------------

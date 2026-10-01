@@ -26,7 +26,7 @@ func newTestHandlers(t *testing.T) *Handlers {
 	return &Handlers{DB: database}
 }
 
-func issueChallenge(t *testing.T, h *Handlers) (deviceCode, nonce string) {
+func issueChallenge(t *testing.T, h *Handlers) (deviceCode, nonce, userCode string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	h.Challenge(rec, httptest.NewRequest(http.MethodGet, "/v1/dock/challenge", nil))
@@ -37,10 +37,10 @@ func issueChallenge(t *testing.T, h *Handlers) (deviceCode, nonce string) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode challenge: %v", err)
 	}
-	if body["device_code"] == "" || body["nonce"] == "" {
-		t.Fatalf("challenge missing device_code/nonce: %v", body)
+	if body["device_code"] == "" || body["nonce"] == "" || body["user_code"] == "" {
+		t.Fatalf("challenge missing device_code/nonce/user_code: %v", body)
 	}
-	return body["device_code"], body["nonce"]
+	return body["device_code"], body["nonce"], body["user_code"]
 }
 
 func getAuthorized(t *testing.T, h *Handlers, code string) (int, map[string]interface{}) {
@@ -96,7 +96,7 @@ func TestAuthorized_UnknownCode(t *testing.T) {
 
 func TestAuthorized_Pending(t *testing.T) {
 	h := newTestHandlers(t)
-	code, _ := issueChallenge(t, h)
+	code, _, _ := issueChallenge(t, h)
 	status, body := getAuthorized(t, h, code)
 	if status != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", status)
@@ -108,10 +108,16 @@ func TestAuthorized_Pending(t *testing.T) {
 
 func TestAuthorized_Approved(t *testing.T) {
 	h := newTestHandlers(t)
-	code, _ := issueChallenge(t, h)
+	code, _, user := issueChallenge(t, h)
 
-	// Browser approves with no keys.
+	// The device code alone is not an approval.
 	status, body := postAuthorize(t, h, map[string]string{"device_code": code})
+	if status != http.StatusForbidden {
+		t.Fatalf("device_code-only approve = %d %v, want 403", status, body)
+	}
+
+	// Browser approves with the code the CLI showed.
+	status, body = postAuthorize(t, h, map[string]string{"device_code": code, "user_code": user})
 	if status != http.StatusOK || body["state"] != "approved" {
 		t.Fatalf("browser approve = %d %v, want 200 approved", status, body)
 	}
@@ -132,10 +138,10 @@ func TestAuthorized_Approved(t *testing.T) {
 // succeeded. It must now report the terminal "attached" state.
 func TestAuthorized_AttachedNotNotFound(t *testing.T) {
 	h := newTestHandlers(t)
-	code, nonce := issueChallenge(t, h)
+	code, nonce, user := issueChallenge(t, h)
 
 	// Browser approval.
-	if status, _ := postAuthorize(t, h, map[string]string{"device_code": code}); status != http.StatusOK {
+	if status, _ := postAuthorize(t, h, map[string]string{"device_code": code, "user_code": user}); status != http.StatusOK {
 		t.Fatalf("browser approve status = %d, want 200", status)
 	}
 
@@ -175,8 +181,8 @@ func TestAuthorized_AttachedNotNotFound(t *testing.T) {
 // no second ship is minted.
 func TestFinalize_SingleUse(t *testing.T) {
 	h := newTestHandlers(t)
-	code, nonce := issueChallenge(t, h)
-	postAuthorize(t, h, map[string]string{"device_code": code})
+	code, nonce, user := issueChallenge(t, h)
+	postAuthorize(t, h, map[string]string{"device_code": code, "user_code": user})
 
 	finalize := map[string]string{
 		"device_code":     code,
@@ -203,7 +209,7 @@ func TestAuthorized_Expired(t *testing.T) {
 	h := newTestHandlers(t)
 	// Insert a challenge that is already expired. Format must pass validation.
 	code := strings.Repeat("ab", 8) // 16 hex chars
-	if err := db.InsertChallenge(h.DB, code, "deadbeef", time.Now().Unix()-10); err != nil {
+	if err := db.InsertChallenge(h.DB, code, "deadbeef", "abcd", time.Now().Unix()-10); err != nil {
 		t.Fatalf("insert expired challenge: %v", err)
 	}
 	status, body := getAuthorized(t, h, code)
@@ -220,8 +226,8 @@ func TestAuthorized_Expired(t *testing.T) {
 // the single illustrative example may name ZMem.
 func TestAttachGuidanceProviderNeutral(t *testing.T) {
 	h := newTestHandlers(t)
-	code, nonce := issueChallenge(t, h)
-	postAuthorize(t, h, map[string]string{"device_code": code})
+	code, nonce, user := issueChallenge(t, h)
+	postAuthorize(t, h, map[string]string{"device_code": code, "user_code": user})
 	_, body := postAuthorize(t, h, map[string]string{
 		"device_code":     code,
 		"ship_public_key": testShipPubHex,

@@ -17,9 +17,28 @@ if ! command -v treeship >/dev/null 2>&1; then
   exit 0
 fi
 
-# Only act inside a Treeship-initialized project
+# A linked worktree of a Treeship repo has no .treeship of its own. Link it
+# to the main checkout's ship, then start a session here. The link reuses
+# the ship and the store; the session file stays in this worktree.
 if [ ! -d "./.treeship" ]; then
-  exit 0
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    common=$(git rev-parse --git-common-dir 2>/dev/null || true)
+    if [ -n "$common" ]; then
+      main=$(cd "$common/.." && pwd)
+      if [ -f "$main/.treeship/config.json" ]; then
+        if ! treeship init --worktree >/dev/null; then
+          echo "treeship: could not link this worktree to the main checkout; session not started" >&2
+          exit 0
+        fi
+      else
+        exit 0
+      fi
+    else
+      exit 0
+    fi
+  else
+    exit 0
+  fi
 fi
 
 # If a session is already active in this project, don't start a duplicate.

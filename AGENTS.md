@@ -54,8 +54,8 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 | Python SDK | `packages/sdk-python/` | treeship-sdk, parity-tested vs TS via cross-SDK suite |
 | Cross-SDK contract suite | `tests/cross-sdk/` | runs in CI matrix (Ubuntu+macOS, Node 20/22, Python 3.11/3.12) |
 | MCP bridge | `bridges/mcp/` | @treeship/mcp |
-| Fumadocs site | `docs/` | 62 pages + 18 blog posts |
-| Website | (separate repo) | 8 pages |
+| Fumadocs site | `docs/` | 149 pages + 55 blog posts |
+| Website | separate repo (`treeship.dev`) | marketing site, not this checkout |
 
 ### What is NOT built yet
 
@@ -70,7 +70,11 @@ Treeship is a portable trust layer for AI agent workflows. Every action, approva
 Two items previously listed here have since shipped and are removed rather
 than left as "not built": verifier-side `valid_until` enforcement (now in
 `verify/resolution.rs`) and the compromise-revocation primitive (`treeship
-grant revoke`, honored by `verify` locally and via a hub's published list).
+grant revoke` mints a signed withdrawal; `treeship verify` honors it from
+your own local store). The Hub also now serves a real, signed revocation
+list, but nothing fetches it into the resolver yet, and `session close`'s own
+mandate check doesn't consult revocation at all -- see "Revocation" under
+Security Model, below.
 
 ---
 
@@ -516,16 +520,22 @@ treeship verify art_xxxxx
 - Clean `dpop_jtis` older than 5 minutes on every request
 
 ### Revocation
-- `GET /.well-known/treeship/revoked.json` -- revoked key fingerprints.
-  **Currently a hardcoded empty list, and unsigned**, despite carrying a
-  fresh `signed_at`. It is served with `Cache-Control: max-age=86400`, so a
-  verifier that trusted it would cache "nothing is revoked" for a day. Do not
-  treat it as authoritative until it is actually populated and signed.
-- The CLI does not consult it: `verify` and `session` both pass
-  `NoRevocationSource`, so the revocation layer resolves `Unknown` and an
-  action/v2 mandate degrades to `Unverified`. That is the fail-safe posture --
-  claiming a grant is live because nobody looked would be a false pass -- but
-  it means capability revocation is designed, not delivered.
+- `GET /.well-known/treeship/revoked.json` -- revoked grant ids (not key
+  fingerprints), served from real `grant_revocation.v1` receipts in the Hub's
+  store. The list wrapper carries `generated_at`, unsigned; each entry carries
+  its own signed envelope, which a client is expected to verify against the
+  grant's own grantor rather than trust the server's fields. Served with
+  `Cache-Control: max-age=300`.
+- `treeship verify` consults a local resolver (`LocalRevocationSource`) built
+  from `grant_revocation.v1` receipts already in your own store -- a
+  revocation you minted with `treeship grant revoke`, or received into your
+  store some other way, is honored there. Nothing currently fetches the Hub's
+  published list into that resolver (`fetch_hub_revocations` exists and is
+  exercised by its own tests, but has no caller), so a revocation you only
+  know about from the Hub is not yet consulted. `session close`'s own
+  mandate check still passes `NoRevocationSource`, so revocation (local or
+  Hub-published) is not checked at close time -- only on a later `treeship
+  verify` run.
 
 ### Honest boundary
 - Trust root is the machine. Root access breaks all guarantees.

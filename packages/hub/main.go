@@ -550,9 +550,8 @@ func receiptKindAndPayload(envelopeJSON string) (string, map[string]any, bool) {
 func rekorClient() *rekor.Client {
 	c := rekor.NewDefault()
 	switch u := strings.TrimSpace(os.Getenv("TREESHIP_REKOR_URL")); u {
-	case "":
-	case "off":
-		log.Printf("rekor: anchoring disabled by TREESHIP_REKOR_URL=off")
+	case "", "off":
+		log.Printf("rekor: anchoring off (set TREESHIP_REKOR_URL to a log you operate)")
 		return nil
 	default:
 		c.BaseURL = strings.TrimRight(u, "/")

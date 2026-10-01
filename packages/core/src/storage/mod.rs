@@ -180,6 +180,12 @@ impl Store {
 
     /// Writes an artifact record. Idempotent: writing the same artifact
     /// twice has no effect beyond overwriting with identical content.
+    ///
+    /// Safe across processes. The record file is written to a temp file and
+    /// renamed into place; the index update then runs under an advisory
+    /// lock on `.index.lock` and re-reads `index.json` from disk before
+    /// adding the entry, so concurrent writers each add their own entry
+    /// instead of overwriting the file with the copy they loaded at open.
     pub fn write(&self, record: &Record) -> Result<(), StorageError> {
         if record.artifact_id.is_empty() {
             return Err(StorageError::EmptyId);
@@ -188,20 +194,54 @@ impl Store {
         let json = serde_json::to_vec_pretty(record)?;
         write_600(&self.artifact_path(&record.artifact_id)?, &json)?;
 
-        let mut idx = self.index.write().unwrap();
         let entry = IndexEntry {
             id: record.artifact_id.clone(),
             payload_type: record.payload_type.clone(),
             signed_at: record.signed_at.clone(),
             parent_id: record.parent_id.clone(),
         };
-        add_to_index(&mut idx, entry);
+        self.update_index(|idx| add_to_index(idx, entry))
+    }
+
+    /// Lock, re-read, modify, write to a temp file, rename. The in-memory
+    /// copy is replaced with what was written, so this process also sees
+    /// entries other processes added since it opened the store.
+    fn update_index(&self, change: impl FnOnce(&mut Index)) -> Result<(), StorageError> {
+        // In-process writers serialize on the RwLock; other processes on the
+        // file lock. Order: RwLock first, so a thread never holds the file
+        // lock while waiting on another thread.
+        let mut mem = self.index.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = StoreLock::acquire(&self.dir.join(INDEX_LOCK))?;
+        let mut on_disk = read_index(&self.dir)?;
+        change(&mut on_disk);
         write_600(
             &self.dir.join("index.json"),
-            &serde_json::to_vec_pretty(&*idx)?,
+            &serde_json::to_vec_pretty(&on_disk)?,
         )?;
-
+        *mem = on_disk;
         Ok(())
+    }
+
+    /// Re-read `index.json` from disk, picking up entries other processes
+    /// wrote after this store was opened. Taken under the index lock so it
+    /// never reads a half-finished update (the rename makes that impossible
+    /// anyway; the lock keeps the order with respect to `write`).
+    pub fn reload(&self) -> Result<(), StorageError> {
+        let mut mem = self.index.write().unwrap_or_else(|e| e.into_inner());
+        let _guard = StoreLock::acquire(&self.dir.join(INDEX_LOCK))?;
+        *mem = read_index(&self.dir)?;
+        Ok(())
+    }
+
+    /// Take the workspace's chain lock: an exclusive advisory lock that
+    /// callers hold across "read the chain head -> sign -> write", so two
+    /// processes never pick the same parent. Blocks until it is free and is
+    /// released when the guard drops (or the process exits).
+    ///
+    /// Separate from the index lock that `write` takes internally, so a
+    /// holder of this lock can still write.
+    pub fn lock_chain(&self) -> Result<StoreLock, StorageError> {
+        StoreLock::acquire(&self.dir.join(CHAIN_LOCK))
     }
 
     /// Reads an artifact by ID.
@@ -325,6 +365,44 @@ impl Store {
     fn artifact_path(&self, id: &str) -> Result<PathBuf, StorageError> {
         let id = parse_artifact_id(id).map_err(StorageError::InvalidId)?;
         Ok(self.dir.join(format!("{}.json", id)))
+    }
+}
+
+/// Lock file guarding `index.json` updates.
+const INDEX_LOCK: &str = ".index.lock";
+/// Lock file held across a chain-head read, the signature, and the write.
+const CHAIN_LOCK: &str = ".chain.lock";
+
+/// An exclusive advisory lock on a file in the store directory (flock on
+/// Unix). Unlocked on drop; the OS also drops it if the process dies, so a
+/// crashed writer never wedges the store.
+pub struct StoreLock {
+    #[cfg(not(target_family = "wasm"))]
+    file: fs::File,
+}
+
+impl StoreLock {
+    #[cfg(not(target_family = "wasm"))]
+    fn acquire(path: &Path) -> Result<Self, StorageError> {
+        use fs2::FileExt;
+        // Contents are never read or truncated, and the file is never opened
+        // through a link.
+        let file = crate::fs_safe::open_rw_nofollow(path, 0o600)?;
+        file.lock_exclusive()?;
+        Ok(Self { file })
+    }
+
+    /// WASM: no concurrent processes and no real filesystem.
+    #[cfg(target_family = "wasm")]
+    fn acquire(_path: &Path) -> Result<Self, StorageError> {
+        Ok(Self {})
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl Drop for StoreLock {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.file);
     }
 }
 
@@ -540,6 +618,37 @@ mod tests {
             Some("https://treeship.dev/verify/art_aabbccdd11223344aabbccdd11223344")
         );
         rm(dir);
+    }
+    /// Concurrent writers that each opened the store before the others
+    /// wrote (separate processes, in effect) all keep their index entries.
+    /// Before the index update re-read `index.json` under a file lock, each
+    /// writer rewrote the file from its own stale copy and most entries were
+    /// lost.
+    #[test]
+    fn concurrent_writers_from_separate_opens_keep_every_index_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let n = 16usize;
+        let stores: Vec<Store> = (0..n).map(|_| Store::open(&dir).unwrap()).collect();
+        let barrier = std::sync::Barrier::new(n);
+        std::thread::scope(|s| {
+            for (i, store) in stores.iter().enumerate() {
+                let barrier = &barrier;
+                s.spawn(move || {
+                    let id = format!("art_{:032x}", i + 1);
+                    barrier.wait();
+                    store
+                        .write(&make_record(&id, "application/vnd.treeship.action.v1+json"))
+                        .unwrap();
+                });
+            }
+        });
+        let fresh = Store::open(&dir).unwrap();
+        assert_eq!(fresh.list().len(), n, "index lost entries");
+        assert_eq!(fresh.scan_ids().len(), n);
+        // A store opened before the writes sees them after reload.
+        stores[0].reload().unwrap();
+        assert_eq!(stores[0].list().len(), n);
     }
 }
 

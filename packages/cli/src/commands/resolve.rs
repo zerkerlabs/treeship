@@ -524,7 +524,7 @@ fn resolve_remote(hub: &str, agent: &str, trust: &TrustRootStore, printer: &Prin
                         "anchored, but checkpoint signature INVALID".to_string()
                     } else {
                         format!(
-                            "anchored, but checkpoint signer not in your trust roots\n                   → pin it: treeship trust add <name> ed25519:{} --kind hub_checkpoint --yes",
+                            "anchored, but checkpoint signer not in your trust roots\n                   → pin it: treeship trust add checkpoint ed25519:{} --kind hub_checkpoint --yes",
                             pf.checkpoint.public_key
                         )
                     }

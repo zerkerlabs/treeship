@@ -118,12 +118,17 @@ impl Ship {
         .unwrap();
     }
 
-    /// Checkpoints live under HOME's .treeship/merkle/checkpoints.
+    /// Numbered checkpoint files under HOME's .treeship/merkle/checkpoints.
+    /// `latest.json` is a pointer and `leaves/` holds leaf order, so neither
+    /// counts as a sealed checkpoint.
     fn checkpoints(&self) -> usize {
         std::fs::read_dir(self.home.path().join(".treeship/merkle/checkpoints"))
             .map(|d| {
                 d.flatten()
-                    .filter(|e| e.file_name() != "latest.json")
+                    .filter(|e| {
+                        e.path().extension().is_some_and(|ext| ext == "json")
+                            && e.file_name() != "latest.json"
+                    })
                     .count()
             })
             .unwrap_or(0)

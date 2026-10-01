@@ -120,7 +120,7 @@ All three are automatic. The signed artifacts are Merkle-proven. The session eve
 | Variable | Effect |
 |----------|--------|
 | `TREESHIP_DISABLE=1` | Full passthrough, zero attestation |
-| `TREESHIP_ACTOR` | Override default actor URI. Start the session with the same `--actor`: a receipt by the session's actor chains onto the session, one by another actor is sealed loose and `package verify` warns under `chain_completeness` |
+| `TREESHIP_ACTOR` | Override default actor URI. Artifacts chain onto the open session whoever the actor is; the actor is signed into each one. Start the session as the same identity so the session and the artifacts name one actor |
 | `TREESHIP_APPROVAL_NONCE` | Bind all calls to an approval |
 | `TREESHIP_STRICT=1` | A signing failure fails the tool call; a halt check that cannot run refuses it |
 | `TREESHIP_MODEL` | Model name for cost tracking (via `treeship wrap`) |

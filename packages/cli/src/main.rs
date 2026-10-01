@@ -871,6 +871,14 @@ struct InitArgs {
     #[arg(long, default_value_t = false)]
     force: bool,
 
+    /// Link this git worktree to the main checkout's ship and store.
+    ///
+    /// Writes `.treeship/config.json` here as a stub that extends the main
+    /// checkout's config. No new key is minted. Session state (`session.json`,
+    /// the event log) stays in this worktree.
+    #[arg(long, default_value_t = false)]
+    worktree: bool,
+
     /// Explicitly target the user-global keystore (`~/.treeship/`).
     ///
     /// Required to overwrite the global config when combined with
@@ -1988,6 +1996,11 @@ struct AttestActionArgs {
     #[arg(long, value_name = "KEY")]
     idempotency_key: Option<String>,
 
+    /// Sign a v2 action that is outside the grant's scope, so the violation
+    /// is on the receipt. Without this, an out-of-scope action is refused.
+    #[arg(long)]
+    record_violation: bool,
+
     /// This action retries the attempt with this artifact id. Signed into
     /// the statement with --attempt, --retry-cause and --backoff-ms, so a
     /// verifier can tell a recovery from a duplicate (see `package verify`
@@ -2158,8 +2171,8 @@ struct AttestReceiptArgs {
     #[arg(long, value_name = "DIGEST")]
     payload_digest: Option<String>,
 
-    /// Parent artifact ID for chain linking. Inside an active session whose
-    /// actor is this --system, the default is the session's chain head;
+    /// Parent artifact ID for chain linking. Inside an active session the
+    /// default is the session's chain head, whoever --system names;
     /// otherwise the default is --subject when it is an artifact id
     #[arg(long = "parent", value_name = "ID")]
     parent_id: Option<String>,
@@ -2169,9 +2182,8 @@ struct AttestReceiptArgs {
     #[arg(long, default_value_t = false, conflicts_with = "chain")]
     no_parent: bool,
 
-    /// Chain onto the active session's head even when --system is not the
-    /// session's actor. For a trusted component that records inside the
-    /// agent's session, such as the gate's blocked.v1 refusals
+    /// Accepted for compatibility. Inside an active session a receipt already
+    /// chains onto the session head, whoever --system names
     #[arg(long, default_value_t = false)]
     chain: bool,
 }
@@ -3419,6 +3431,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             cli.config.clone(),
             a.force,
             a.global,
+            a.worktree,
             a.template.clone(),
             printer,
         ),
@@ -3920,6 +3933,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                         parent_id: a.parent.clone(),
                         approval_nonce: a.approval_nonce.clone(),
                         idempotency_key: a.idempotency_key.clone(),
+                        record_violation: a.record_violation,
                         retry_of: a.retry_of.clone(),
                         attempt: a.attempt,
                         retry_cause: a.retry_cause.clone(),

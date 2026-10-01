@@ -56,7 +56,7 @@ Verification never trusts a key because an artifact carried it — you **pin** t
 | `agent_cert` | Accept this agent key's certificates, cards, and receipts (leaf pin) |
 | `cert_issuer` | Accept agent certificates this ship key issues — pin once, verify the fleet |
 | `hub_checkpoint` | Accept this key's signed Merkle checkpoints (staples, transparency) |
-| `hub_org` | Accept this hub's org-wide single-use approval checkpoints |
+| `hub_org` | A pin kind for an org checkpoint signer. Package verify does not treat it as a single-use approval ledger |
 | `revoker` | Honor capability revocations this ship key signs |
 | `session_host` | Honor multi-agent room invitations this host key mints |
 {/* claims:rekor-artifact-anchoring */}

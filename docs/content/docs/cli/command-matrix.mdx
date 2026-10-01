@@ -35,6 +35,7 @@ treeship init [OPTIONS]
 | `--name <NAME>` | Human-readable name for this ship (optional) |
 | `--template <TEMPLATE>` | Apply a trust template (name or file path) |
 | `--force` | Overwrite an existing config |
+| `--worktree` | Link this git worktree to the main checkout's ship and store |
 | `--global` | Explicitly target the user-global keystore (`~/.treeship/`) |
 
 ## `treeship add`
@@ -119,6 +120,7 @@ treeship attest action [OPTIONS] --actor <URI> --action <LABEL>
 | `--no-parent` | Do not chain onto the active session's head when --parent is absent; the receipt is sealed at close as unchained |
 | `--approval-nonce <NONCE>` | Must match the nonce on the approval authorising this action |
 | `--idempotency-key <KEY>` | Idempotency key for retry-safe approval consumption |
+| `--record-violation` | Sign a v2 action that is outside the grant's scope, so the violation is on the receipt. Without this, an out-of-scope action is refused |
 | `--retry-of <ID>` | This action retries the attempt with this artifact id. Signed into the statement with --attempt, --retry-cause and --backoff-ms, so a verifier can tell a recovery from a duplicate (see `package verify` row `retries`) |
 | `--attempt <N>` | 1-based attempt number of this action in its retry chain (default 2) |
 | `--retry-cause <CAUSE>` | Why the previous attempt was not accepted: timeout, error, rate_limited, operator, unknown |
@@ -185,9 +187,9 @@ treeship attest receipt [OPTIONS] --kind <KIND>
 | `--payload <'{"key":"val"}'>` | Receipt payload as a JSON object |
 | `--payload-file <PATH>` | Read receipt payload JSON from a file |
 | `--payload-digest <DIGEST>` | Digest of the external payload, for example sha256:&lt;hex&gt; |
-| `--parent <ID>` | Parent artifact ID for chain linking. Inside an active session whose actor is this --system, the default is the session's chain head; otherwise the default is --subject when it is an artifact id |
+| `--parent <ID>` | Parent artifact ID for chain linking. Inside an active session the default is the session's chain head, whoever --system names; otherwise the default is --subject when it is an artifact id |
 | `--no-parent` | Do not chain onto the session's head; the receipt is sealed at close as unchained |
-| `--chain` | Chain onto the active session's head even when --system is not the session's actor. For a trusted component that records inside the agent's session, such as the gate's blocked.v1 refusals |
+| `--chain` | Accepted for compatibility. Inside an active session a receipt already chains onto the session head, whoever --system names |
 
 ### `treeship attest card`
 

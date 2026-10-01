@@ -42,9 +42,12 @@ func (h *Handlers) Challenge(w http.ResponseWriter, r *http.Request) {
 
 	nonce := randomHex(16)
 	deviceCode := randomHex(8)
+	// The person types this. It is not the device_code, which also sits in
+	// the activation URL. Approval without it is not a person's approval.
+	userCode := randomHex(4)
 	expiresAt := time.Now().Unix() + 300
 
-	if err := db.InsertChallenge(h.DB, deviceCode, nonce, expiresAt); err != nil {
+	if err := db.InsertChallenge(h.DB, deviceCode, nonce, userCode, expiresAt); err != nil {
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -53,6 +56,7 @@ func (h *Handlers) Challenge(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"nonce":       nonce,
 		"device_code": deviceCode,
+		"user_code":   userCode,
 		"expires_at":  fmt.Sprintf("%d", expiresAt),
 	})
 }
@@ -158,6 +162,7 @@ type authorizeRequest struct {
 	DockPublicKey string `json:"dock_public_key"`
 	DeviceCode    string `json:"device_code"`
 	Nonce         string `json:"nonce"`
+	UserCode      string `json:"user_code"`
 }
 
 // Authorize handles POST /v1/dock/authorize
@@ -207,8 +212,17 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Browser-only approval (no keys): just mark as approved and return.
+	// Browser-only approval (no keys): the person must present the user_code
+	// the CLI showed them. The device_code is also in the activation URL, so
+	// it is not a secret the browser can be assumed to have earned.
 	if req.ShipPublicKey == "" || req.DockPublicKey == "" {
+		if challenge.UserCode == "" || req.UserCode != challenge.UserCode {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"state": "pending",
+				"error": "user_code required -- type the code shown by the CLI",
+			})
+			return
+		}
 		if err := db.ApproveChallenge(h.DB, challenge.DeviceCode, nil, nil); err != nil {
 			jsonError(w, "failed to approve challenge", http.StatusInternalServerError)
 			return

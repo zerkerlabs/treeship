@@ -34,13 +34,16 @@ fn session_path() -> Option<PathBuf> {
     let home = home::home_dir().map(|h| std::fs::canonicalize(&h).unwrap_or(h));
     loop {
         let candidate = dir.join(".treeship").join("session.json");
-        if candidate.exists() {
+        let config_json = dir.join(".treeship").join("config.json");
+        if (candidate.exists() || dir.join(".treeship").is_dir())
+            && project_config_trusted(&config_json)
+        {
             return Some(candidate);
         }
-        // Also check if .treeship dir exists here (for creating a new session)
-        let ts_dir = dir.join(".treeship");
-        if ts_dir.is_dir() {
-            return Some(candidate);
+        // A repo boundary ends the walk. A `.treeship` above the checkout
+        // belongs to a different project.
+        if dir.join(".git").exists() {
+            return None;
         }
         if home.as_deref() == Some(dir.as_path()) {
             return None;
@@ -49,6 +52,33 @@ fn session_path() -> Option<PathBuf> {
             return None;
         }
     }
+}
+
+/// A discovered project config is the person's only when they own it and
+/// nobody else can write it. A config planted in a checkout, or left
+/// group-writable, is not a session root.
+fn project_config_trusted(config_json: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(config_json) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.mode() & 0o022 != 0 {
+            return false;
+        }
+        if let Some(home) = home::home_dir() {
+            if let Ok(home_meta) = std::fs::metadata(home) {
+                if meta.uid() != home_meta.uid() {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 /// The workspace a session command records into.
@@ -138,6 +168,39 @@ fn dangerous_root_message(root: &Path) -> String {
          Fix: cd into the real project repo and run `treeship session start` there.\n  \
          Override only if intentional: treeship session start --allow-dangerous-root",
         root.display(),
+    )
+}
+
+/// Serializes `session start` in a workspace. Blocking: a second start waits
+/// for the first to write session.json, then sees it and is refused.
+struct StartLock {
+    file: std::fs::File,
+}
+
+impl StartLock {
+    fn acquire(ts_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let lock_path = ts_dir.join("session.start.lock");
+        let file = crate::safe_fs::open_lock_under_treeship(&lock_path)?;
+        file.lock_exclusive()?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for StartLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+fn already_active_message(existing: &SessionManifest) -> String {
+    let name = existing
+        .name
+        .as_deref()
+        .map(|n| format!(", \"{n}\""))
+        .unwrap_or_default();
+    format!(
+        "session already active ({}, {}{name})\n\n  run: treeship session close",
+        existing.session_id, existing.actor
     )
 }
 
@@ -253,8 +316,20 @@ fn read_manifest_at(path: &Path) -> Option<SessionManifest> {
 /// The session's chain head: the newest artifact in this workspace whose
 /// parent walk reaches the session root, or the root itself when nothing has
 /// chained onto it yet. `None` when there is no root to walk to.
+///
+/// Takes the workspace's chain lock first and keeps it for the rest of the
+/// command (see [`hold_chain_lock`]), then re-reads the index from disk.
+/// Without that, concurrent `attest` processes each read the same head, each
+/// signed a child of it, and the chain forked.
 pub(crate) fn session_chain_head(ctx: &ctx::Ctx, root: Option<&str>) -> Option<String> {
     let root = root?;
+    if let Err(e) = hold_chain_lock(ctx) {
+        // Proceeding would sign against a head another process may be
+        // extending right now. Fail closed: no chained parent is better
+        // than a forked one, and the caller then seals loose and says so.
+        eprintln!("warning: could not lock the workspace chain ({e}); not chaining");
+        return None;
+    }
     let index = ctx.storage.list();
     let by_id: std::collections::HashMap<&str, Option<&str>> = index
         .iter()
@@ -282,6 +357,35 @@ pub(crate) fn session_chain_head(ctx: &ctx::Ctx, root: Option<&str>) -> Option<S
         }
     }
     Some(root.to_string())
+}
+
+/// The chain lock this process holds, if any. A process-wide slot rather
+/// than a guard threaded through every caller: the critical section is "read
+/// the head -> sign -> write the record", and the head is read in one module
+/// while the record is written in another. Holding it until
+/// [`release_chain_lock`] (or process exit, which drops the flock) keeps every
+/// path covered, including ones that never release explicitly.
+static CHAIN_LOCK: std::sync::Mutex<Option<treeship_core::storage::StoreLock>> =
+    std::sync::Mutex::new(None);
+
+/// Take the workspace chain lock for this process, blocking until it is
+/// free. Idempotent: a second call while it is held is a no-op (re-locking
+/// through a second descriptor would deadlock against ourselves). After
+/// taking it the in-memory index is re-read, so the head is computed from
+/// what other processes have written, not from the copy loaded at open.
+pub(crate) fn hold_chain_lock(ctx: &ctx::Ctx) -> Result<(), Box<dyn std::error::Error>> {
+    let mut slot = CHAIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.is_none() {
+        *slot = Some(ctx.storage.lock_chain()?);
+    }
+    ctx.storage.reload()?;
+    Ok(())
+}
+
+/// Release the chain lock once the record that used the head is written.
+pub(crate) fn release_chain_lock() {
+    let mut slot = CHAIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    *slot = None;
 }
 
 fn resolve_last(storage_dir: &str) -> Option<String> {
@@ -610,6 +714,30 @@ fn verified_root_workflow_ref(
     Ok(root_workflow_ref)
 }
 
+/// The worktree root when this directory is a linked git worktree.
+fn linked_worktree_root() -> Option<String> {
+    let common = git_rev(&["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let git_dir = git_rev(&["rev-parse", "--path-format=absolute", "--git-dir"])?;
+    if common == git_dir {
+        return None;
+    }
+    git_rev(&["rev-parse", "--show-toplevel"])
+}
+
+fn git_rev(args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git").args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(out.stdout).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
 pub fn start(
     name: Option<String>,
     actor: Option<String>,
@@ -618,20 +746,19 @@ pub fn start(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Check for existing session
-    if let Some(existing) = load_session() {
-        return Err(format!(
-            "session already active: {} ({})\n\n  run: treeship session close",
-            existing.session_id,
-            existing.name.unwrap_or_default()
-        )
-        .into());
-    }
-
     let ts_dir = match session_dir() {
         Some(d) => d,
         None => return Err("no .treeship directory found -- run treeship init first".into()),
     };
+
+    // Check-then-write under a workspace lock, held until session.json is
+    // written. Without it, concurrent starts all passed the check, all
+    // printed "session started", and only the last session.json survived;
+    // the other sessions were never sealed.
+    let _start_lock = StartLock::acquire(&ts_dir)?;
+    if let Some(existing) = load_session() {
+        return Err(already_active_message(&existing).into());
+    }
 
     let ctx = open_ctx_for_start(config)?;
 
@@ -668,6 +795,11 @@ pub fn start(
         meta.as_object_mut()
             .expect("session start metadata is constructed as an object")
             .insert("workflow_ref".into(), reference.clone().into());
+    }
+    if let Some(root) = linked_worktree_root() {
+        meta.as_object_mut()
+            .expect("session start metadata is constructed as an object")
+            .insert("worktree".into(), root.into());
     }
 
     let mut stmt = ActionStatement::new(&actor_uri, "session.start");
@@ -1331,6 +1463,26 @@ pub(crate) fn session_attestation_class(
         "runtime"
     } else {
         "self"
+    }
+}
+
+/// The one journal digest this session's uses hang off that is not itself
+/// one of those uses. That is the previous session's tail. More than one
+/// such digest means the uses are not a single window, and nothing is signed.
+fn approval_chain_window_start(uses: &[treeship_core::statements::ApprovalUse]) -> Option<String> {
+    let embedded: std::collections::HashSet<&str> =
+        uses.iter().map(|u| u.record_digest.as_str()).collect();
+    let mut external: Vec<&str> = uses
+        .iter()
+        .map(|u| u.previous_record_digest.as_str())
+        .filter(|prev| !prev.is_empty() && !embedded.contains(*prev))
+        .collect();
+    external.sort();
+    external.dedup();
+    if external.len() == 1 {
+        Some(external[0].to_string())
+    } else {
+        None
     }
 }
 
@@ -2178,7 +2330,7 @@ pub fn close(
             // agents get a key-bound record. Best-effort: a record
             // failure warns and never wedges the close -- the sealed
             // package above is already the source of truth.
-            let record_payload = session_record_payload(
+            let mut record_payload = session_record_payload(
                 &receipt,
                 &manifest.session_id,
                 &manifest.actor,
@@ -2189,6 +2341,9 @@ pub fn close(
                 &pkg_output.receipt_digest,
                 pkg_output.merkle_root.as_deref(),
             );
+            if let Some(anchor) = approval_chain_window_start(&approvals.uses) {
+                record_payload["approval_chain_anchor"] = serde_json::Value::String(anchor);
+            }
             match mint_session_record(&ctx, &manifest.actor, &result.artifact_id, record_payload) {
                 Ok((record_id, class)) => {
                     printer.info(&format!(
@@ -2718,6 +2873,11 @@ fn has_zk_proofs(ts_dir: &Path, session_id: &str) -> bool {
 /// reach, oldest first. The window is the manifest's start time to now, in
 /// this workspace's store: everything signed here while the session was
 /// open belongs to the session. The close artifact itself is on the chain.
+///
+/// Candidates come from the record files on disk (`scan_ids`), not from
+/// `index.json`. The index is an unsigned cache: an entry missing from it
+/// (lost to a concurrent writer before index updates were locked, or rolled
+/// back by hand) used to keep a signed artifact out of every package.
 fn find_unchained(
     ctx: &ctx::Ctx,
     manifest: &SessionManifest,
@@ -2725,30 +2885,65 @@ fn find_unchained(
 ) -> Vec<session::receipt::ArtifactEntry> {
     let on_chain: std::collections::HashSet<&str> =
         chain.iter().map(|e| e.artifact_id.as_str()).collect();
-    // The index is append-ordered (`list()` returns newest first), so "during
-    // the session" is "after the root artifact was written": a position, not
-    // a timestamp. Second-resolution timestamps would sweep in whatever the
-    // workspace signed in the same second before the session started.
+    // Refresh the positions from disk. Best effort on purpose: the index only
+    // orders candidates here, the directory scan below decides membership,
+    // and an artifact with no index position falls back to its signed time.
+    let _ = ctx.storage.reload();
+    // The index is append-ordered (`list()` returns newest first), so for an
+    // indexed artifact "during the session" is "after the root artifact was
+    // written": a position, not a timestamp. Second-resolution timestamps
+    // would sweep in whatever the workspace signed in the same second before
+    // the session started.
     let mut index = ctx.storage.list();
     index.reverse();
-    let after_root: Vec<_> = match manifest
+    let position: std::collections::HashMap<&str, usize> = index
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.id.as_str(), i))
+        .collect();
+    let root_pos = manifest
         .root_artifact_id
         .as_deref()
-        .and_then(|root| index.iter().position(|e| e.id == root))
-    {
-        // The root itself stays in: when nothing chained onto it, the walk
-        // from the close artifact never reaches it, and it is still the
-        // session's anchor.
-        Some(pos) => index.into_iter().skip(pos).collect(),
-        None => index
-            .into_iter()
-            .filter(|e| e.signed_at.as_str() > manifest.started_at.as_str())
-            .collect(),
-    };
+        .and_then(|root| position.get(root).copied());
+    let root_signed_at = manifest
+        .root_artifact_id
+        .as_deref()
+        .and_then(|root| ctx.storage.read(root).ok())
+        .map(|r| r.signed_at);
+    let after_root: Vec<treeship_core::storage::Record> = ctx
+        .storage
+        .scan_ids()
+        .into_iter()
+        .filter(|id| !on_chain.contains(id.as_str()))
+        .filter_map(|id| {
+            match (position.get(id.as_str()), root_pos) {
+                // Indexed, and the root is indexed: by position. The root
+                // itself stays in: when nothing chained onto it, the walk
+                // from the close artifact never reaches it, and it is still
+                // the session's anchor.
+                (Some(&pos), Some(rp)) => {
+                    if pos < rp {
+                        return None;
+                    }
+                    ctx.storage.read(&id).ok()
+                }
+                // Not in the index (or no indexed root to measure from): it
+                // has no position, so its signed time decides. At or after
+                // the root's signed time; failing that, after the manifest's
+                // start time.
+                _ => {
+                    let rec = ctx.storage.read(&id).ok()?;
+                    let keep = match root_signed_at.as_deref() {
+                        Some(root_at) => rec.signed_at.as_str() >= root_at,
+                        None => rec.signed_at.as_str() > manifest.started_at.as_str(),
+                    };
+                    keep.then_some(rec)
+                }
+            }
+        })
+        .collect();
     let mut out: Vec<session::receipt::ArtifactEntry> = after_root
         .into_iter()
-        .filter(|e| !on_chain.contains(e.id.as_str()))
-        .filter_map(|e| ctx.storage.read(&e.id).ok())
         .map(|rec| session::receipt::ArtifactEntry {
             artifact_id: rec.artifact_id.clone(),
             payload_type: rec.payload_type.clone(),

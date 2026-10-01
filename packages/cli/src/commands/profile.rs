@@ -13,7 +13,7 @@
 //! Reputation pinned to a root is falsifiable; reputation that floats is
 //! marketing.
 
-use crate::commands::merkle::{build_tree, checkpoint_tree, load_latest_checkpoint};
+use crate::commands::merkle::{checkpoint_leaves, load_latest_checkpoint};
 use crate::{ctx, printer::Printer};
 use treeship_core::attestation::sign;
 use treeship_core::merkle::Checkpoint;
@@ -155,12 +155,11 @@ fn sessions_in_prefix(
     expected_root: &str,
     checkpoint: &Checkpoint,
 ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
-    let (_, artifact_ids) = build_tree(ctx)?;
-    // Reuse the audited truncate-and-cross-check helper for the root check.
     if checkpoint.tree_size != tree_size || checkpoint.root != expected_root {
         return Err("internal: checkpoint/pin mismatch".into());
     }
-    let _ = checkpoint_tree(&artifact_ids, checkpoint)?;
+    // The checkpoint's leaves in its order, cross-checked against its root.
+    let (_, artifact_ids) = checkpoint_leaves(ctx, checkpoint)?;
 
     let receipt_pt = payload_type("receipt");
     let mut out = Vec::new();

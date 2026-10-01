@@ -23,8 +23,7 @@
 //! directory, same `0o600` permission expectation, same JSON-on-disk
 //! shape. There is no remote sync in this release — operators add roots
 //! by hand via `treeship trust add` after verifying the key fingerprint
-//! out-of-band (`treeship hub sync-trust` is referenced in error
-//! messages as the forward-looking automation hook).
+//! out-of-band. There is no hub command that fetches trust roots.
 
 use std::{
     fs,
@@ -340,8 +339,7 @@ impl std::fmt::Display for TrustRootError {
             Self::NotConfigured { path } => write!(
                 f,
                 "no trust roots configured (looked for {}). \
-                 Run `treeship trust add <key_id> <pubkey> --kind <kind>` \
-                 or sync from your hub via `treeship hub sync-trust`.",
+                 Run `treeship trust add <key_id> <pubkey> --kind <kind>`.",
                 path.display(),
             ),
             Self::Malformed { path, msg } => {

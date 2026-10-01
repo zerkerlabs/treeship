@@ -156,8 +156,7 @@ impl std::fmt::Display for CertificateVerifyError {
             Self::NoTrustConfigured => write!(
                 f,
                 "no trust roots configured for agent certificates. \
-                 Run `treeship trust add <key_id> <pubkey> --kind agent_cert` \
-                 or sync from your hub via `treeship hub sync-trust`.",
+                 Run `treeship trust add <key_id> <pubkey> --kind agent_cert`.",
             ),
         }
     }

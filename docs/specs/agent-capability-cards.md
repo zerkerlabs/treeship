@@ -1,6 +1,6 @@
 # Agent Capability Cards — design draft
 
-**Status:** Largely shipped -- `treeship verify-capability <card_id>` exists and matches this doc's description almost verbatim. Cards are minted by `treeship agent register`, not `treeship attest card` as this doc says throughout -- that command name never shipped. Body not re-audited section by section against 0.31.10 beyond that.
+**Status:** Shipped. `treeship attest card --agent <uri> --tools ... --models ...` mints the `agent_card.v1` receipt this doc describes (verified against `packages/cli/src/main.rs`'s `AttestCommand::Card` and `packages/cli/src/commands/attest.rs::card`), and `treeship verify-capability <card_id>` checks it, matching this doc's description almost verbatim. `treeship agent register` is a separate, higher-level onboarding flow (mints an `agent_cert.v1` Identity Certificate plus a local card-store entry) -- not what this doc describes, and not a replacement for `attest card`. Body not re-audited section by section beyond that.
 **Pairs with:** predicate registry (PR #127), `TrustRootKind::AgentCert` (`packages/core/src/trust`)
 **Last updated:** 2026-06-23 (status line updated 2026-09-27 against v0.31.10)
 
