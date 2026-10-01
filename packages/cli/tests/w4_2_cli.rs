@@ -184,7 +184,7 @@ fn ui_off_a_terminal_says_so_instead_of_an_os_error() {
 }
 
 #[test]
-fn a_v2_action_outside_its_grant_is_signed_with_a_warning() {
+fn a_v2_action_outside_its_grant_is_refused_unless_recorded() {
     let ship = Ship::init();
     let g = ship.json(&[
         "grant",
@@ -200,7 +200,7 @@ fn a_v2_action_outside_its_grant_is_signed_with_a_warning() {
         "json",
     ]);
     let id = g["grant_id"].as_str().unwrap().to_string();
-    let out = ship.run(&[
+    let refused = ship.run(&[
         "attest",
         "action",
         "--v2",
@@ -211,15 +211,35 @@ fn a_v2_action_outside_its_grant_is_signed_with_a_warning() {
         "--grant",
         &id,
     ]);
-    let t = text(&out);
+    let t = text(&refused);
     assert!(
-        out.status.success(),
-        "the receipt records the violation; signing must not fail:\n{t}"
+        !refused.status.success(),
+        "an out-of-scope action must not be signed:\n{t}"
+    );
+    assert!(t.contains("refusing to sign"), "{t}");
+
+    let recorded = ship.run(&[
+        "attest",
+        "action",
+        "--v2",
+        "--actor",
+        "agent://me",
+        "--action",
+        "admin.delete",
+        "--grant",
+        &id,
+        "--record-violation",
+    ]);
+    let recorded_text = text(&recorded);
+    assert!(
+        recorded.status.success(),
+        "recording the violation should still sign:\n{recorded_text}"
     );
     assert!(
-        t.contains("outside the grant's scope"),
-        "no warning at signing time:\n{t}"
+        recorded_text.contains("outside the grant's scope"),
+        "{recorded_text}"
     );
+
     let ok = ship.run(&[
         "attest",
         "action",

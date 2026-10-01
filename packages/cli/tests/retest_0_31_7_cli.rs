@@ -435,7 +435,7 @@ fn the_import_refusal_shows_both_pins_and_says_which_is_which() {
     a.ok(&["bundle", "export", &bid, "--out", out.to_str().unwrap()]);
     let err = b.fails(&["bundle", "import", out.to_str().unwrap()]);
     assert!(
-        err.contains("--kind agent_cert --yes    # if it is an agent's own key"),
+        err.contains("--kind agent_cert --agent agent://<name> --yes    # if it is an agent's own key"),
         "{err}"
     );
     assert!(
