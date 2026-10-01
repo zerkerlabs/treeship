@@ -369,7 +369,7 @@ The current release is the latest tag on [GitHub Releases](https://github.com/ze
 
 ## Security history
 
-Treeship's verifier has had four advisories in four months, and most share a root cause: a surface reported a green verdict without a signature check rooted in a pinned key.
+Treeship's verifier has had five advisories in five months, and most share a root cause: a surface reported a green verdict without a signature check rooted in a pinned key.
 
 - **v0.10.3**: the keystore did not encrypt as documented; verifiers trusted embedded keys; a Merkle downgrade path. [TS-2026-001](docs/security/TS-2026-001.md).
 - **v0.19**: higher-level surfaces reported "verified" from attacker-controlled input without checking against a pinned signature. [Release post](https://docs.treeship.dev/blog/treeship-0-19-the-security-hardening-release).
@@ -377,6 +377,7 @@ Treeship's verifier has had four advisories in four months, and most share a roo
 <!-- claims:rekor-artifact-anchoring -->
 - **v0.31.9**: the hub's Rekor submissions were silently rejected, and the unwitnessed-time policy gate read times from unsigned local records. [TS-2026-003](docs/security/TS-2026-003.md).
 - **v0.31.10**: the 0.31.4 close-record binding accepted a record signed by any key the package carried, not only the session's own -- a rewritten receipt could still verify; separately, `treeship init` and other commands wrote through symlinks. [TS-2026-004](docs/security/TS-2026-004.md), [GHSA-p367-33qm-pwv7](https://github.com/zerkerlabs/treeship/security/advisories/GHSA-p367-33qm-pwv7).
+- **v0.31.12**: agent-card checks took the signer from an unverified signature field, and agent pins did not name an agent, so a party whose key the verifier trusted could present a card as another agent's or forge and hide its revocations; separately, the receipt preview and certificate pages did not escape every field. [TS-2026-005](docs/security/TS-2026-005.md), [GHSA-w356-2hw3-x2v2](https://github.com/zerkerlabs/treeship/security/advisories/GHSA-w356-2hw3-x2v2).
 
 What is true now: every verdict-printing path verifies signatures against the verifier's own pinned roots, and the vocabulary a verdict may use is gated in CI. The release workflow smoke-tests the built binary, on every supported distro, before the GitHub release is created or any package is published; a separate post-publish job then re-installs the published npm and PyPI packages and re-verifies them. What is not yet true: an independent third-party audit of the verify paths. It is on the open list above. Every audit so far was internal and AI-assisted; read the advisories with that in mind. The [threat model](docs/security/threat-model.md) states what the verifier can and cannot conclude.
 
