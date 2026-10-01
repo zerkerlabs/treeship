@@ -2171,8 +2171,8 @@ struct AttestReceiptArgs {
     #[arg(long, value_name = "DIGEST")]
     payload_digest: Option<String>,
 
-    /// Parent artifact ID for chain linking. Inside an active session whose
-    /// actor is this --system, the default is the session's chain head;
+    /// Parent artifact ID for chain linking. Inside an active session the
+    /// default is the session's chain head, whoever --system names;
     /// otherwise the default is --subject when it is an artifact id
     #[arg(long = "parent", value_name = "ID")]
     parent_id: Option<String>,
@@ -2182,9 +2182,8 @@ struct AttestReceiptArgs {
     #[arg(long, default_value_t = false, conflicts_with = "chain")]
     no_parent: bool,
 
-    /// Chain onto the active session's head even when --system is not the
-    /// session's actor. For a trusted component that records inside the
-    /// agent's session, such as the gate's blocked.v1 refusals
+    /// Accepted for compatibility. Inside an active session a receipt already
+    /// chains onto the session head, whoever --system names
     #[arg(long, default_value_t = false)]
     chain: bool,
 }

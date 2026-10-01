@@ -5,6 +5,7 @@
 ## 0.31.13 (2026-10-01)
 
 - **Signing and approvals fail closed.** A halted actor cannot attest or wrap. `wrap` honors `require_approval`. An idempotency key is reused only for the same actor, action, and subject. A journal use vouches only for the action it names. An expired key, a revoked grant, an out-of-scope action, and a revoked capability card cannot sign. A self-supplied readback is not independent evidence. A later approval session continues the journal chain from a signed window start.
+- **A receipt inside a session chains onto the session head whoever signs it.** The actor or `--system` is in the signed statement. `--no-parent` still keeps a receipt off the chain. `--chain` remains and is already the default.
 - **A linked worktree keeps the main checkout's ship.** `treeship init --worktree` writes a local stub that extends the main config. Sessions stay in the worktree. The Claude Code session hook does this itself, and says so when a tool call is not recorded.
 - **The hub does not publish to public Rekor unless `TREESHIP_REKOR_URL` is set.** Device-code approval requires the user code the CLI shows.
 - **A discovered project config is used only when you own it and only you can write it,** and the walk stops at the git root.

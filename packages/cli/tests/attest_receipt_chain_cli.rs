@@ -1,8 +1,8 @@
 //! `attest receipt` inside a session follows the same chain rule as
-//! `attest action`: minted by the session's own actor it chains onto the
-//! session's head, so the sealed package passes `chain_completeness` under
-//! `--strict` on a stranger's machine. Found by the evaluator kit: a grade
-//! sealed in the evaluator's own grading session was `unchained`.
+//! `attest action`: it chains onto the session's head whoever `--system`
+//! names, so the sealed package passes `chain_completeness` under
+//! `--strict`. The system is signed into the statement. `--no-parent`
+//! keeps a receipt off the chain.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -154,7 +154,7 @@ fn receipt_by_the_sessions_actor_chains_and_verifies_strictly() {
 }
 
 #[test]
-fn receipt_by_another_system_is_sealed_loose_with_a_hint() {
+fn receipt_by_another_system_chains_onto_the_session() {
     let ws = Ws::new();
     let (ok, out) = ws.run(&[
         "session",
@@ -165,24 +165,17 @@ fn receipt_by_another_system_is_sealed_loose_with_a_hint() {
         "system://evaluator",
     ]);
     assert!(ok, "{out}");
-    let (ok, out) = ws.run(&[
-        "attest",
-        "receipt",
-        "--system",
-        "system://someone-else",
-        "--kind",
-        "evaluation.v1",
-        "--payload",
-        PAYLOAD,
-    ]);
-    assert!(ok, "{out}");
-    assert!(out.contains("sealed loose"), "{out}");
-    let (close, _) = close(&ws);
+    let id = attest(&ws, "system://someone-else", &[]);
+    let (close, receipt) = close(&ws);
     assert_eq!(
-        close["sealed_unchained"].as_array().unwrap().len(),
-        1,
+        close["sealed_unchained"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0),
+        0,
         "{close}"
     );
+    assert_eq!(entry(&receipt, &id)["unchained"], Value::Null);
 }
 
 #[test]
