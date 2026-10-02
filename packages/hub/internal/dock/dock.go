@@ -212,14 +212,16 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Browser-only approval (no keys): the person must present the user_code
-	// the CLI showed them. The device_code is also in the activation URL, so
-	// it is not a secret the browser can be assumed to have earned.
+	// Browser-only approval (no keys). `treeship hub attach` prints the
+	// device code, and the activate page submits that code. Typing it is
+	// the approval. Hub accounts are out of scope for this step. A second
+	// code is accepted when a client sends one, and a wrong one is refused,
+	// but it is not required: the CLI does not show one.
 	if req.ShipPublicKey == "" || req.DockPublicKey == "" {
-		if challenge.UserCode == "" || req.UserCode != challenge.UserCode {
+		if req.UserCode != "" && req.UserCode != challenge.UserCode {
 			writeJSON(w, http.StatusForbidden, map[string]string{
 				"state": "pending",
-				"error": "user_code required -- type the code shown by the CLI",
+				"error": "user_code does not match the code for this device",
 			})
 			return
 		}

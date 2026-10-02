@@ -25,6 +25,10 @@ go run .
 
 Configure the database path with `TREESHIP_HUB_DB` (checked first) or `DATABASE_PATH` (what Railway sets); with neither set, it defaults to `/var/lib/treeship/hub.db`. The server starts on `http://localhost:8080` by default (`PORT` env var to change it).
 
+`treeship hub attach` prints a device code. The person types that code on the activate page, and submitting it approves the attach. There is no hub account for this step.
+
+Set `TREESHIP_REKOR_URL` to a Rekor you operate if pushes should be anchored. Leave it unset, or set it to `off`, and anchoring stays off. The hub does not submit to the public Sigstore log unless that variable names it.
+
 ## Deploying
 
 Production runs on Railway. Deploy with `scripts/hub-deploy.sh` from the repository root (`RAILWAY_SERVICE=<service id>`); it sets `HUB_VERSION`, `HUB_COMMIT` and `HUB_BUILT_AT` on the service, which the Dockerfile takes as build args, then runs `railway up`. A plain `railway up` has no `.git`, so without those variables `/v1/version` reports `commit: unknown`; with them left from an earlier run it would report that run's commit, which is why the script sets them fresh every time. A deploy from the connected repository takes its commit from `RAILWAY_GIT_COMMIT_SHA` regardless. See `RELEASING.md`.
