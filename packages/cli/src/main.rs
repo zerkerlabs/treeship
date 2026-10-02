@@ -2466,6 +2466,14 @@ struct VerifyArgs {
     /// authority and finding none is not a pass.
     #[arg(long, default_value_t = false)]
     require_authority: bool,
+
+    /// Fail when a handoff names artifacts this store does not hold.
+    ///
+    /// Without this flag the missing ids are reported and the signature
+    /// check can still pass. With it, text exits non-zero and JSON reports
+    /// `outcome: fail` with those ids in `missing_artifacts`.
+    #[arg(long, default_value_t = false)]
+    strict: bool,
 }
 
 #[derive(Args)]
@@ -4183,6 +4191,7 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                     a.full,
                     a.max_unwitnessed.as_deref(),
                     a.require_authority,
+                    a.strict,
                     cli.config.as_deref(),
                     printer,
                 )

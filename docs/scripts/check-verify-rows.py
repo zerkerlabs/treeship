@@ -21,7 +21,7 @@ EMIT = re.compile(r'VerifyCheck::(?:pass|fail|warn|skip)\w*\(\s*"([a-z][a-z0-9_:
 PREFIXES = ("replay-", "approval-use", "nonce-binding", "trust-root",
             "session-participant", "receipt_body_binding", "merkle_root",
             "leaf_count", "timeline_order", "determinism")
-QUOTED = re.compile(r'`([a-z][a-z0-9_-]*(?:[-:][a-z0-9_-]+)*)`')
+QUOTED = re.compile(r'`([a-z][a-z0-9_:-]+)`')
 
 emitted = set()
 for f in PKGS.rglob("*.rs"):
@@ -35,7 +35,7 @@ emitted |= {n.split(":")[0] for n in emitted}
 # Names the code references but no longer emits — e.g. a legacy label kept in a
 # promotion set for external tooling. The docs may name these, as long as they
 # say so; what must not appear is a name invented by the docs.
-KNOWN = re.compile(r'"([a-z][a-z0-9_:-]*(?:[-:][a-z0-9_:-]+)+)"')
+KNOWN = re.compile(r'"([a-z][a-z0-9_:-]+)"')
 referenced = set()
 for f in PKGS.rglob("*.rs"):
     try:

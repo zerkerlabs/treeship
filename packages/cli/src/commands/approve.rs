@@ -207,31 +207,23 @@ pub fn check_approved(command: &str) -> Option<String> {
 
 /// Verify that an approval artifact with the given nonce exists in storage.
 fn verify_approval_artifact_exists(nonce: &str) -> bool {
-    // Walk the storage directory looking for an approval artifact that
-    // contains this nonce. This is a simple scan -- acceptable for the
-    // typical number of artifacts in a local store.
-    let ts_dir = match pending_dir() {
-        Some(d) => d.parent().map(|p| p.to_path_buf()),
-        None => None,
-    };
-    let storage_dir = match ts_dir {
-        Some(ref ts) => ts.join("artifacts"),
-        None => return false,
-    };
-    if !storage_dir.exists() {
+    // The approval is written through the same store `approve` uses. A
+    // project stub keeps that store beside the global config, not in
+    // `<project>/.treeship/artifacts`, so scanning the pending directory's
+    // sibling misses the artifact and the hook deletes a real approval.
+    let Ok(ctx) = super::session::open_ctx(None) else {
         return false;
-    }
-    if let Ok(entries) = std::fs::read_dir(&storage_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                if let Ok(data) = std::fs::read_to_string(&path) {
-                    // Check if this artifact contains the nonce
-                    if approval_payload_nonce_is(&data, nonce) {
-                        return true;
-                    }
-                }
-            }
+    };
+    let pt = payload_type("approval");
+    for entry in ctx.storage.list_by_type(&pt) {
+        let Ok(rec) = ctx.storage.read(&entry.id) else {
+            continue;
+        };
+        let Ok(data) = serde_json::to_string(&rec.envelope) else {
+            continue;
+        };
+        if approval_payload_nonce_is(&data, nonce) {
+            return true;
         }
     }
     false

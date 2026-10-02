@@ -21,9 +21,10 @@
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use treeship_core::journal::{self, Journal};
 use treeship_core::statements::{
-    parse_rfc3339_to_unix, payload_type, Grant, ReceiptStatement, RevocationSource,
-    RevocationStatus,
+    parse_rfc3339_to_unix, payload_type, ApprovalRevocation, Grant, ReceiptStatement,
+    RevocationSource, RevocationStatus,
 };
 use treeship_core::storage::Record;
 
@@ -750,6 +751,28 @@ pub fn revoke(
         envelope: signed.envelope.clone(),
         hub_url: None,
         anchors: Vec::new(),
+    })?;
+
+    let journal = Journal::new(ctx.journal_dir().map_err(|e| e.to_string())?);
+    journal::append_revocation(
+        &journal,
+        ApprovalRevocation {
+            type_: String::new(),
+            revocation_id: signed.artifact_id.clone(),
+            grant_id: grant.grant_id.clone(),
+            grant_digest: grant.grant_id.clone(),
+            revoker: format!("ship://{}", ctx.config.ship_id),
+            reason: reason.map(str::to_string),
+            created_at: revoked_at.clone(),
+            previous_record_digest: String::new(),
+            record_digest: String::new(),
+            signature: None,
+            signature_alg: None,
+            signing_key_id: Some(signer.key_id().to_string()),
+        },
+    )
+    .map_err(|e| {
+        format!("the revocation receipt was written, but the local journal did not record it: {e}")
     })?;
 
     if printer.format == Format::Json {

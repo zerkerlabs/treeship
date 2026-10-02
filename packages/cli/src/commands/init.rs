@@ -177,7 +177,7 @@ pub fn run(
     // The per-install host id is minted here, once, so sessions that start
     // together later never race to create it.
     if std::env::var_os("TREESHIP_HOST_ID").is_none() {
-        let _ = crate::commands::session::local_host_id();
+        let _ = crate::commands::session::local_host_id_in(config_path.parent());
     }
 
     printer.blank();

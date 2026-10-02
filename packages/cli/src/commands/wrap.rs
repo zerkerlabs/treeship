@@ -766,7 +766,7 @@ fn emit_wrap_events(
         Err(_) => return,
     };
 
-    let host_id = super::session::local_host_id();
+    let host_id = super::session::local_host_id_in(Some(&ts_dir));
     let trace_id = generate_trace_id();
     let now = || {
         let secs = std::time::SystemTime::now()
@@ -862,7 +862,7 @@ fn emit_decision_from_env() {
         Err(_) => return,
     };
 
-    let host_id = super::session::local_host_id();
+    let host_id = super::session::local_host_id_in(Some(&ts_dir));
     let now = {
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

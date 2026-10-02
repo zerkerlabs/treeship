@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   # PR-level guard against the failure mode that produced the v0.9.6 PyPI
   # drift: pyproject.toml at 0.9.5 while every other package was at 0.9.6,

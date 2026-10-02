@@ -147,6 +147,29 @@ fn session_dir() -> Option<PathBuf> {
     session_path().and_then(|p| p.parent().map(|d| d.to_path_buf()))
 }
 
+/// Where `session start --config <path>` writes. The path names the config,
+/// so the session files go in that config's `.treeship`, not in whatever
+/// directory the command was typed from.
+fn session_dir_for_config(config: Option<&str>) -> Option<PathBuf> {
+    let Some(raw) = config else {
+        return session_dir();
+    };
+    let path = PathBuf::from(raw);
+    let dir = if path.is_dir() {
+        path
+    } else {
+        path.parent()?.to_path_buf()
+    };
+    if dir.file_name().and_then(|s| s.to_str()) == Some(".treeship") {
+        return Some(dir);
+    }
+    let nested = dir.join(".treeship");
+    if nested.is_dir() {
+        return Some(nested);
+    }
+    session_dir()
+}
+
 fn home_dir() -> Option<PathBuf> {
     home::home_dir().and_then(|p| p.canonicalize().ok())
 }
@@ -436,17 +459,39 @@ pub(crate) fn count_chain_artifacts(ctx: &ctx::Ctx, root_id: &str) -> u64 {
 
 /// Get the host ID for the current machine.
 pub(crate) fn local_host_id() -> String {
+    local_host_id_in(None)
+}
+
+/// Host id for the config actually in use. `dir` is that config's
+/// `.treeship` directory. When it is set, the id is read and written there,
+/// not in `~/.treeship`, so `--config` pointing somewhere else does not
+/// create a host id in the home directory.
+pub(crate) fn local_host_id_in(treeship_dir: Option<&Path>) -> String {
     // TREESHIP_HOST_ID names the host outright. Otherwise a random id made
-    // once per install and kept at ~/.treeship/host_id: stable on one
-    // machine so a receipt's hosts group, and carrying nothing about the
-    // machine. A hostname digest was tried first and reversed from a guess
-    // list of common machine names in seconds (0.31.11 re-test, N-41).
+    // once per install: stable on one machine so a receipt's hosts group,
+    // and carrying nothing about the machine. A hostname digest was tried
+    // first and reversed from a guess list of common machine names in
+    // seconds (0.31.11 re-test, N-41).
     std::env::var("TREESHIP_HOST_ID")
         .ok()
         .filter(|v| !v.is_empty())
-        .or_else(treeship_core::session::context::read_host_id_file)
-        .or_else(create_host_id_file)
+        .or_else(|| read_host_id_in(treeship_dir))
+        .or_else(|| create_host_id_file(treeship_dir))
         .unwrap_or_else(|| "host_unknown".into())
+}
+
+fn read_host_id_at(path: &Path) -> Option<String> {
+    let raw = treeship_core::fs_safe::read_small_nofollow(path, 64).ok()?;
+    let raw = String::from_utf8(raw).ok()?;
+    let id = raw.trim();
+    treeship_core::session::context::is_host_id(id).then(|| id.to_string())
+}
+
+fn read_host_id_in(treeship_dir: Option<&Path>) -> Option<String> {
+    let Some(dir) = treeship_dir else {
+        return treeship_core::session::context::read_host_id_file();
+    };
+    read_host_id_at(&dir.join("host_id"))
 }
 
 /// Mint `host_` + 16 hex characters from the OS random source and keep it at
@@ -456,9 +501,12 @@ pub(crate) fn local_host_id() -> String {
 /// one id. None when there is no HOME or nothing can be written or read;
 /// the caller then says `host_unknown`. `init` calls this too, so the race
 /// only exists on installs from before the file.
-pub(crate) fn create_host_id_file() -> Option<String> {
+pub(crate) fn create_host_id_file(treeship_dir: Option<&Path>) -> Option<String> {
     use rand::RngCore;
-    let path = treeship_core::session::context::host_id_file()?;
+    let path = match treeship_dir {
+        Some(dir) => dir.join("host_id"),
+        None => treeship_core::session::context::host_id_file()?,
+    };
     let mut bytes = [0u8; 8];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     let id = format!("host_{}", hex::encode(bytes));
@@ -488,7 +536,7 @@ pub(crate) fn create_host_id_file() -> Option<String> {
 fn read_host_id_file_settled(path: &std::path::Path) -> Option<String> {
     const ID_LEN: usize = "host_".len() + 16;
     for _ in 0..50 {
-        if let Some(id) = treeship_core::session::context::read_host_id_file() {
+        if let Some(id) = read_host_id_at(path) {
             return Some(id);
         }
         match treeship_core::fs_safe::read_small_nofollow(path, 64) {
@@ -746,7 +794,7 @@ pub fn start(
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let ts_dir = match session_dir() {
+    let ts_dir = match session_dir_for_config(config) {
         Some(d) => d,
         None => return Err("no .treeship directory found -- run treeship init first".into()),
     };
@@ -781,7 +829,7 @@ pub fn start(
     let now = now_rfc3339();
     let now_ms = epoch_ms();
     let trace_id = generate_trace_id();
-    let host_id = local_host_id();
+    let host_id = local_host_id_in(ctx.config_path.parent());
 
     // Create the session-start action artifact
     let parent_id = resolve_last(&ctx.config.storage_dir);

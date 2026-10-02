@@ -133,7 +133,8 @@ export function receiptApiUrl(raw: string): string {
   const noFragment = pathAndQuery.split('#')[0];
   const q = noFragment.indexOf('?');
   const query = q < 0 ? null : noFragment.slice(q + 1);
-  const path = (q < 0 ? noFragment : noFragment.slice(0, q)).replace(/\/+$/, '');
+  let path = q < 0 ? noFragment : noFragment.slice(0, q);
+  while (path.endsWith('/')) path = path.slice(0, -1);
 
   // The id is whatever follows the receipt segment: exactly one path
   // segment of id characters, so `..`, `%2F` and friends never reach the

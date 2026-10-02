@@ -1,0 +1,4 @@
+- **An approved shell command gets through the hook.** The approval is checked in the store that recorded it, so a project stub no longer deletes a real approval and blocks the command again.
+- **`grant revoke` records the withdrawal in the local journal,** and a later use of that grant is refused there.
+- **`verify --strict` fails when a handoff names artifacts this store does not hold.** The missing ids are in the JSON either way.
+- **`session start --config` writes the session beside that config.** A host id for an explicit config is written in that config's directory.
