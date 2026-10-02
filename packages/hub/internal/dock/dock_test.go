@@ -108,16 +108,16 @@ func TestAuthorized_Pending(t *testing.T) {
 
 func TestAuthorized_Approved(t *testing.T) {
 	h := newTestHandlers(t)
-	code, _, user := issueChallenge(t, h)
+	code, _, _ := issueChallenge(t, h)
 
-	// The device code alone is not an approval.
-	status, body := postAuthorize(t, h, map[string]string{"device_code": code})
+	// A wrong second code is not an approval.
+	status, body := postAuthorize(t, h, map[string]string{"device_code": code, "user_code": "00000000"})
 	if status != http.StatusForbidden {
-		t.Fatalf("device_code-only approve = %d %v, want 403", status, body)
+		t.Fatalf("wrong user_code approve = %d %v, want 403", status, body)
 	}
 
-	// Browser approves with the code the CLI showed.
-	status, body = postAuthorize(t, h, map[string]string{"device_code": code, "user_code": user})
+	// The code the CLI prints, with no second code, is the approval.
+	status, body = postAuthorize(t, h, map[string]string{"device_code": code})
 	if status != http.StatusOK || body["state"] != "approved" {
 		t.Fatalf("browser approve = %d %v, want 200 approved", status, body)
 	}

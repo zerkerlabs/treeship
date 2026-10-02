@@ -48,7 +48,7 @@ Key properties:
 <!-- claims:package-verify-binds-receipt -->
 - A package's close record must name that session's own chained `session.close`, signed by the same key as the chain-root `session.start` (or a record key that close names); it is not enough for the record to merely verify under some key the package carries (see [TS-2026-004](docs/security/TS-2026-004.md) for packages built before 0.31.10)
 - A capability card is key-bound only when its own key is among the signatures that verified and that key's `agent_cert` pin names the card's agent; pins without an agent scope no longer bind (see [TS-2026-005](docs/security/TS-2026-005.md) to re-pin counterparty keys)
-- Signing and approvals fail closed: an expired key, a revoked grant, an out-of-scope action, a revoked capability card, and a halted actor cannot sign, a self-supplied readback is not independent evidence, and device-code approval requires the user code (see [TS-2026-006](docs/security/TS-2026-006.md))
+- Signing and approvals fail closed: an expired key, a revoked grant, an out-of-scope action, a revoked capability card, and a halted actor cannot sign, and a self-supplied readback is not independent evidence (see [TS-2026-006](docs/security/TS-2026-006.md))
 - Content-addressed artifact IDs derived from PAE bytes
 - Hub: device authorization for **enrollment**, **DPoP (RFC 9449)** for **every authenticated Hub write** (no bearer session tokens for that path)
 - Approval nonce binding prevents approval reuse
