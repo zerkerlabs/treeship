@@ -53,7 +53,7 @@ treeship room participants
 
 - `invitation_authority` is signed into the receipt and not enforced by `verify`. A receipt naming `host-only` and an invite minted by a non-host both verify clean. It is recorded policy, not access control.
 - Nothing on the Buzz side creates a room when a channel opens or joins members automatically. That provider mapping is designed in the [Room Sessions](/docs/concepts/room-sessions) concept and not implemented.
-- The multi-agent join path is covered by CI. The live two-agent dogfood, one nest agent inviting another and countersigning with a challenge, has not been run and published. The receipt the agents published in August, [ssn_a9993133572ca758](https://www.treeship.dev/receipt/ssn_a9993133572ca758), is a plain session close on 0.23, made before the room commands existed, and its artifacts were never pushed to the hub.
+- The multi-agent join path is covered by CI. The live two-agent dogfood, one nest agent inviting another and countersigning with a challenge, has not been run and published.
 
 ## Where to go next
 
