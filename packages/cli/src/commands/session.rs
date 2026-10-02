@@ -1972,9 +1972,9 @@ pub fn close(
 
     let elapsed_ms = epoch_ms().saturating_sub(manifest.started_at_ms);
     let trace_id = generate_trace_id();
-    let host_id = local_host_id();
 
     let ts_dir = session_dir().ok_or("no .treeship directory found")?;
+    let host_id = local_host_id_in(Some(&ts_dir));
     let _close_lock = CloseLock::acquire(&ts_dir)?;
 
     // Write session.closed event to the event log
@@ -2118,7 +2118,7 @@ pub fn close(
                 _ => None,
             })
             .collect();
-        let host_id = local_host_id();
+        let host_id = local_host_id_in(Some(&ts_dir));
         let trace_id = generate_trace_id();
         let reconcile = session::reconcile_changes_with_options(
             &cwd,
@@ -2648,7 +2648,7 @@ pub fn append_active_session_event(
         agent_instance_id: a_name.into(),
         agent_name: a_name.into(),
         agent_role: Some("agent".into()),
-        host_id: local_host_id(),
+        host_id: local_host_id_in(Some(&ts_dir)),
         tool_runtime_id: None,
         event_type,
         artifact_ref: artifact_ref.map(|s| s.into()),
@@ -2695,7 +2695,7 @@ pub fn event(
     let event_log = crate::safe_fs::open_event_log(&evt_dir)?;
 
     let actor_uri = actor.unwrap_or(&manifest.actor);
-    let host_id = local_host_id();
+    let host_id = local_host_id_in(Some(&ts_dir));
     let trace_id = generate_trace_id();
     let a_name = agent_name.unwrap_or("external");
 
