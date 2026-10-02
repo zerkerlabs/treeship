@@ -83,6 +83,11 @@ pub enum JournalError {
         max_uses: u32,
         current: u32,
     },
+    /// A revocation for this grant is already in the journal. Later consumes
+    /// are refused; uses written before the revocation stay where they are.
+    GrantRevoked {
+        grant_id: String,
+    },
 }
 
 impl std::fmt::Display for JournalError {
@@ -109,6 +114,10 @@ impl std::fmt::Display for JournalError {
             Self::MaxUsesExceeded { grant_id, max_uses, current } => write!(
                 f,
                 "approval grant {grant_id} would exceed max_uses ({current}/{max_uses})",
+            ),
+            Self::GrantRevoked { grant_id } => write!(
+                f,
+                "approval grant {grant_id} is revoked; refusing a new use",
             ),
         }
     }
@@ -351,6 +360,11 @@ pub fn reserve_use(
 ) -> Result<Head, JournalError> {
     rec.type_ = TYPE_APPROVAL_USE.into();
     with_lock(j, || {
+        if grant_is_revoked(j, &rec.grant_id)? {
+            return Err(JournalError::GrantRevoked {
+                grant_id: rec.grant_id.clone(),
+            });
+        }
         // Replay check inside the lock. `check_replay` reads the
         // by-nonce index; while we hold the exclusive lock, no other
         // writer can mutate that index, so the count is correct.
@@ -384,6 +398,19 @@ pub fn reserve_use(
         ensure_meta(j)?;
         Ok(new_head)
     })
+}
+
+fn grant_is_revoked(j: &Journal, grant_id: &str) -> Result<bool, JournalError> {
+    for (_idx, kind, bytes) in iter_records(j)? {
+        if kind != "approval-revocation" {
+            continue;
+        }
+        let rec: ApprovalRevocation = serde_json::from_slice(&bytes)?;
+        if rec.grant_id == grant_id {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Append an ApprovalRevocation. Sibling of `append_use`.
@@ -1255,6 +1282,8 @@ mod tests {
         let h = append_revocation(&j, rev).unwrap();
         assert_eq!(h.index, 2);
         assert_eq!(verify_integrity(&j).unwrap(), 2);
+        let err = reserve_use(&j, sample_use("use_2", "g1", "sha256:nn2", 0), Some(8)).unwrap_err();
+        assert!(matches!(err, JournalError::GrantRevoked { .. }));
     }
 
     #[test]

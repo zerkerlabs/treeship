@@ -986,9 +986,26 @@ jobs:
             echo "lockfile PR for ${VERSION} is already open; branch updated"
             exit 0
           fi
-          gh pr create --base main --head "$BRANCH" \
+          set +e
+          pr_err=$(gh pr create --base main --head "$BRANCH" \
             --title "chore: refresh npm lockfiles for ${VERSION}" \
             --body "$(printf '%s\n\n%s\n\n%s' \
               "The lockfiles at v${VERSION} name the previous release; prepare cannot hash tarballs that do not exist yet. This PR carries the resolved entries and integrity hashes for the packages published from the tag." \
               "Opened by the release workflow. Checks do not start on a PR opened with the workflow token: push an empty commit or close and reopen it to run them, then merge." \
-              "See RELEASING.md, section \"Lockfiles\".")"
+              "See RELEASING.md, section \"Lockfiles\".")" 2>&1)
+          pr_rc=$?
+          set -e
+          if [ "$pr_rc" -eq 0 ]; then
+            exit 0
+          fi
+          echo "$pr_err"
+          # Actions is often forbidden to open pull requests. The branch is
+          # already on the remote; print the compare link and succeed so a
+          # release is not red for a permission the job cannot grant itself.
+          if echo "$pr_err" | grep -q "not permitted to create or approve pull requests"; then
+            COMPARE="https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCH}?expand=1"
+            echo "Could not open the lockfile pull request. Open it from ${COMPARE}" >> "$GITHUB_STEP_SUMMARY"
+            echo "Could not open the lockfile pull request. Open it from ${COMPARE}"
+            exit 0
+          fi
+          exit 1

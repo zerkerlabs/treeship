@@ -35,6 +35,23 @@ enum Outcome {
     Fail,
 }
 
+/// Artifact ids a handoff names that this store does not hold. Only the
+/// target envelope is considered, matching the text warning.
+fn missing_handoff_artifacts(envelopes: &[(String, Envelope)], storage: &Store) -> Vec<String> {
+    let Some((_, env)) = envelopes.last() else {
+        return Vec::new();
+    };
+    let Ok(handoff) = env.unmarshal_statement::<HandoffStatement>() else {
+        return Vec::new();
+    };
+    handoff
+        .artifacts
+        .iter()
+        .filter(|id| !storage.exists(id))
+        .cloned()
+        .collect()
+}
+
 /// Rich per-step data extracted from each artifact in the chain.
 struct StepInfo {
     index: usize,
@@ -422,6 +439,7 @@ pub fn run(
     full: bool,
     max_unwitnessed: Option<&str>,
     require_authority: bool,
+    strict: bool,
     config: Option<&str>,
     printer: &Printer,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -566,6 +584,7 @@ pub fn run(
     // text path: JSON (what CI consumes) and --full ignored it and exited 0.
     let (coverage, anchor_tally) = compute_chain_coverage(&ctx, &chain_ids, &trust);
     let anchoring_gate = anchoring_gate_failure(max_unwitnessed_secs, &coverage);
+    let missing_artifacts = missing_handoff_artifacts(&chain_envelopes, &ctx.storage);
 
     if printer.format == crate::printer::Format::Json {
         // Effect verdicts are keyed by artifact id so the signature-focused
@@ -703,6 +722,9 @@ pub fn run(
         if anchoring_gate.is_some() {
             failed_gates.push("max_unwitnessed");
         }
+        if strict && !missing_artifacts.is_empty() {
+            failed_gates.push("handoff_artifacts");
+        }
         let outcome_pass = failed == 0 && linkage_ok && failed_gates.is_empty();
         printer.json(&serde_json::json!({
             "outcome": if outcome_pass { "pass" } else { "fail" },
@@ -748,6 +770,7 @@ pub fn run(
                 })),
             },
             "checks": out,
+            "missing_artifacts": missing_artifacts,
         }));
         let authority_gate = authority_gate_failure(
             require_authority,
@@ -755,7 +778,12 @@ pub fn run(
             authority_unverified,
             authority_ok,
         );
-        if failed > 0 || !linkage_ok || authority_gate.is_some() || anchoring_gate.is_some() {
+        if failed > 0
+            || !linkage_ok
+            || authority_gate.is_some()
+            || anchoring_gate.is_some()
+            || (strict && !missing_artifacts.is_empty())
+        {
             std::process::exit(1);
         }
         return Ok(());
@@ -1070,6 +1098,13 @@ pub fn run(
                     printer.info(&format!("  {k}:{pad}   {v}"));
                 }
                 if !handoff_absent.is_empty() {
+                    if strict {
+                        printer.failure(
+                            "the handoff names work this store does not hold",
+                            &[("missing", &handoff_absent.join(", "))],
+                        );
+                        std::process::exit(1);
+                    }
                     printer.warn(
                         "the handoff names work this store does not hold",
                         &[
