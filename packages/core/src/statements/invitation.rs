@@ -26,6 +26,7 @@
 //! verification dispatch. New fields added in future versions go through
 //! a `canonical_version` bump, not a silent extension.
 
+use crate::canonical::canonical_json_string;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -342,51 +343,6 @@ pub(crate) fn canonical_json_digest<T: Serialize>(value: &T) -> String {
     let digest = Sha256::digest(canonical.as_bytes());
     format!("sha256:{}", hex::encode(digest))
 }
-
-/// Sorted-key canonical JSON. Mirrors `merkle::checkpoint::canonical_json_string`
-/// (intentionally a copy rather than a cross-module pub use; the merkle
-/// version is private and this module needs the same behavior without
-/// reaching into a sibling's internals).
-pub(crate) fn canonical_json_string(value: &serde_json::Value) -> String {
-    use std::collections::BTreeMap;
-    match value {
-        serde_json::Value::Object(map) => {
-            let sorted: BTreeMap<&String, String> = map
-                .iter()
-                .map(|(k, v)| (k, canonical_json_string(v)))
-                .collect();
-            let mut out = String::from("{");
-            let mut first = true;
-            for (k, v) in sorted {
-                if !first {
-                    out.push(',');
-                }
-                first = false;
-                let key_json = serde_json::to_string(k).expect("string serializes to JSON");
-                out.push_str(&key_json);
-                out.push(':');
-                out.push_str(&v);
-            }
-            out.push('}');
-            out
-        }
-        serde_json::Value::Array(items) => {
-            let mut out = String::from("[");
-            let mut first = true;
-            for v in items {
-                if !first {
-                    out.push(',');
-                }
-                first = false;
-                out.push_str(&canonical_json_string(v));
-            }
-            out.push(']');
-            out
-        }
-        other => serde_json::to_string(other).expect("scalar JSON value serializes"),
-    }
-}
-
 /// `sha256(<raw_nonce>)` as `sha256:<hex>`. Shared with the journal
 /// (`statements::approval_use::nonce_digest`); kept here so the
 /// invitation module does not depend on the journal-side type.

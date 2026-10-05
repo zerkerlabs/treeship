@@ -1,3 +1,4 @@
+use crate::canonical::canonical_json_string;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -466,55 +467,6 @@ fn zk_proof_digest_hex(summary: &ChainProofSummary) -> String {
     let canonical = canonical_json_string(&value);
     hex::encode(Sha256::digest(canonical.as_bytes()))
 }
-
-/// Sorted-key canonical JSON. Compact (no whitespace). For object keys
-/// the ordering is bytewise on the UTF-8 representation, matching what
-/// `BTreeMap<String, _>` produces. Arrays preserve order. Numbers,
-/// booleans, strings, and null serialize as serde_json's default
-/// (which is JSON-spec compliant; we do not need RFC 8785's full
-/// numeric normalization for `ChainProofSummary` because every numeric
-/// field there is an integer).
-pub(crate) fn canonical_json_string(value: &serde_json::Value) -> String {
-    use std::collections::BTreeMap;
-    match value {
-        serde_json::Value::Object(map) => {
-            let sorted: BTreeMap<&String, String> = map
-                .iter()
-                .map(|(k, v)| (k, canonical_json_string(v)))
-                .collect();
-            let mut out = String::from("{");
-            let mut first = true;
-            for (k, v) in sorted {
-                if !first {
-                    out.push(',');
-                }
-                first = false;
-                // Re-serialize the key as a JSON string to handle escapes.
-                let key_json = serde_json::to_string(k).expect("string serializes to JSON");
-                out.push_str(&key_json);
-                out.push(':');
-                out.push_str(&v);
-            }
-            out.push('}');
-            out
-        }
-        serde_json::Value::Array(items) => {
-            let mut out = String::from("[");
-            let mut first = true;
-            for item in items {
-                if !first {
-                    out.push(',');
-                }
-                first = false;
-                out.push_str(&canonical_json_string(item));
-            }
-            out.push(']');
-            out
-        }
-        other => serde_json::to_string(other).expect("scalar serializes to JSON"),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Trust-pin tests
 // ---------------------------------------------------------------------------

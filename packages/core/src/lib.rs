@@ -2,6 +2,7 @@ pub mod agent;
 pub mod artifacts;
 pub mod attestation;
 pub mod bundle;
+pub(crate) mod canonical;
 pub mod capability;
 pub mod disclosure;
 pub mod fs_safe;
