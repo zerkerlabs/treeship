@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.31.14 (2026-10-05)
+
+- **An approved shell command gets through the hook.** The approval is checked in the store that recorded it, so a project stub no longer deletes a real approval and blocks the command again.
+- **`grant revoke` records the withdrawal in the local journal,** and a later use of that grant is refused there.
+- **`verify --strict` fails when a handoff names artifacts this store does not hold.** The missing ids are in the JSON either way.
+- **`session start --config` writes the session beside that config.** A host id for an explicit config is written in that config's directory.
+- **Hub attach accepts the code the CLI prints.** 0.31.13 required a second code the activate page never sends, so every attach was rejected. Submitting the printed device code approves the attach.
+- **TS-2026-006 is published** ([GHSA-w5fp-wc8j-3h4p](https://github.com/zerkerlabs/treeship/security/advisories/GHSA-w5fp-wc8j-3h4p)). Session discovery, approvals, signing, and effect grading through 0.31.12 could accept actions the product's own rules refused. Upgrade the CLI and any self-hosted hub to 0.31.14.
+
 ## 0.31.13 (2026-10-01)
 
 - **Signing and approvals fail closed.** A halted actor cannot attest or wrap. `wrap` honors `require_approval`. An idempotency key is reused only for the same actor, action, and subject. A journal use vouches only for the action it names. An expired key, a revoked grant, an out-of-scope action, and a revoked capability card cannot sign. A self-supplied readback is not independent evidence. A later approval session continues the journal chain from a signed window start.
