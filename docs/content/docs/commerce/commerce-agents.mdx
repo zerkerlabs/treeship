@@ -313,7 +313,7 @@ python -m treeship_commerce.demo_merchant
 
 ## Verifiable Intent at hand-off
 
-[Verifiable Intent](/integrations/verifiable-intent) is the Mastercard-maintained v0.1 draft for proving an agent was authorized to buy: an issuer credential, a user mandate that delegates to the agent's key with constraints, and a Layer 3 pair the agent signs for the network and the merchant. [`treeship vi attest`](/cli/vi) signs that pair with the spec's optional `agent_attestation` claim pointing at this receipt chain. Run at hand-off, the chain head it names is the hand-off receipt, so the credential binds the cart that went to checkout to the mandate that authorized it.
+[Verifiable Intent](/integrations/verifiable-intent) is the open draft at [verifiableintent.dev](https://verifiableintent.dev/), still marked v0.1, for proving an agent was authorized to buy: an issuer credential, a user mandate that delegates to the agent's key with constraints, and a Layer 3 pair the agent signs for the network and the merchant. The published constraints page registers eight types. The protocol landscape maps the credential onto AP2's open verifiable-digital-credential slot and says it can ride in UCP's AP2 mandate extension and in ACP's extension. Treeship does not speak those transports. [`treeship vi attest`](/cli/vi) signs the Layer 3 pair with the spec's optional `agent_attestation` claim pointing at this receipt chain. That claim is the behavioral record the spec's security model says v0.1 does not provide on its own. Run at hand-off, the chain head it names is the hand-off receipt, so the credential binds the cart that went to checkout to the mandate that authorized it.
 
 ```python
 from treeship_commerce import attest_at_handoff, vi_verify
@@ -330,7 +330,7 @@ summary["attestation"]["chain_head"] == receipts.last_handoff    # True
 vi_verify(ts, mandate=l2_sdjwt, out="./vi-out")["outcome"]       # "pass"
 ```
 
-The purchase values must describe the cart. The mandate check runs before anything is signed; a purchase outside it raises and writes nothing. The attestation is a receipt (`vi.l3.attested`) on the chain after the hand-off, and `order_placed` chains the host's order onto it, so the sealed package holds the whole story: the calls, the refusals, the cart, the credential, the order. What goes to the network (`l3a.sdjwt` with `l2-payment.sdjwt`) and to the merchant (`l3b.sdjwt` with `l2-checkout.sdjwt`) is in `--out`. Needs treeship 0.31.
+The purchase values must describe the cart. The mandate check runs before anything is signed; a purchase outside it raises and writes nothing. The attestation is a receipt (`vi.l3.attested`) on the chain after the hand-off, and `order_placed` chains the host's order onto it, so the sealed package holds the whole story: the calls, the refusals, the cart, the credential, the order. What goes to the network (`l3a.sdjwt` with `l2-payment.sdjwt`) and to the merchant (`l3b.sdjwt` with `l2-checkout.sdjwt`) is in `--out`. Needs treeship 0.31 or later. The current release is 0.31.14. Since 0.31.6, `treeship vi verify --local --require-attestation` checks the attestation signature under a trusted key.
 
 ## Operating it
 

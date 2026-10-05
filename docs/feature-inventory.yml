@@ -579,7 +579,7 @@
   tests:
     - packages/core/tests/vi_reference_fixture.rs
     - packages/cli/tests/vi_cli.rs
-  notes: "Independent implementation of the Verifiable Intent v0.1 draft (Mastercard-maintained): P-256 agent key, mandate constraint check, key-bound SD-JWT L3a/L3b with the spec's agent_attestation claim carrying a ship-signed vi.l3.attested receipt (session, chain head, Merkle checkpoint, approval use). Two-way interop with the reference SDK in CI (tests/vi-interop). Beta: single mandate pair only; cumulative budget/occurrence counting is the network's."
+  notes: "Independent implementation of the Verifiable Intent v0.1 draft as published at verifiableintent.dev (eight constraint types, versioned mandate VCTs, cnf.jwk.kid): P-256 agent key, mandate constraint check, key-bound SD-JWT L3a/L3b with the spec's agent_attestation claim carrying a ship-signed vi.l3.attested receipt (session, chain head, Merkle checkpoint, approval use). Two-way interop with the reference SDK in CI (tests/vi-interop). The published landscape maps the credential onto AP2, UCP, and ACP; this crate signs the credential and does not speak those transports. Beta: single mandate pair only; cumulative budget/occurrence counting is the network's."
 
 - id: capability-grants
   name: Capability grants + delegation chains

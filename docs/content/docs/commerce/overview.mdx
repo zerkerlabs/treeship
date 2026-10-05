@@ -12,6 +12,7 @@ Treeship's artifact system applies naturally to commerce workflows where AI agen
 - **Receipts for Anthropic's commerce reference.** `treeship-commerce` wraps the one executor every tool call passes through in [anthropics/commerce-agents](https://github.com/anthropics/commerce-agents), on the Messages API, the Agent SDK, and Managed Agents: a signed intent receipt before each tool runs, a signed result receipt after, a held call signed as `blocked` with its gate. Guide: [Claude Commerce Agents](/commerce/commerce-agents).
 - **Approvals with nonce binding and single use**, enforced by the Approval Use Journal, for any agent that asks a human before it acts. Below, and in [Payment Proofs](/commerce/payment-proofs).
 - **Handoffs with graded custody.** Since 0.27 a handoff records whether the receiving agent verified the sender live; `verify` prints `custody: live` only when the signed evidence supports it.
+- **The Verifiable Intent credential at hand-off.** [Verifiable Intent](/integrations/verifiable-intent) is the open v0.1 draft at [verifiableintent.dev](https://verifiableintent.dev/) for proving an agent was authorized to buy. `treeship vi attest` signs the Layer 3 pair for the network and the merchant and puts this session's receipt chain in the spec's `agent_attestation` claim, which is the record the spec's security model leaves open. Commerce receipts alone do not carry that delegation. The wiring for Anthropic's reference is [at hand-off](/commerce/commerce-agents#verifiable-intent-at-hand-off).
 
 ## The problem
 
@@ -115,6 +116,7 @@ treeship attest endorsement \
 
 ## Related reading
 
+- [Verifiable Intent](/integrations/verifiable-intent) -- the open credential `treeship vi` signs at hand-off
 - [Claude Commerce Agents](/commerce/commerce-agents) -- receipts for every tool call in Anthropic's reference, on all three runtimes
 - [Payment Proofs](/commerce/payment-proofs) -- step-by-step payment verification flow
 - [Compliance](/commerce/compliance) -- audit trails, export bundles, and regulatory patterns

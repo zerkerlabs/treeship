@@ -109,6 +109,8 @@ treeship hub push art_confirm456
 
 Share the URL with counterparties, auditors, or compliance teams. They can verify the receipt in their browser without installing Treeship.
 
-<Callout type="info">
-Treeship v2 will add ZK proofs for payment verification, allowing you to prove properties like "payment was under $10,000" or "recipient is on the approved vendor list" without revealing the actual values.
-</Callout>
+## When the credential is Verifiable Intent
+
+The receipts above are the local record of a payment step. They are not a network authorization. [Verifiable Intent](/integrations/verifiable-intent), the draft at [verifiableintent.dev](https://verifiableintent.dev/), is the credential a payment network and a merchant can check: the user mandate, then the Layer 3 pair the agent signs. `treeship vi attest` puts this receipt chain in that credential's `agent_attestation` claim. The amount and payee the network sees are the ones the spec puts on L3a. The cart, the refusals, and the approval use stay in the chain the claim names.
+
+Selective disclosure of the credential is the spec's SD-JWT. Selective disclosure of a Treeship receipt is [`treeship present`](/cli/present). Neither one is a zero-knowledge proof of the payment.

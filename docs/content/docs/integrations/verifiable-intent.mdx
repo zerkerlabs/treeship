@@ -10,8 +10,23 @@ import { Callout } from 'fumadocs-ui/components/callout';
 This is an independent implementation against the published draft and its reference SDK, tested against that SDK in both directions in CI. Treeship interoperates with Verifiable Intent; it is not endorsed by, and does not speak for, the standard's maintainers.
 
 <Callout type="info">
-Shipped in 0.31 against the **v0.1 draft** of the specification. The implementation is complete for that draft and tested against its reference SDK in CI; the draft itself is not final, so the CLI names it as a draft and the claim shapes here may move when the standard does. The command reference is [`treeship vi`](/cli/vi). Before 0.31 this page described a design; the April 2026 `packages/vi` types it referred to were written against a pre-v0.1 draft and never wired, and are retired.
+Shipped in 0.31 against the published **v0.1 draft**, and included in the current release, 0.31.14. The implementation follows the credential format and constraints pages on [verifiableintent.dev](https://verifiableintent.dev/) and is tested against the reference SDK in CI. The draft is not final, so the CLI names it as a draft. The command reference is [`treeship vi`](/cli/vi). Since 0.31.6, `vi verify --local --require-attestation` checks the attestation signature under a trusted key. Before 0.31 this page described a design; the April 2026 `packages/vi` types it referred to were written against a pre-v0.1 draft and never wired, and are retired.
 </Callout>
+
+## The published draft, as it stands
+
+[verifiableintent.dev](https://verifiableintent.dev/) still labels the specification **Draft v0.1**. The credential format page keeps the date 2026-02-18 and, together with the constraints page and the homepage, is the text `treeship vi` implements:
+
+- **Eight registered constraint types.** Amount bounds, merchant and payee allowlists, line items, a payment reference, a budget cap, and two recurrence forms. A stateless verifier checks the ones that can be checked from a single purchase. Budget totals, recurrence, and occurrence counts need the network's ledger. `treeship vi check` evaluates one purchase. It does not keep that ledger.
+- **Versioned mandate types and a nested agent key.** Open mandates are `mandate.checkout.open.1` and `mandate.payment.open.1`. Final mandates are `mandate.checkout.1` and `mandate.payment.1`. The wallet binds the agent's P-256 key at `cnf.jwk`, and every Layer 3 header `kid` must match `cnf.jwk.kid`.
+- **Selective disclosure.** Each recipient sees the disclosures the spec routes to it. That privacy is the SD-JWT. Receipt field privacy is a separate surface, [`treeship present`](/cli/present).
+- **Protocol mappings, outside the core spec.** The homepage points at AP2, ACP, and UCP. The [protocol landscape](https://verifiableintent.dev/protocol-landscape/) bounds those mappings to UCP as of 23 January 2026, AP2 as of 16 September 2025, and ACP as of 30 January 2026. AP2 leaves the verifiable-digital-credential format open; the landscape presents Verifiable Intent as one concrete format for that slot, and says the credentials can be carried in UCP's AP2 mandate extension and in ACP's extension. Treeship signs and verifies the credential. It does not implement those checkout transports, and it does not implement Visa's Trusted Agent Protocol.
+
+The site's changelog page still records 0.1.0 (2026-02-19) and five constraint types, and says there are no unreleased changes. The credential format, the constraints registry, and the homepage are ahead of that changelog. This implementation follows those three, not the changelog page.
+
+The [security model](https://verifiableintent.dev/spec/security-model/) states the boundary this integration is for. Verifiable Intent checks that an agent stayed inside the mandate. It does not check how the agent behaved on the way there. `agent_attestation` (§9.2 of the overview) is the optional claim reserved for that record. A verifier that does not recognize the type ignores the claim. Treeship registers `treeship.receipt-chain.v1` and puts the signed receipt chain in `value`.
+
+One mandate pair per L2. The overview allows several pairs in one Layer 2 credential, and `mandate.payment.agent_recurrence` allows several Layer 3 fulfillments of one pair, counted by the network. `treeship vi` refuses an L2 that carries more than one checkout mandate or more than one payment mandate.
 
 ## The credential chain
 
@@ -92,7 +107,7 @@ Verifiable Intent requires ES256 (P-256) for every layer's signature, alongside 
 | shipped · 0.31 | Two-way interop with the reference SDK, in CI |
 | shipped | Every field of the attestation value: session ids, receipt chains, Merkle checkpoints, approval-use records, `treeship verify` over an exported package |
 | shipped | The commerce receipts the claim binds: `commerce.checkout.handoff` and `commerce.order.placed` in [treeship-commerce](/integrations/commerce-agents) |
-| not in scope | Multi-pair L2 mandates; network-side cumulative budget and occurrence counting; immediate mode (no L3 exists) |
+| not in scope | A second mandate pair in one L2; network-side cumulative budget and occurrence counting; immediate mode (no L3 exists); UCP, ACP, and Visa Trusted Agent Protocol transports |
 
 ## Compatible with Lobster Cash
 
