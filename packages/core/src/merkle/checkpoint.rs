@@ -474,7 +474,7 @@ fn zk_proof_digest_hex(summary: &ChainProofSummary) -> String {
 /// (which is JSON-spec compliant; we do not need RFC 8785's full
 /// numeric normalization for `ChainProofSummary` because every numeric
 /// field there is an integer).
-fn canonical_json_string(value: &serde_json::Value) -> String {
+pub(crate) fn canonical_json_string(value: &serde_json::Value) -> String {
     use std::collections::BTreeMap;
     match value {
         serde_json::Value::Object(map) => {

@@ -347,7 +347,7 @@ pub(crate) fn canonical_json_digest<T: Serialize>(value: &T) -> String {
 /// (intentionally a copy rather than a cross-module pub use; the merkle
 /// version is private and this module needs the same behavior without
 /// reaching into a sibling's internals).
-fn canonical_json_string(value: &serde_json::Value) -> String {
+pub(crate) fn canonical_json_string(value: &serde_json::Value) -> String {
     use std::collections::BTreeMap;
     match value {
         serde_json::Value::Object(map) => {

@@ -139,7 +139,7 @@ fn digest_of_encoded(encoded: &str) -> String {
 /// Sorted-key canonical JSON. Mirrors the copies in `statements::invitation`
 /// and `merkle::checkpoint` (intentionally duplicated rather than a cross-module
 /// `pub use`, to keep each module self-contained per the existing convention).
-fn canonical_json_string(value: &Value) -> String {
+pub(crate) fn canonical_json_string(value: &Value) -> String {
     use std::collections::BTreeMap;
     match value {
         Value::Object(map) => {
@@ -274,5 +274,69 @@ mod tests {
         assert_ne!(s1, s2, "salts are random");
         let bytes = URL_SAFE_NO_PAD.decode(&s1).expect("salt is base64url");
         assert_eq!(bytes.len(), 16, "128-bit salt");
+    }
+}
+
+/// Canonical-JSON parity.
+///
+/// Three modules carry their own copy of `canonical_json_string`
+/// (`disclosure`, `merkle::checkpoint`, `statements::invitation`), and every
+/// one of them feeds a digest that ends up inside a signed artifact. They are
+/// the same algorithm written out three times, so nothing but these vectors
+/// stops one from drifting away from the others and silently changing a digest
+/// that older records were signed over.
+///
+/// These cases pin the current encoding exactly. They are a description of what
+/// Treeship hashes today, not an endorsement: this encoding sorts object keys by
+/// Rust's string order (UTF-8 code points) where RFC 8785 sorts by UTF-16 code
+/// units, and it prints numbers through `serde_json` rather than the
+/// ECMAScript rules RFC 8785 requires. Adopting RFC 8785 is therefore a new,
+/// additive digest, never a change to this one.
+#[cfg(test)]
+mod canonical_parity_tests {
+    use serde_json::json;
+
+    fn cases() -> Vec<serde_json::Value> {
+        vec![
+            json!({"b": 1, "a": 2}),
+            json!({"outer": {"z": [3, {"y": 1, "x": 2}], "a": null}}),
+            json!({"empty_obj": {}, "empty_arr": [], "null": null}),
+            json!({"\u{e000}": 1, "\u{1f600}": 2}),
+            json!({"n": [1.0, 0.5, 1e21, -0]}),
+            json!({"s": "caf\u{e9} \u{1f600}\n\"quoted\""}),
+            json!([]),
+            json!("bare string"),
+        ]
+    }
+
+    #[test]
+    fn all_three_canonicalizers_agree_on_every_case() {
+        for case in cases() {
+            let a = super::canonical_json_string(&case);
+            let b = crate::merkle::checkpoint::canonical_json_string(&case);
+            let c = crate::statements::invitation::canonical_json_string(&case);
+            assert_eq!(a, b, "disclosure vs checkpoint diverged on {case}");
+            assert_eq!(a, c, "disclosure vs invitation diverged on {case}");
+        }
+    }
+
+    #[test]
+    fn the_encoding_is_pinned_byte_for_byte() {
+        let pinned: Vec<(serde_json::Value, &str)> = vec![
+            (json!({"b": 1, "a": 2}), r#"{"a":2,"b":1}"#),
+            (
+                json!({"empty_obj": {}, "empty_arr": [], "null": null}),
+                r#"{"empty_arr":[],"empty_obj":{},"null":null}"#,
+            ),
+            (json!([]), "[]"),
+            (json!("bare string"), r#""bare string""#),
+        ];
+        for (value, expect) in pinned {
+            assert_eq!(
+                super::canonical_json_string(&value),
+                expect,
+                "encoding changed for {value}"
+            );
+        }
     }
 }
