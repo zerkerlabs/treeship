@@ -1,1 +1,0 @@
-- **Hub attach accepts the code the CLI prints.** 0.31.13 required a second code the activate page never sends, so every attach was rejected. Submitting the printed device code approves the attach.

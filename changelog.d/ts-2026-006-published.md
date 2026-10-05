@@ -1,1 +1,0 @@
-- **TS-2026-006 is published** ([GHSA-w5fp-wc8j-3h4p](https://github.com/zerkerlabs/treeship/security/advisories/GHSA-w5fp-wc8j-3h4p)). Session discovery, approvals, signing, and effect grading through 0.31.12 could accept actions the product's own rules refused. Upgrade the CLI and any self-hosted hub to 0.31.13.
