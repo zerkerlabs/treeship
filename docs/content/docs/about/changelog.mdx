@@ -19,7 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 - **`verify --strict` fails when a handoff names artifacts this store does not hold.** The missing ids are in the JSON either way.
 - **`session start --config` writes the session beside that config.** A host id for an explicit config is written in that config's directory.
 - **Hub attach accepts the code the CLI prints.** 0.31.13 required a second code the activate page never sends, so every attach was rejected. Submitting the printed device code approves the attach.
-- **TS-2026-006 is published** ([GHSA-w5fp-wc8j-3h4p](https://github.com/zerkerlabs/treeship/security/advisories/GHSA-w5fp-wc8j-3h4p)). Session discovery, approvals, signing, and effect grading through 0.31.12 could accept actions the product's own rules refused. Upgrade the CLI and any self-hosted hub to 0.31.13.
+- **TS-2026-006 is published** ([GHSA-w5fp-wc8j-3h4p](https://github.com/zerkerlabs/treeship/security/advisories/GHSA-w5fp-wc8j-3h4p)). Session discovery, approvals, signing, and effect grading through 0.31.12 could accept actions the product's own rules refused. Upgrade the CLI and any self-hosted hub to 0.31.14.
 
 ## 0.31.13 (2026-10-01)
 
