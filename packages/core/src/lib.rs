@@ -6,6 +6,7 @@ pub(crate) mod canonical;
 pub mod capability;
 pub mod disclosure;
 pub mod fs_safe;
+pub mod jcs;
 pub mod journal;
 pub mod judge;
 pub mod keys;
