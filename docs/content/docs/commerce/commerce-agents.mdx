@@ -330,6 +330,14 @@ summary["attestation"]["chain_head"] == receipts.last_handoff    # True
 vi_verify(ts, mandate=l2_sdjwt, out="./vi-out")["outcome"]       # "pass"
 ```
 
+The same path, driven over the retail mock with a local wallet:
+
+```bash
+python -m treeship_commerce.demo_vi
+```
+
+`treeship_commerce.wallet` issues Layer 1 and Layer 2 with the reference SDK's published demo keys and a demo token (`mastercard.srcDigitalCard`, not a live card). The agent key comes from `treeship vi keygen`. The run buys the ACME Basecamp tent the catalog search returns, holds an add the provenance gate refuses, signs L3a for `https://www.mastercard.com` and L3b for the merchant, chains the order onto the attestation, and checks the pair with `treeship vi verify --local`. No card is charged. Needs the reference SDK as well as commerce-agents.
+
 The purchase values must describe the cart. The mandate check runs before anything is signed; a purchase outside it raises and writes nothing. The attestation is a receipt (`vi.l3.attested`) on the chain after the hand-off, and `order_placed` chains the host's order onto it, so the sealed package holds the whole story: the calls, the refusals, the cart, the credential, the order. What goes to the network (`l3a.sdjwt` with `l2-payment.sdjwt`) and to the merchant (`l3b.sdjwt` with `l2-checkout.sdjwt`) is in `--out`. Needs treeship 0.31 or later. The current release is 0.31.14. Since 0.31.6, `treeship vi verify --local --require-attestation` checks the attestation signature under a trusted key.
 
 ## Operating it
@@ -347,5 +355,5 @@ The purchase values must describe the cart. The mandate check runs before anythi
 ## Reference
 
 - Package: [`integrations/commerce-agents/`](https://github.com/zerkerlabs/treeship/tree/main/integrations/commerce-agents); on PyPI as `treeship-commerce`
-- Tests: thirty-five cases on a real ship over the reference's retail and merchant mocks, run in CI against the reviewed commit of the reference; eight cover approvals, including the replay and the wrong-change refusals, four drive the merchant side through each runtime's `executor_class` seam, and seven cover the checkout hand-off and the chained order
+- Tests: thirty-six cases on a real ship over the reference's retail and merchant mocks, run in CI against the reviewed commit of the reference; eight cover approvals, including the replay and the wrong-change refusals, four drive the merchant side through each runtime's `executor_class` seam, seven cover the checkout hand-off and the chained order, and one drives the wallet demo through search, a provenance refusal, and a signed Layer 3 pair
 - Related: [Integration overview](/integrations/commerce-agents), [Agentic commerce](/commerce/overview), [Payment proofs](/commerce/payment-proofs), [Trust model](/concepts/trust-model)

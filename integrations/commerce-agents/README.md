@@ -106,6 +106,20 @@ signed single-use operator approval, then refused on replay while the reference'
 in-process approval mark is still set. Prints the grant id and the journal's record of
 its one use.
 
+```bash
+TREESHIP_BIN=... python -m treeship_commerce.demo_vi
+```
+
+The retail mock again, with a local wallet in front of checkout. The wallet
+(`treeship_commerce.wallet`) issues a Verifiable Intent Layer 1 and Layer 2
+with the reference SDK's published demo keys, bound to a key from `treeship vi
+keygen`, and a demo `mastercard.srcDigitalCard` token. The run buys the tent
+the catalog search returns, holds an add the provenance gate refuses, and
+`treeship vi attest` signs the Layer 3 pair: L3a for the network, L3b for the
+merchant. The order chains onto that attestation. `treeship vi verify --local`
+checks it. No card is charged. Needs the reference SDK
+(`agent-intent/verifiable-intent`) as well as commerce-agents.
+
 ## Checkout
 
 `receipted_backend(backend)` wraps a storefront backend so `checkout_handoff` also signs a
@@ -172,7 +186,7 @@ TREESHIP_BIN=/path/to/treeship python -m pytest
 ANTHROPIC_API_KEY=... TREESHIP_BIN=/path/to/treeship python -m pytest tests/test_live.py   # one real turn
 ```
 
-Thirty-five cases on a real isolated ship over the real retail and merchant mocks: chain
+Thirty-six cases on a real isolated ship over the real retail and merchant mocks: chain
 order and linkage, a held call signed as blocked with its gate, digests-only content,
 recording failure leaving the tool untouched, `TREESHIP_DISABLE`, `attach` refusing an
 executor that would record nothing, one per runtime, and the approval properties: a grant
@@ -182,4 +196,5 @@ wrapper, the merchant side on all three runtimes through `executor_class`, and a
 that arrive as parsed pydantic models (the MCP server's shape) digesting like their dicts,
 and the checkout hand-off: the cart digest recomputable from the card, the URL never
 written, the host's order chaining from the hand-off, and an unwrapped backend's order
-saying so.
+saying so. One more drives `demo_vi`: a wallet mandate, the provenance refusal, and a
+Layer 3 pair that `treeship vi verify --local` accepts.
