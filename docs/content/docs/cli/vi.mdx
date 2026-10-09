@@ -5,7 +5,7 @@ description: Verifiable Intent (v0.1 draft) credentials with a Treeship attestat
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`treeship vi` is an independent implementation of the [Verifiable Intent](https://verifiableintent.dev/) v0.1 draft, the Mastercard-maintained, Google co-developed credential standard for agent commerce. It interoperates with the standard's reference SDK in both directions and is tested against it in CI. It is not endorsed by, and does not speak for, the standard's maintainers.
+`treeship vi` is an independent implementation of the [Verifiable Intent](https://verifiableintent.dev/) v0.1 draft, the Mastercard-maintained, Google co-developed credential standard for agent commerce. It follows the credential format and constraints pages as published there: eight constraint types, versioned mandate VCTs, and the agent key at `cnf.jwk` with `cnf.jwk.kid`. It interoperates with the standard's reference SDK in both directions and is tested against it in CI. It is not endorsed by, and does not speak for, the standard's maintainers. The guide is [Verifiable Intent](/integrations/verifiable-intent).
 
 The chain, in one paragraph: an issuer signs **L1** for the user; the user's wallet signs **L2**, a mandate that delegates bounded authority to one agent key and states the constraints; in autonomous mode the agent signs the **L3** pair, L3a for the payment network and L3b for the merchant, each bound to the L2 by a hash over exactly the part of the L2 that recipient is shown, and to each other by `transaction_id == checkout_hash == SHA-256(checkout_jwt)`. Every layer is ES256.
 

@@ -106,6 +106,20 @@ signed single-use operator approval, then refused on replay while the reference'
 in-process approval mark is still set. Prints the grant id and the journal's record of
 its one use.
 
+```bash
+TREESHIP_BIN=... python -m treeship_commerce.demo_vi
+```
+
+The retail mock again, with a local wallet in front of checkout. The wallet
+(`treeship_commerce.wallet`) issues a Verifiable Intent Layer 1 and Layer 2
+with the reference SDK's published demo keys, bound to a key from `treeship vi
+keygen`, and a demo `mastercard.srcDigitalCard` token. The run buys the tent
+the catalog search returns, holds an add the provenance gate refuses, and
+`treeship vi attest` signs the Layer 3 pair: L3a for the network, L3b for the
+merchant. The order chains onto that attestation. `treeship vi verify --local`
+checks it. No card is charged. Needs the reference SDK
+(`agent-intent/verifiable-intent`) as well as commerce-agents.
+
 ## Checkout
 
 `receipted_backend(backend)` wraps a storefront backend so `checkout_handoff` also signs a
@@ -132,7 +146,7 @@ process; an apply there is receipted with no approval claim, never an invented o
 
 ## Verifiable Intent at hand-off
 
-[Verifiable Intent](https://docs.treeship.dev/integrations/verifiable-intent) is the Mastercard-maintained v0.1 draft for proving an agent was authorized to buy. `treeship vi attest` signs its Layer 3 pair with the spec's `agent_attestation` claim pointing at this receipt chain. Run it at hand-off and the chain head it names is the hand-off receipt, so the credential binds the cart that went to checkout:
+[Verifiable Intent](https://docs.treeship.dev/integrations/verifiable-intent) is the open v0.1 draft at [verifiableintent.dev](https://verifiableintent.dev/) for proving an agent was authorized to buy. The published constraints page registers eight types, and the protocol landscape maps the credential onto AP2, UCP, and ACP. `treeship vi attest` signs the Layer 3 pair and puts this receipt chain in the spec's `agent_attestation` claim. Run it at hand-off and the chain head it names is the hand-off receipt, so the credential binds the cart that went to checkout:
 
 ```python
 from treeship_commerce import attest_at_handoff, vi_verify
@@ -150,7 +164,7 @@ summary["attestation"]["chain_head"] == receipts.last_handoff   # True
 vi_verify(ts, mandate=l2_sdjwt, out="./vi-out")["outcome"]      # "pass"
 ```
 
-The purchase values you pass must describe the cart: the check against the mandate happens before anything is signed, and a purchase outside it raises with nothing written. The attestation is itself a receipt (`vi.l3.attested`) on the chain after the hand-off, and the host's order chains onto it. Needs treeship 0.31.
+The purchase values you pass must describe the cart: the check against the mandate happens before anything is signed, and a purchase outside it raises with nothing written. The attestation is itself a receipt (`vi.l3.attested`) on the chain after the hand-off, and the host's order chains onto it. Needs treeship 0.31 or later. One mandate pair per Layer 2. Cumulative budget and occurrence counts stay with the network.
 
 ## Keep the preimages
 
@@ -172,7 +186,7 @@ TREESHIP_BIN=/path/to/treeship python -m pytest
 ANTHROPIC_API_KEY=... TREESHIP_BIN=/path/to/treeship python -m pytest tests/test_live.py   # one real turn
 ```
 
-Thirty-five cases on a real isolated ship over the real retail and merchant mocks: chain
+Thirty-six cases on a real isolated ship over the real retail and merchant mocks: chain
 order and linkage, a held call signed as blocked with its gate, digests-only content,
 recording failure leaving the tool untouched, `TREESHIP_DISABLE`, `attach` refusing an
 executor that would record nothing, one per runtime, and the approval properties: a grant
@@ -182,4 +196,5 @@ wrapper, the merchant side on all three runtimes through `executor_class`, and a
 that arrive as parsed pydantic models (the MCP server's shape) digesting like their dicts,
 and the checkout hand-off: the cart digest recomputable from the card, the URL never
 written, the host's order chaining from the hand-off, and an unwrapped backend's order
-saying so.
+saying so. One more drives `demo_vi`: a wallet mandate, the provenance refusal, and a
+Layer 3 pair that `treeship vi verify --local` accepts.
