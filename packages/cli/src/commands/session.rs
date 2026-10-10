@@ -2511,6 +2511,7 @@ pub fn close(
             "receipts": artifact_count,
             "events": event_log.event_count(),
             "package": sealed_pkg_path.as_ref().map(|path| path.display().to_string()),
+            "report": sealed_pkg_path.as_ref().map(|path| path.join("preview.html").display().to_string()),
             "coverage_artifact_id": coverage_artifact_id,
             "coverage_declared_level": coverage_declared_level,
             "receipt_digest": sealed_receipt_digest,
@@ -2536,6 +2537,15 @@ pub fn close(
                 "  coverage: declared {coverage_declared_level} ({via})  {id}"
             ));
         }
+        // The report is the artifact a non-expert actually reads, and it is
+        // written every time, but until it was named here the only pointer to
+        // it was a path nobody had reason to look in. Name it.
+        if let Some(ref pkg_path) = sealed_pkg_path {
+            printer.info(&format!(
+                "  report:   {}",
+                pkg_path.join("preview.html").display()
+            ));
+        }
         if let Some(ref copy) = receipt_copy {
             printer.info(&format!("  copied:   {}", copy.display()));
         }
@@ -2557,6 +2567,7 @@ pub fn close(
             "treeship package verify {}  to verify locally (no hub needed)",
             pkg_path.display(),
         ));
+        printer.hint("treeship dashboard                                                   to read the report in your browser (no hub needed)");
         printer.hint("treeship session report                                              to publish + get a shareable URL (requires `treeship hub attach`)");
     } else {
         printer.hint(&format!(

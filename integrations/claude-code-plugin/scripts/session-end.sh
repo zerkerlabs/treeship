@@ -1,9 +1,18 @@
 #!/bin/sh
 # Treeship Claude Code plugin -- SessionEnd hook
 #
-# Closes the active Treeship session and surfaces the session report URL
-# back into the Claude Code context. Fails open: a broken Treeship install
-# never blocks the session from ending.
+# Closes the active Treeship session and tells the PERSON where their receipt
+# is. Fails open: a broken Treeship install never blocks the session ending.
+#
+# Why both output fields. `additionalContext` is injected into the model's
+# prompt and is never shown to the user, so for a long time the only pointer
+# to a sealed receipt went to Claude rather than to the human who owns it, and
+# people reasonably concluded nothing had been produced. `systemMessage` is
+# the documented user-facing field, but the hooks reference does not state
+# whether it renders for SessionEnd specifically. So this emits both: the
+# user-facing field carries the path, and the model-facing field instructs
+# Claude to say it out loud if the first one does not render. One of the two
+# always reaches the person.
 
 set -e
 
@@ -17,52 +26,62 @@ if [ ! -d "./.treeship" ]; then
   exit 0
 fi
 
-# No active session means nothing to close.
-# `treeship session status --check` exits 0 when active, 1 when not.
 if ! treeship session status --check >/dev/null 2>&1; then
   exit 0
 fi
 
-# Generic auto-headline. If the user invoked the treeship-session skill earlier
-# and closed with a real headline, `session status --check` returns 1 above and
-# we never get here.
 HEADLINE="Claude Code session"
 
-if treeship session close --headline "$HEADLINE" >/dev/null 2>&1; then
-  # Publishing is opt-in.
-  #
-  # This used to run unconditionally, so ending a session uploaded its receipt
-  # to the configured Hub with no operator in the loop. A receipt is immutable
-  # and the upload is not undoable, so anything the capture path got wrong
-  # became public before anyone could look at it. The OpenClaw plugin was
-  # gated behind this same variable when that was found; this path and the
-  # Kimi one were missed, which is why they are being fixed now rather than
-  # then.
-  #
-  # The local receipt is written either way. `treeship session report`
-  # publishes it whenever the operator chooses to.
-  REPORT_URL=""
-  case "${TREESHIP_AUTO_PUBLISH:-}" in
-    1|true)
-      # `treeship session report` prints the report URL on stdout by default.
-      REPORT_OUT=$(treeship session report 2>/dev/null || true)
-      REPORT_URL=$(printf '%s\n' "$REPORT_OUT" | grep -oE 'https?://[^[:space:]]+' | head -1)
-      ;;
-  esac
+# JSON, so the real report path comes from the close itself rather than being
+# reconstructed here and drifting from whatever the CLI actually wrote.
+CLOSE_OUT=$(treeship session close --headline "$HEADLINE" --format json 2>/dev/null || true)
 
-  if [ -n "$REPORT_URL" ]; then
-    cat <<EOF
-{
-  "additionalContext": "Treeship session sealed. Receipt is yours -- it lives at .treeship/sessions/ and you can verify it offline with \`treeship verify last\`. Shareable session report: $REPORT_URL"
-}
-EOF
-  else
-    cat <<'EOF'
-{
-  "additionalContext": "Treeship session sealed. Receipt is yours -- stored locally at .treeship/sessions/. Verify offline: `treeship verify last`. Publish a shareable session report: `treeship session report`."
-}
-EOF
-  fi
+if [ -z "$CLOSE_OUT" ]; then
+  exit 0
 fi
+
+json_field() {
+  printf '%s\n' "$CLOSE_OUT" \
+    | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | head -1
+}
+
+# Backslashes first, then quotes: a path is attacker-adjacent input only in
+# the sense that a directory name can contain either, and an unescaped one
+# would produce JSON the harness cannot parse.
+json_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+REPORT=$(json_field report)
+PACKAGE=$(json_field package)
+SESSION_ID=$(json_field session_id)
+
+REPORT_URL=""
+case "${TREESHIP_AUTO_PUBLISH:-}" in
+  1|true)
+    REPORT_OUT=$(treeship session report 2>/dev/null || true)
+    REPORT_URL=$(printf '%s\n' "$REPORT_OUT" | grep -oE 'https?://[^[:space:]]+' | head -1)
+    ;;
+esac
+
+if [ -n "$REPORT_URL" ]; then
+  USER_MSG="Treeship sealed this session. Shareable report: ${REPORT_URL} -- run 'treeship dashboard' to read it locally, or 'treeship verify last' to check it offline."
+  MODEL_MSG="The Treeship session was sealed and published. Tell the user plainly, in your closing message, that their signed receipt is published at ${REPORT_URL}, that a local copy is in .treeship/sessions/, and that 'treeship dashboard' opens the human-readable report. Do not omit this: it is the only notice the user gets."
+elif [ -n "$REPORT" ]; then
+  USER_MSG="Treeship sealed this session. Human-readable report: ${REPORT} -- or run 'treeship dashboard' to browse it. Verify offline with 'treeship verify last'. Nothing was published."
+  MODEL_MSG="The Treeship session was sealed locally and nothing left the machine. Tell the user plainly, in your closing message, that their signed receipt and a human-readable report are at ${REPORT}, that 'treeship dashboard' opens it in a browser, and that 'treeship session report' would publish a shareable URL. Do not omit this: it is the only notice the user gets."
+else
+  USER_MSG="Treeship sealed this session into .treeship/sessions/. Run 'treeship dashboard' to read the report, or 'treeship verify last' to check it offline."
+  MODEL_MSG="The Treeship session was sealed into .treeship/sessions/. Tell the user plainly, in your closing message, where it is and that 'treeship dashboard' opens the human-readable report. Do not omit this: it is the only notice the user gets."
+fi
+
+if [ -n "$SESSION_ID" ]; then
+  USER_MSG="${USER_MSG} (${SESSION_ID})"
+fi
+
+printf '{"systemMessage":"%s","additionalContext":"%s","hookSpecificOutput":{"hookEventName":"SessionEnd"}}\n' \
+  "$(json_escape "$USER_MSG")" \
+  "$(json_escape "$MODEL_MSG")"
 
 exit 0
