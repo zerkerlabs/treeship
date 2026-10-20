@@ -156,6 +156,60 @@ pub const KEYS_FILE: &str = "keys.json";
 /// so the sealed set itself is under a signature (audit follow-up AUD-34).
 pub const RECORD_FILE: &str = "record.json";
 
+/// A producer's signed statement of what it withheld when sharing this
+/// package (`treeship/receipt/v1`, `redaction.v1`).
+///
+/// # Why this has to be signed
+///
+/// Removing an artifact's envelope from a sealed package is indistinguishable
+/// from having never had it: the Merkle tree still commits to the id, so the
+/// verifier reports an envelope that should be there and is not. That is the
+/// correct answer for tampering and the wrong one for redaction, and without
+/// a signature there is no way to tell them apart. Worse, an unsigned marker
+/// would let anyone who strips a step claim they redacted it.
+///
+/// So the producer signs the list. The statement binds to one package by its
+/// session id and Merkle root, which stops a redaction file being carried to
+/// a different package, and the verifier honours it only when the signature
+/// verifies under the same keys the artifacts are judged by.
+///
+/// A package with any withheld artifact never reads `verified`. It reads
+/// `verified-partial`, because a reader deciding on a trace needs to know
+/// they are holding part of one.
+pub const REDACTION_FILE: &str = "redaction.json";
+
+/// One withheld artifact: the id the Merkle tree commits to, and the parent
+/// the producer says it named.
+///
+/// The parent is an assertion, not a proof. The id is covered by the tree, so
+/// a producer cannot invent a step that was never sealed, but the link from a
+/// withheld step to its parent lives inside the envelope that is being
+/// withheld. `chain_linkage` says which part it verified and which part it is
+/// taking the producer's word for, rather than reporting one chain and
+/// meaning two different things by it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WithheldArtifact {
+    pub artifact_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+}
+
+/// The payload of [`REDACTION_FILE`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedactionPayload {
+    /// The session this redaction belongs to.
+    pub session_id: String,
+    /// The Merkle root of the sealed set it was taken from. Binds the
+    /// statement to one package: a redaction lifted onto another package
+    /// names a root that package does not have, and is ignored.
+    pub merkle_root: String,
+    pub withheld: Vec<WithheldArtifact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redacted_at: Option<String>,
+}
+
 /// Label the CLI gives this ship's own keys when it adds them as
 /// `session_host` roots for a local verify, so `signer_trust` can say
 /// "this ship's own key" instead of "pinned".
@@ -560,6 +614,10 @@ pub enum PackageVerdict {
     /// Every signature verifies, the close record binds receipt.json, and
     /// every signing key (record included) is pinned here or this ship's own.
     Verified,
+    /// As `Verified`, but the producer withheld at least one artifact under a
+    /// signed redaction. Everything disclosed verifies; the reader is holding
+    /// part of a trace and the word says so.
+    VerifiedPartial,
     /// As `Verified`, but at least one signing key is not pinned here.
     SignaturesPass,
     /// `--structural`: structure and approvals only; signatures unchecked.
@@ -574,6 +632,7 @@ impl PackageVerdict {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Verified => "verified",
+            Self::VerifiedPartial => "verified-partial",
             Self::SignaturesPass => "signatures-pass",
             Self::StructuralPass => "structural-pass",
             Self::Failed(_) => "failed",
