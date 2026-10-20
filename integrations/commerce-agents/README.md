@@ -120,6 +120,17 @@ merchant. The order chains onto that attestation. `treeship vi verify --local`
 checks it. No card is charged. Needs the reference SDK
 (`agent-intent/verifiable-intent`) as well as commerce-agents.
 
+```bash
+TREESHIP_BIN=... python -m treeship_commerce.demo_402
+```
+
+One approved budget and a localhost seller that answers HTTP 402. Three
+amounts fit: the agent signs a `payment.voucher.sign` receipt, the seller
+checks it with `treeship verify`, and delivery is its own receipt. A fourth
+amount would pass the limit, so no voucher is signed. The scheme is
+`local.402.v1`. Validation, redemption, escrow, and payout are not performed.
+Needs the treeship CLI only.
+
 ## Checkout
 
 `receipted_backend(backend)` wraps a storefront backend so `checkout_handoff` also signs a
@@ -186,7 +197,7 @@ TREESHIP_BIN=/path/to/treeship python -m pytest
 ANTHROPIC_API_KEY=... TREESHIP_BIN=/path/to/treeship python -m pytest tests/test_live.py   # one real turn
 ```
 
-Thirty-six cases on a real isolated ship over the real retail and merchant mocks: chain
+Thirty-seven cases on a real isolated ship over the real retail and merchant mocks: chain
 order and linkage, a held call signed as blocked with its gate, digests-only content,
 recording failure leaving the tool untouched, `TREESHIP_DISABLE`, `attach` refusing an
 executor that would record nothing, one per runtime, and the approval properties: a grant
@@ -197,4 +208,5 @@ that arrive as parsed pydantic models (the MCP server's shape) digesting like th
 and the checkout hand-off: the cart digest recomputable from the card, the URL never
 written, the host's order chaining from the hand-off, and an unwrapped backend's order
 saying so. One more drives `demo_vi`: a wallet mandate, the provenance refusal, and a
-Layer 3 pair that `treeship vi verify --local` accepts.
+Layer 3 pair that `treeship vi verify --local` accepts. One more drives `demo_402`:
+three signed vouchers under one budget, and a fourth payment withheld with no voucher.
