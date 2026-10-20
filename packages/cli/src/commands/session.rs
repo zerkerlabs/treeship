@@ -2266,6 +2266,7 @@ pub fn close(
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     receipt.authority = collect_authority(&ctx, &receipt_manifest, now_unix);
+    receipt.judgements = collect_judgements(&ctx, &receipt_manifest);
 
     // Stamp the in-band incompleteness signal. Defaults to 0 (omitted
     // from canonical JSON via skip_serializing_if) so receipts produced
@@ -4240,6 +4241,110 @@ use treeship_core::statements::{
 /// Returns `None` when the window contained no action/v2, so a session with
 /// nothing to say about authority says nothing rather than rendering an empty
 /// band that reads like a clean bill.
+/// What judges said about this session's calls, read from the session's own
+/// sealed judgement receipts.
+///
+/// Returns `None` when nothing was judged. An empty section would render as a
+/// band saying zero of everything, which reads like a clean bill rather than
+/// like silence, and those are not the same claim.
+///
+/// This reads the caller's record. It does not re-run a judge, so a judgement
+/// here is evidence of what was asked and answered, not a second opinion. The
+/// package verifier derives the same facts independently from the envelopes;
+/// if the two ever disagree, the envelopes win, because they are what is
+/// signed.
+fn collect_judgements(
+    ctx: &ctx::Ctx,
+    manifest: &SessionManifest,
+) -> Option<treeship_core::session::receipt::JudgementsSection> {
+    use treeship_core::session::receipt::JudgementsSection;
+    use treeship_core::statements::{payload_type, ReceiptStatement};
+
+    let pt = payload_type("receipt");
+    let started = manifest.started_at.as_str();
+    let closed = manifest.closed_at.as_deref();
+
+    // judgement id -> outcome, and the set of judgement ids a resolution
+    // closed. Both are gathered in one pass so a resolution signed before its
+    // judgement is read still counts.
+    let mut outcomes: Vec<(String, String)> = Vec::new();
+    let mut judges: std::collections::BTreeSet<String> = Default::default();
+    let mut resolved_ids: std::collections::BTreeSet<String> = Default::default();
+
+    let mut in_window: Vec<_> = ctx
+        .storage
+        .list_by_type(&pt)
+        .into_iter()
+        .filter(|e| {
+            e.signed_at.as_str() >= started && closed.is_none_or(|c| e.signed_at.as_str() <= c)
+        })
+        .collect();
+    in_window.sort_by(|a, b| a.signed_at.cmp(&b.signed_at));
+
+    for e in &in_window {
+        let Ok(rec) = ctx.storage.read(e.id.as_str()) else {
+            continue;
+        };
+        let Ok(stmt) = rec.envelope.unmarshal_statement::<ReceiptStatement>() else {
+            continue;
+        };
+        match stmt.kind.as_str() {
+            "judgement.v1" => {
+                let payload = stmt.payload.unwrap_or_default();
+                let outcome = payload
+                    .get("outcome")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                // `judge` is an object: {kind, model, provider, replayable}.
+                // `model` is the name the package verifier reports, so the two
+                // surfaces name the same judge rather than two spellings of it.
+                if let Some(j) = payload.get("judge") {
+                    if let Some(name) = j
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| j.get("kind").and_then(|v| v.as_str()))
+                        .or_else(|| j.as_str())
+                    {
+                        judges.insert(name.to_string());
+                    }
+                }
+                outcomes.push((e.id.clone(), outcome));
+            }
+            "judgement.resolution.v1" => {
+                if let Some(sub) = stmt.subject.as_ref().and_then(|s| s.artifact_id.clone()) {
+                    resolved_ids.insert(sub);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if outcomes.is_empty() {
+        return None;
+    }
+
+    let mut out = JudgementsSection {
+        total: outcomes.len() as u32,
+        judges: judges.into_iter().collect(),
+        ..Default::default()
+    };
+    for (id, outcome) in &outcomes {
+        match outcome.as_str() {
+            "refused" => out.refused += 1,
+            "escalated" => {
+                if resolved_ids.contains(id) {
+                    out.resolved += 1;
+                } else {
+                    out.escalated += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(out)
+}
+
 fn collect_authority(
     ctx: &ctx::Ctx,
     manifest: &SessionManifest,
