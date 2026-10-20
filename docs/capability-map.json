@@ -4,7 +4,7 @@
     "cli_commands": 39,
     "cli_commands_hidden": 22,
     "hub_routes": 23,
-    "wire_types": 163
+    "wire_types": 164
   },
   "cli_commands": [
     "add",
@@ -702,6 +702,11 @@
       "name": "JudgeResponse",
       "kind": "struct",
       "source": "packages/core/src/judge/mod.rs"
+    },
+    {
+      "name": "JudgementsSection",
+      "kind": "struct",
+      "source": "packages/core/src/session/receipt.rs"
     },
     {
       "name": "Jwk",
