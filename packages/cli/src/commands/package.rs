@@ -1375,6 +1375,11 @@ pub fn verify(
             "warning",
             "signatures-pass: every signature verifies, but no signing key is pinned here; pin the producer's key for `verified`",
         ),
+        treeship_core::session::PackageVerdict::VerifiedPartial => (
+            "verified-partial",
+            "warning",
+            "verified-partial: everything disclosed verifies, and the producer withheld at least one artifact under a signed redaction. You are holding part of a trace",
+        ),
         treeship_core::session::PackageVerdict::Verified => ("verified", "ok", "package verified"),
     };
 
