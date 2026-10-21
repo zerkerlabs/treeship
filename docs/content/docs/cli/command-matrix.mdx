@@ -1059,6 +1059,24 @@ treeship package inspect [OPTIONS] <PATH>
 |---|---|
 | `<PATH>` | Path to the .treeship package directory |
 
+### `treeship package redact`
+
+Write a copy of a package with chosen steps withheld
+
+```
+treeship package redact [OPTIONS] --out <OUT> --withhold <WITHHOLD> <PATH>
+```
+
+| Argument | Description |
+|---|---|
+| `<PATH>` | Path to the .treeship package directory to copy from |
+
+| Option | Description |
+|---|---|
+| `--out <OUT>` | Directory to write the redacted copy into (created if missing) |
+| `--withhold <WITHHOLD>` | Artifact ids to withhold, comma-separated |
+| `--reason <REASON>` | Why, recorded in the signed redaction |
+
 ### `treeship package verify`
 
 Verify a .treeship session package

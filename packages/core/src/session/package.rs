@@ -9,7 +9,7 @@
 //! - `proofs/`        -- inclusion proofs and zk proofs
 //! - `preview.html`   -- static preview (optional)
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::statements::ApprovalStatement;
@@ -155,6 +155,73 @@ pub const KEYS_FILE: &str = "keys.json";
 /// over the digest of `receipt.json`, sealed beside the package since 0.31.4
 /// so the sealed set itself is under a signature (audit follow-up AUD-34).
 pub const RECORD_FILE: &str = "record.json";
+
+/// A producer's signed statement of what it withheld when sharing this
+/// package (`treeship/receipt/v1`, `redaction.v1`).
+///
+/// # Why this has to be signed
+///
+/// Removing an artifact's envelope from a sealed package is indistinguishable
+/// from having never had it: the Merkle tree still commits to the id, so the
+/// verifier reports an envelope that should be there and is not. That is the
+/// correct answer for tampering and the wrong one for redaction, and without
+/// a signature there is no way to tell them apart. Worse, an unsigned marker
+/// would let anyone who strips a step claim they redacted it.
+///
+/// So the producer signs the list. The statement binds to one package by its
+/// session id and Merkle root, which stops a redaction file being carried to
+/// a different package, and the verifier honours it only when the signature
+/// verifies under the same keys the artifacts are judged by.
+///
+/// A package with any withheld artifact never reads `verified`. It reads
+/// `verified-partial`, because a reader deciding on a trace needs to know
+/// they are holding part of one.
+pub const REDACTION_FILE: &str = "redaction.json";
+
+/// One withheld artifact: the id the Merkle tree commits to, and the parent
+/// the producer says it named.
+///
+/// The parent is an assertion, not a proof. The id is covered by the tree, so
+/// a producer cannot invent a step that was never sealed, but the link from a
+/// withheld step to its parent lives inside the envelope that is being
+/// withheld. `chain_linkage` says which part it verified and which part it is
+/// taking the producer's word for, rather than reporting one chain and
+/// meaning two different things by it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WithheldArtifact {
+    pub artifact_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+}
+
+/// The payload of [`REDACTION_FILE`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedactionPayload {
+    /// The session this redaction belongs to.
+    pub session_id: String,
+    /// The Merkle root of the sealed set it was taken from. Binds the
+    /// statement to one package: a redaction lifted onto another package
+    /// names a root that package does not have, and is ignored.
+    pub merkle_root: String,
+    pub withheld: Vec<WithheldArtifact>,
+    /// The digest of the receipt the close record signed, before redaction.
+    ///
+    /// Carrying both digests is what lets a redacted package keep its
+    /// original close record instead of being re-signed. The record still
+    /// proves what the producer sealed at close; the redaction proves this
+    /// receipt was derived from it by the same producer. Re-signing the close
+    /// record would have erased the link to the original, which is the thing
+    /// a recipient most wants to check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_receipt_digest: Option<String>,
+    /// The digest of the redacted `receipt.json` in this package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redacted_at: Option<String>,
+}
 
 /// Label the CLI gives this ship's own keys when it adds them as
 /// `session_host` roots for a local verify, so `signer_trust` can say
@@ -560,6 +627,10 @@ pub enum PackageVerdict {
     /// Every signature verifies, the close record binds receipt.json, and
     /// every signing key (record included) is pinned here or this ship's own.
     Verified,
+    /// As `Verified`, but the producer withheld at least one artifact under a
+    /// signed redaction. Everything disclosed verifies; the reader is holding
+    /// part of a trace and the word says so.
+    VerifiedPartial,
     /// As `Verified`, but at least one signing key is not pinned here.
     SignaturesPass,
     /// `--structural`: structure and approvals only; signatures unchecked.
@@ -574,6 +645,7 @@ impl PackageVerdict {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Verified => "verified",
+            Self::VerifiedPartial => "verified-partial",
             Self::SignaturesPass => "signatures-pass",
             Self::StructuralPass => "structural-pass",
             Self::Failed(_) => "failed",
@@ -617,7 +689,16 @@ pub fn package_verdict(checks: &[VerifyCheck], structural_only: bool) -> Package
     {
         missing.push("no artifact signature verified");
     }
-    if status("receipt_binding") != Some(VerifyStatus::Pass) {
+    // A redacted package's close record binds the receipt as sealed, not the
+    // derived one in front of you, so the row warns rather than passes. That
+    // is only acceptable when the package also carries withheld artifacts
+    // under a verified redaction: a warning with nothing withheld is still a
+    // record that does not bind what it claims to.
+    let redacted = checks.iter().any(|c| c.name.starts_with("withheld:"));
+    let binding = status("receipt_binding");
+    let binding_ok =
+        binding == Some(VerifyStatus::Pass) || (redacted && binding == Some(VerifyStatus::Warn));
+    if !binding_ok {
         missing.push("the close record does not bind receipt.json");
     }
     let trust = status("signer_trust");
@@ -630,7 +711,12 @@ pub fn package_verdict(checks: &[VerifyCheck], structural_only: bool) -> Package
     // An approval signed by an approver nobody pinned cannot make the
     // actions it authorizes `verified`.
     let approver_ok = status("approval_signer").is_none_or(|s| s == VerifyStatus::Pass);
+    // A redacted package is never `verified`. Everything disclosed can check
+    // out and the reader is still holding part of a trace, so the word has to
+    // say so: a recipient who sees `verified` on a redacted package has been
+    // told something true about the parts and misleading about the whole.
     match trust {
+        Some(VerifyStatus::Pass) if approver_ok && redacted => PackageVerdict::VerifiedPartial,
         Some(VerifyStatus::Pass) if approver_ok => PackageVerdict::Verified,
         _ => PackageVerdict::SignaturesPass,
     }
@@ -644,6 +730,74 @@ pub fn package_verdict(checks: &[VerifyCheck], structural_only: bool) -> Package
 /// an approver whose key signed one sealed approval did not produce the
 /// session, holds no journal for it, and must not be failed for lacking
 /// one.
+/// Read [`REDACTION_FILE`] and honour it only if it is signed by a key this
+/// package is judged by and binds to this package.
+///
+/// Returns the withheld artifacts keyed by id. `None` means there is no
+/// redaction to honour, which is the answer for a package that has none and
+/// equally for one carrying a redaction that does not verify: an unverified
+/// redaction must not excuse a missing envelope, or stripping a step and
+/// saying so afterwards would be enough to pass.
+fn verified_redaction(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<RedactionPayload> {
+    // Keys are read here rather than passed in so every caller judges a
+    // redaction by the same rule: the keys this package already names.
+    let mut keys: BTreeMap<String, ed25519_dalek::VerifyingKey> = BTreeMap::new();
+    for (id, encoded) in read_package_keys(pkg_dir)?.keys {
+        if let Ok(vk) = crate::trust::decode_ed25519_pubkey(&encoded) {
+            keys.insert(id, vk);
+        }
+    }
+    let raw = std::fs::read(pkg_dir.join(REDACTION_FILE)).ok()?;
+    let env = crate::attestation::Envelope::from_json(&raw).ok()?;
+
+    // Signed by a key this package already names. A redaction signed by a
+    // stranger is a stranger's claim about someone else's trace.
+    let signed = env.signatures.iter().any(|sig| {
+        keys.get(&sig.keyid)
+            .is_some_and(|vk| crate::attestation::verify_with_key(&env, &sig.keyid, *vk).is_ok())
+    });
+    if !signed {
+        return None;
+    }
+
+    let stmt = env
+        .unmarshal_statement::<crate::statements::ReceiptStatement>()
+        .ok()?;
+    if stmt.kind != "redaction.v1" {
+        return None;
+    }
+    let payload: RedactionPayload = serde_json::from_value(stmt.payload?).ok()?;
+
+    // Bound to this package. Without both checks a redaction could be lifted
+    // from one trace onto another and excuse whatever happened to be missing
+    // there.
+    if payload.session_id != receipt.session.id {
+        return None;
+    }
+    // A package with no sealed root cannot anchor a redaction to itself.
+    let root = receipt.merkle.root.as_deref()?;
+    if payload.merkle_root != root {
+        return None;
+    }
+
+    Some(payload)
+}
+
+/// The withheld artifacts of a verified redaction, keyed by id.
+fn verified_withheld(
+    pkg_dir: &Path,
+    receipt: &SessionReceipt,
+) -> BTreeMap<String, WithheldArtifact> {
+    verified_redaction(pkg_dir, receipt)
+        .map(|p| {
+            p.withheld
+                .into_iter()
+                .map(|w| (w.artifact_id.clone(), w))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn package_close_signed_by(pkg_dir: &Path, keys: &[ed25519_dalek::VerifyingKey]) -> bool {
     let Some(env) = std::fs::read(pkg_dir.join(RECORD_FILE))
         .ok()
@@ -1530,6 +1684,27 @@ fn verify_receipt_binding(
         );
     }
     if signed_digest != actual {
+        // A redacted package keeps the close record the producer signed at
+        // close, over the receipt as it was then. The redaction, signed by
+        // the same producer and bound to this package, names both digests:
+        // what the record signs, and what this receipt is now. Honouring
+        // that keeps the original binding provable instead of replacing it
+        // with a fresh signature over edited content, which would prove only
+        // that someone with a key had edited something.
+        if let Some(r) = verified_redaction(pkg_dir, receipt) {
+            if r.source_receipt_digest.as_deref() == Some(signed_digest)
+                && r.receipt_digest.as_deref() == Some(actual.as_str())
+            {
+                checks.push(VerifyCheck::warn(
+                    "receipt_binding",
+                    &format!(
+                        "the close record binds the receipt as sealed ({signed_digest}); this package carries a redacted receipt ({actual}) that the producer signed a redaction for, withholding {} artifact(s). The original binding still holds; what you are reading is a derived view of it",
+                        r.withheld.len()
+                    ),
+                ));
+                return (true, None);
+            }
+        }
         return fail(
             checks,
             format!(
@@ -2554,6 +2729,9 @@ fn verify_sealed_envelopes(
     }
 
     // None: the payload could not be read at all.
+    // Honoured only when signed by a key this package is judged by and bound
+    // to this package's session and Merkle root. See `verified_redaction`.
+    let withheld = verified_withheld(pkg_dir, receipt);
     let mut parents: Vec<(String, Option<SignedParent>)> = Vec::new();
     let mut signers: BTreeSet<String> = BTreeSet::new();
     let mut closes: Vec<SealedClose> = Vec::new();
@@ -2585,6 +2763,22 @@ fn verify_sealed_envelopes(
         let raw = match std::fs::read(&path) {
             Ok(b) => b,
             Err(_) => {
+                // Withheld and missing look identical on disk. Only a signed
+                // redaction tells them apart, and it has to be this package's.
+                if let Some(w) = withheld.get(id.as_str()) {
+                    checks.push(VerifyCheck::pass(
+                        &format!("withheld:{id}"),
+                        "withheld by the producer under a signed redaction; the Merkle tree still commits to it, so its absence is accounted for rather than unexplained",
+                    ));
+                    // The link out of a withheld step is the producer's claim:
+                    // it lives inside the envelope being withheld. Recorded so
+                    // the chain can still be walked, and reported as asserted.
+                    parents.push((
+                        id.clone(),
+                        w.parent_id.clone().map(SignedParent::WithheldAsserted),
+                    ));
+                    continue;
+                }
                 checks.push(VerifyCheck::fail(
                     &name,
                     "sealed in the Merkle tree but its signed envelope is not in the package",
@@ -2782,6 +2976,9 @@ fn verify_sealed_envelopes(
         .collect();
     let mut broken: Vec<String> = Vec::new();
     let mut legacy: Vec<&str> = Vec::new();
+    // Edges the producer asserts across withheld steps, kept apart from the
+    // ones that are signed.
+    let mut asserted: Vec<&str> = Vec::new();
     for w in chained.windows(2) {
         let (_, prev) = w[0];
         let (_, cur) = w[1];
@@ -2799,6 +2996,16 @@ fn verify_sealed_envelopes(
             // place in the chain is the producer's storage claim: accepted
             // with a warning, which --strict promotes (CLI-1).
             Some(SignedParent::LegacyEndorsement) => legacy.push(cur.artifact_id.as_str()),
+            // A withheld step's edge is asserted, not signed: the link lives
+            // in the envelope that was withheld. The chain still walks, and
+            // the row says which part of it the producer vouched for.
+            Some(SignedParent::WithheldAsserted(p)) if p == prev.artifact_id => {
+                asserted.push(cur.artifact_id.as_str())
+            }
+            Some(SignedParent::WithheldAsserted(p)) => broken.push(format!(
+                "{} is withheld and asserts parent {} but follows {}",
+                cur.artifact_id, p, prev.artifact_id
+            )),
             Some(SignedParent::None) | None => {
                 broken.push(format!("{} has no readable parentId", cur.artifact_id))
             }
@@ -2807,6 +3014,16 @@ fn verify_sealed_envelopes(
     if chained.len() >= 2 {
         if !broken.is_empty() {
             checks.push(VerifyCheck::fail("chain_linkage", &broken.join("; ")));
+        } else if !asserted.is_empty() {
+            checks.push(VerifyCheck::warn(
+                "chain_linkage",
+                &format!(
+                    "{} chained artifacts; every signed parent matches, and {} edge(s) across withheld steps are the producer's assertion rather than a signed link: {}",
+                    chained.len(),
+                    asserted.len(),
+                    asserted.join(", ")
+                ),
+            ));
         } else if !legacy.is_empty() {
             checks.push(VerifyCheck::warn(
                 "chain_linkage",

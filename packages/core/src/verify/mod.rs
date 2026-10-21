@@ -208,6 +208,15 @@ pub enum SignedParent {
     /// sits, so no signed edge exists. A verifier may accept the storage
     /// edge for compatibility, but must say so, and `--strict` fails it.
     LegacyEndorsement,
+    /// The producer withheld this artifact under a signed redaction, and
+    /// asserts this parent for it.
+    ///
+    /// Distinct from [`SignedParent::Named`] on purpose. A named parent is
+    /// inside the signature over the artifact's own bytes. This one is not:
+    /// the edge lives in the envelope being withheld, so the recipient has
+    /// the producer's word for it and nothing more. Collapsing the two would
+    /// report one chain while meaning two different things by it.
+    WithheldAsserted(String),
     /// The statement names no parent.
     None,
 }
@@ -694,6 +703,7 @@ mod tests {
         rec_full.merkle.leaf_count = 2;
         rec_full.timeline = vec![
             TimelineEntry {
+                artifact_id: None,
                 sequence_no: 1,
                 timestamp: "2026-04-10T00:00:01Z".into(),
                 event_id: "evt_1".into(),
@@ -704,6 +714,7 @@ mod tests {
                 summary: None,
             },
             TimelineEntry {
+                artifact_id: None,
                 sequence_no: 2,
                 timestamp: "2026-04-10T00:00:02Z".into(),
                 event_id: "evt_2".into(),

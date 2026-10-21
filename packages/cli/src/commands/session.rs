@@ -1890,7 +1890,7 @@ fn ensure_package_key(
 /// Recursive directory copy used by `session close --receipt-dir`. Files
 /// are copied byte for byte so the receipt digest is unchanged; nothing
 /// is followed through symlinks.
-fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
     crate::safe_fs::refuse_symlink(to)?;
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
