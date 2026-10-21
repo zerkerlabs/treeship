@@ -694,6 +694,7 @@ mod tests {
         rec_full.merkle.leaf_count = 2;
         rec_full.timeline = vec![
             TimelineEntry {
+                artifact_id: None,
                 sequence_no: 1,
                 timestamp: "2026-04-10T00:00:01Z".into(),
                 event_id: "evt_1".into(),
@@ -704,6 +705,7 @@ mod tests {
                 summary: None,
             },
             TimelineEntry {
+                artifact_id: None,
                 sequence_no: 2,
                 timestamp: "2026-04-10T00:00:02Z".into(),
                 event_id: "evt_2".into(),
