@@ -352,6 +352,7 @@ pub fn run(
         elapsed_ms,
         &changed_files,
         &files_before,
+        &result.artifact_id,
     );
 
     // ── AgentDecision from env vars (best-effort) ─────────────────
@@ -750,6 +751,7 @@ fn emit_wrap_events(
     elapsed_ms: u64,
     changed_files: &[String],
     files_before: &std::collections::HashMap<String, std::time::SystemTime>,
+    artifact_id: &str,
 ) {
     // Find active session
     let manifest = match super::session::load_session() {
@@ -804,6 +806,11 @@ fn emit_wrap_events(
         duration_ms: Some(elapsed_ms),
         command: Some(command.into()),
     });
+    // Name the artifact this execution was sealed as. The receipt's own
+    // account of the session is otherwise unattributable to the signed
+    // evidence for it, which is what stops a producer from finding the
+    // entries that describe a step it wants to withhold.
+    evt.artifact_ref = Some(artifact_id.to_string());
     let _ = log.append(&mut evt);
 
     // File write events with created/modified detection

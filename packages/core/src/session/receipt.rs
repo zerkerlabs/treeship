@@ -321,6 +321,20 @@ pub struct TimelineEntry {
     pub host_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// The sealed artifact this entry was recorded as, when the event named
+    /// one.
+    ///
+    /// Without it, nothing in the receipt's own account of the session can be
+    /// traced back to the signed evidence for it. That matters for sharing: a
+    /// producer withholding an artifact has no way to find the entries that
+    /// describe it, so the command it meant to withhold stays in the receipt
+    /// in the clear. Matching by timestamp or name would be a guess, and a
+    /// redaction that silently misses an entry is worse than none.
+    ///
+    /// Absent on events that seal nothing, and on every receipt written
+    /// before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
 }
 
 /// An artifact referenced in the session.
@@ -474,6 +488,7 @@ impl ReceiptComposer {
                 timestamp: e.timestamp.clone(),
                 event_id: e.event_id.clone(),
                 event_type: event_type_label(&e.event_type),
+                artifact_id: e.artifact_ref.clone(),
                 agent_instance_id: e.agent_instance_id.clone(),
                 agent_name: e.agent_name.clone(),
                 host_id: e.host_id.clone(),

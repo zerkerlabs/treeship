@@ -77,6 +77,12 @@ pub struct ProcessExecution {
     /// Full command string (e.g. "npm test --runInBand"). Absent in legacy events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// The sealed artifact this execution was recorded as, when the event
+    /// named one. This entry carries the command, so it is the one that
+    /// leaks most when a step's envelope is withheld and the receipt is not
+    /// redacted with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
     /// Same provenance scheme as FileAccess::source. `"hook"`, `"mcp"`,
     /// `"shell-wrap"` (for treeship wrap'd commands), or absent on legacy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -178,6 +184,7 @@ impl SideEffects {
                         exit_code: None,
                         duration_ms: None,
                         command: command.as_deref().map(crate::session::redact_home_path),
+                        artifact_id: event.artifact_ref.clone(),
                         source: Some(source_from_meta(event, "hook")),
                     });
                     started_processes
@@ -199,6 +206,13 @@ impl SideEffects {
                                 proc.command =
                                     command.as_deref().map(crate::session::redact_home_path);
                             }
+                            // The seal happens when the process completes, so
+                            // the completion event is usually the one naming
+                            // the artifact. Never overwrite a start that
+                            // already named one.
+                            if proc.artifact_id.is_none() {
+                                proc.artifact_id = event.artifact_ref.clone();
+                            }
                         }
                     } else {
                         se.processes.push(ProcessExecution {
@@ -208,6 +222,7 @@ impl SideEffects {
                             exit_code: *exit_code,
                             duration_ms: *duration_ms,
                             command: command.as_deref().map(crate::session::redact_home_path),
+                            artifact_id: event.artifact_ref.clone(),
                             source: Some(source_from_meta(event, "hook")),
                         });
                     }
@@ -459,6 +474,7 @@ fn promote_mcp_called_tool(event: &SessionEvent, tool_name: &str, se: &mut SideE
                 exit_code: None,
                 duration_ms: None,
                 command: Some(cmd),
+                artifact_id: event.artifact_ref.clone(),
                 source: Some("mcp".into()),
             });
         }
