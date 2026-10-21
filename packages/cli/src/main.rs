@@ -1441,6 +1441,21 @@ enum PackageCommand {
     ///   treeship package inspect .treeship/sessions/ssn_abc.treeship
     Inspect(PackagePathArgs),
 
+    /// Write a copy of a package with chosen steps withheld
+    ///
+    /// Withholds the signed envelope of each named artifact and removes the
+    /// receipt entries attributed to it, then signs a redaction naming what
+    /// was withheld, the parent each withheld step claimed, and both receipt
+    /// digests. The copy verifies as `verified-partial`.
+    ///
+    /// The original close record is kept, not re-signed: it still proves what
+    /// was sealed at close, and the redaction proves this view was derived
+    /// from it by the same producer.
+    ///
+    /// Examples:
+    ///   treeship package redact ssn_abc.treeship --out shared/ --withhold art_1,art_2
+    Redact(PackageRedactArgs),
+
     /// Verify a .treeship session package
     ///
     /// Runs local verification checks from the package's own bytes: receipt
@@ -1486,6 +1501,24 @@ struct PackageVerifyArgs {
 struct PackagePathArgs {
     /// Path to the .treeship package directory
     path: std::path::PathBuf,
+}
+
+#[derive(Args)]
+struct PackageRedactArgs {
+    /// Path to the .treeship package directory to copy from
+    path: std::path::PathBuf,
+
+    /// Directory to write the redacted copy into (created if missing)
+    #[arg(long)]
+    out: std::path::PathBuf,
+
+    /// Artifact ids to withhold, comma-separated
+    #[arg(long, value_delimiter = ',', required = true)]
+    withhold: Vec<String>,
+
+    /// Why, recorded in the signed redaction
+    #[arg(long)]
+    reason: Option<String>,
 }
 
 // --- add -------------------------------------------------------------------
@@ -3623,6 +3656,14 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
             PackageCommand::Inspect(a) => {
                 commands::package::inspect(a.path.clone(), cli.config.as_deref(), printer)
             }
+            PackageCommand::Redact(a) => commands::package::redact(
+                a.path.clone(),
+                a.out.clone(),
+                &a.withhold,
+                a.reason.as_deref(),
+                cli.config.as_deref(),
+                printer,
+            ),
             PackageCommand::Verify(a) => commands::package::verify(
                 a.path.clone(),
                 cli.config.as_deref(),

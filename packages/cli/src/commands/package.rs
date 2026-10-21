@@ -1427,6 +1427,177 @@ pub fn verify(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// package redact -- a copy with chosen steps withheld
+// ---------------------------------------------------------------------------
+
+/// Write a copy of `pkg` into `out` with `withhold` steps withheld.
+///
+/// Three things leave the copy for each withheld artifact: its signed
+/// envelope, its timeline entries, and its recorded process executions. The
+/// third matters most. The envelope carries the argv and the digests, but the
+/// receipt's own `side_effects.processes` carries the command, so withholding
+/// the envelope alone would have hidden the proof and left the thing being
+/// proved sitting in the clear. Those entries are found by the `artifact_id`
+/// they carry, not by matching timestamps or names, because a redaction that
+/// silently misses an entry is worse than none: it tells someone their data
+/// is gone when it is not.
+///
+/// The original close record is kept rather than re-signed. It still proves
+/// what the producer sealed at close, and the redaction, signed by the same
+/// producer, proves this view was derived from it. Re-signing would have
+/// replaced a provable original with a fresh signature over edited content,
+/// which proves only that someone with a key edited something.
+pub fn redact(
+    pkg: PathBuf,
+    out: PathBuf,
+    withhold: &[String],
+    reason: Option<&str>,
+    config: Option<&str>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+    use treeship_core::session::{RedactionPayload, WithheldArtifact};
+    use treeship_core::statements::{payload_type, ReceiptStatement};
+
+    let ctx = ctx::open(config)?;
+
+    let receipt_path = pkg.join("receipt.json");
+    let raw = std::fs::read(&receipt_path)
+        .map_err(|e| crate::exit::usage(format!("{}: {e}", receipt_path.display())))?;
+    let source_digest = format!("sha256:{}", hex::encode(Sha256::digest(&raw)));
+    let mut receipt: SessionReceipt = serde_json::from_slice(&raw)
+        .map_err(|e| crate::exit::usage(format!("receipt.json does not parse: {e}")))?;
+
+    // Every id must be in this package. A typo would otherwise produce a
+    // redaction that names nothing and a copy that withholds nothing, while
+    // reading as though it had.
+    let sealed: std::collections::BTreeSet<&str> = receipt
+        .artifacts
+        .iter()
+        .map(|a| a.artifact_id.as_str())
+        .collect();
+    for id in withhold {
+        if !sealed.contains(id.as_str()) {
+            return Err(crate::exit::usage(format!(
+                "{id} is not sealed in this package; nothing would be withheld"
+            )));
+        }
+    }
+    let drop: std::collections::BTreeSet<&str> = withhold.iter().map(|s| s.as_str()).collect();
+
+    // Copy first, then take things out of the copy, so a failure part way
+    // through never damages the original.
+    if out.exists() {
+        return Err(crate::exit::usage(format!(
+            "{} already exists; choose a path that does not",
+            out.display()
+        )));
+    }
+    crate::commands::session::copy_dir_all(&pkg, &out)?;
+
+    // The parent each withheld step claimed, read before its envelope goes.
+    let mut withheld_entries: Vec<WithheldArtifact> = Vec::new();
+    for id in withhold {
+        let env_path = out.join("artifacts").join(format!("{id}.json"));
+        let parent_id = std::fs::read(&env_path)
+            .ok()
+            .and_then(|b| treeship_core::attestation::Envelope::from_json(&b).ok())
+            .and_then(|e| e.payload_bytes().ok())
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| {
+                v.get("parentId")
+                    .and_then(|p| p.as_str())
+                    .map(str::to_string)
+            });
+        let _ = std::fs::remove_file(&env_path);
+        withheld_entries.push(WithheldArtifact {
+            artifact_id: id.clone(),
+            parent_id,
+        });
+    }
+
+    // The narrative that describes what was withheld goes with it.
+    let before_timeline = receipt.timeline.len();
+    receipt
+        .timeline
+        .retain(|t| !t.artifact_id.as_deref().is_some_and(|a| drop.contains(a)));
+    let before_procs = receipt.side_effects.processes.len();
+    receipt
+        .side_effects
+        .processes
+        .retain(|p| !p.artifact_id.as_deref().is_some_and(|a| drop.contains(a)));
+
+    let new_bytes = treeship_core::session::ReceiptComposer::to_canonical_json(&receipt)?;
+    let new_digest = format!("sha256:{}", hex::encode(Sha256::digest(&new_bytes)));
+    crate::safe_fs::write_under_treeship(&out.join("receipt.json"), &new_bytes, 0o644)?;
+
+    // preview.html embeds the receipt and renders it in the browser, so a
+    // stale one would serve the withheld content straight back.
+    let preview_path = out.join("preview.html");
+    if preview_path.exists() {
+        let html = treeship_core::session::render_preview_html(&receipt);
+        crate::safe_fs::write_under_treeship(&preview_path, html.as_bytes(), 0o644)?;
+    }
+
+    let payload = RedactionPayload {
+        session_id: receipt.session.id.clone(),
+        merkle_root: receipt.merkle.root.clone().unwrap_or_default(),
+        withheld: withheld_entries.clone(),
+        reason: reason.map(str::to_string),
+        redacted_at: Some(crate::commands::session::now_rfc3339()),
+        source_receipt_digest: Some(source_digest),
+        receipt_digest: Some(new_digest),
+    };
+
+    let mut stmt = ReceiptStatement::new("system://treeship-redact", "redaction.v1");
+    stmt.payload = Some(serde_json::to_value(&payload)?);
+    let signer = ctx.keys.default_signer()?;
+    let pt = payload_type("receipt");
+    let result = treeship_core::attestation::sign(&pt, &stmt, signer.as_ref())?;
+    let envelope = result.envelope.to_json()?;
+    crate::safe_fs::write_under_treeship(&out.join("redaction.json"), &envelope, 0o644)?;
+
+    let timeline_removed = before_timeline - receipt.timeline.len();
+    let commands_removed = before_procs - receipt.side_effects.processes.len();
+
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "message": "package redacted",
+            "from": pkg.display().to_string(),
+            "to": out.display().to_string(),
+            "withheld": withheld_entries.iter().map(|w| &w.artifact_id).collect::<Vec<_>>(),
+            "timeline_entries_removed": timeline_removed,
+            "commands_removed": commands_removed,
+            "source_receipt_digest": payload.source_receipt_digest,
+            "receipt_digest": payload.receipt_digest,
+            "signed_by": signer.key_id(),
+            "verdict_when_verified": "verified-partial",
+        }));
+        return Ok(());
+    }
+
+    printer.success(
+        "package redacted",
+        &[
+            ("from", &pkg.display().to_string()),
+            ("to", &out.display().to_string()),
+            (
+                "withheld",
+                &format!("{} artifact(s)", withheld_entries.len()),
+            ),
+            (
+                "entries removed",
+                &format!("{timeline_removed} timeline, {commands_removed} command(s)"),
+            ),
+            ("signed by", signer.key_id()),
+        ],
+    );
+    printer.hint("treeship package verify <out>  reads it as verified-partial");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
