@@ -25,4 +25,23 @@ jobs:
         with:
           packages: "receipts/**/*.treeship"
           trust-roots: "receipts/trust_roots.json"
+          # PINNED, AND THE PIN IS LOAD-BEARING. Read before raising it.
+          #
+          # receipts/ssn_aab97aefa1f8a48c.treeship was sealed before 0.31.10
+          # by an agent holding its own key, so its close record names no
+          # record key. From 0.31.10 the verifier checks that binding, and
+          # the package fails `receipt_binding` under any newer release. It
+          # passes under --structural, but --structural does not check
+          # signatures at all, so using it here would turn the dogfood into
+          # a check that proves nothing about the signing it exists to prove.
+          #
+          # So this pin is not a routine "pin your versions" pin. It is the
+          # last release under which the committed fixture fully verifies,
+          # and raising it without resealing turns this job red.
+          #
+          # To remove it: reseal the fixture with a current release, using
+          # the ship key pinned in receipts/trust_roots.json, commit the new
+          # package, and delete this input so the job tracks the latest
+          # verifier. That key belongs to the maintainer, so the reseal
+          # cannot be done by anyone else.
           treeship-version: "0.31.5"
