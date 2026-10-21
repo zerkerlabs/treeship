@@ -4,7 +4,7 @@
     "cli_commands": 39,
     "cli_commands_hidden": 22,
     "hub_routes": 23,
-    "wire_types": 163
+    "wire_types": 165
   },
   "cli_commands": [
     "add",
@@ -884,6 +884,11 @@
       "source": "packages/core/src/storage/mod.rs"
     },
     {
+      "name": "RedactionPayload",
+      "kind": "struct",
+      "source": "packages/core/src/session/package.rs"
+    },
+    {
       "name": "RenderConfig",
       "kind": "struct",
       "source": "packages/core/src/session/render.rs"
@@ -1067,6 +1072,11 @@
       "name": "VerifiedRekorAnchor",
       "kind": "struct",
       "source": "packages/core/src/verify/rekor.rs"
+    },
+    {
+      "name": "WithheldArtifact",
+      "kind": "struct",
+      "source": "packages/core/src/session/package.rs"
     },
     {
       "name": "Witness",
