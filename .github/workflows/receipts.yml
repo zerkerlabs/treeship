@@ -25,4 +25,17 @@ jobs:
         with:
           packages: "receipts/**/*.treeship"
           trust-roots: "receipts/trust_roots.json"
+          # PINNED, AND NOT BECAUSE 0.31.5 IS THE RIGHT VERSION.
+          #
+          # ssn_aab97aefa1f8a48c.treeship was sealed before 0.31.10 tightened
+          # receipt_binding, and it fails that row under every verifier since.
+          # This pin is the only reason this job is green, which means our own
+          # dogfood receipt is being judged by a verifier we no longer ship.
+          #
+          # That is backwards for a repository whose product is verification,
+          # so it is a placeholder for a decision, not a fix. Two honest exits:
+          # reseal the fixture with the maintainer's key so it verifies under
+          # current verifiers, or drop the pin, let the job fail, and say
+          # plainly that packages do not verify across verifier versions.
+          # Tracked in #579.
           treeship-version: "0.31.5"
