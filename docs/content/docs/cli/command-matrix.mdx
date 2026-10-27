@@ -1077,6 +1077,69 @@ treeship package redact [OPTIONS] --out <OUT> --withhold <WITHHOLD> <PATH>
 | `--withhold <WITHHOLD>` | Artifact ids to withhold, comma-separated |
 | `--reason <REASON>` | Why, recorded in the signed redaction |
 
+### `treeship package content`
+
+Read, attach or drop the bytes behind a digest
+
+```
+treeship package content [OPTIONS] <COMMAND>
+```
+
+#### `treeship package content ls`
+
+List every digest the trace names and whether its bytes are here
+
+```
+treeship package content ls [OPTIONS] <PATH>
+```
+
+| Argument | Description |
+|---|---|
+| `<PATH>` | Path to the .treeship package directory |
+
+#### `treeship package content add`
+
+Attach a file's bytes, which the trace must already name by digest
+
+```
+treeship package content add [OPTIONS] <PATH> <FILE>
+```
+
+| Argument | Description |
+|---|---|
+| `<PATH>` | Path to the .treeship package directory |
+| `<FILE>` | File whose bytes to attach |
+
+#### `treeship package content get`
+
+Write out the bytes stored for one digest
+
+```
+treeship package content get [OPTIONS] <PATH> <DIGEST>
+```
+
+| Argument | Description |
+|---|---|
+| `<PATH>` | Path to the .treeship package directory |
+| `<DIGEST>` | The digest to read, `sha256:&lt;hex&gt;` or bare hex |
+
+| Option | Description |
+|---|---|
+| `--out <OUT>` | Write to this file instead of stdout |
+
+#### `treeship package content drop`
+
+Remove the bytes stored for one digest, keeping the commitment
+
+```
+treeship package content drop [OPTIONS] <PATH> <DIGEST>
+```
+
+| Argument | Description |
+|---|---|
+| `<PATH>` | Path to the .treeship package directory |
+| `<DIGEST>` | The digest to drop, `sha256:&lt;hex&gt;` or bare hex |
+
 ### `treeship package verify`
 
 Verify a .treeship session package

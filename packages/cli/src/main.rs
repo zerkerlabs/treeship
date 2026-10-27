@@ -1456,6 +1456,27 @@ enum PackageCommand {
     ///   treeship package redact ssn_abc.treeship --out shared/ --withhold art_1,art_2
     Redact(PackageRedactArgs),
 
+    /// Read, attach or drop the bytes behind a digest
+    ///
+    /// A step receipt commits to its output by digest, not by value. That is
+    /// what lets a trace be handed to someone who should not see the data,
+    /// and it also leaves a reader holding a commitment to something nobody
+    /// can open. Content closes that gap: bytes live in `content/`, each file
+    /// named by the SHA-256 of its own contents.
+    ///
+    /// A blob may be stored only when a signed statement in the package
+    /// already names its digest, and that digest is the whole binding. So
+    /// attaching content after sealing and dropping it before sharing each
+    /// leave every signature, the Merkle root and the chain untouched.
+    ///
+    /// Examples:
+    ///   treeship package content ls ssn_abc.treeship
+    ///   treeship package content add ssn_abc.treeship response.json
+    ///   treeship package content get ssn_abc.treeship sha256:4f3a... --out body.json
+    ///   treeship package content drop ssn_abc.treeship sha256:4f3a...
+    #[command(subcommand)]
+    Content(PackageContentCommand),
+
     /// Verify a .treeship session package
     ///
     /// Runs local verification checks from the package's own bytes: receipt
@@ -1519,6 +1540,68 @@ struct PackageRedactArgs {
     /// Why, recorded in the signed redaction
     #[arg(long)]
     reason: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum PackageContentCommand {
+    /// List every digest the trace names and whether its bytes are here
+    ///
+    /// Rows are the trace's digests, not the files on disk: the question is
+    /// what the trace commits to and how much of it a reader can open.
+    Ls(PackagePathArgs),
+
+    /// Attach a file's bytes, which the trace must already name by digest
+    ///
+    /// Refused when the file hashes to something no signed statement in the
+    /// package names -- usually because the file has been edited since the
+    /// step ran, so they are not the bytes that step saw.
+    Add(PackageContentAddArgs),
+
+    /// Write out the bytes stored for one digest
+    ///
+    /// The hash is recomputed before anything is written, so a substituted
+    /// file is refused rather than handed over. Without --out the bytes go
+    /// to stdout, to be piped into `shasum -a 256` and checked against the
+    /// signed statement by someone who trusts neither the package nor this
+    /// binary.
+    Get(PackageContentGetArgs),
+
+    /// Remove the bytes stored for one digest, keeping the commitment
+    ///
+    /// The trace verifies exactly as well without them: nothing signed
+    /// mentions the bytes, only their digest.
+    Drop(PackageContentDigestArgs),
+}
+
+#[derive(Args)]
+struct PackageContentAddArgs {
+    /// Path to the .treeship package directory
+    path: std::path::PathBuf,
+
+    /// File whose bytes to attach
+    file: std::path::PathBuf,
+}
+
+#[derive(Args)]
+struct PackageContentGetArgs {
+    /// Path to the .treeship package directory
+    path: std::path::PathBuf,
+
+    /// The digest to read, `sha256:<hex>` or bare hex
+    digest: String,
+
+    /// Write to this file instead of stdout
+    #[arg(long)]
+    out: Option<std::path::PathBuf>,
+}
+
+#[derive(Args)]
+struct PackageContentDigestArgs {
+    /// Path to the .treeship package directory
+    path: std::path::PathBuf,
+
+    /// The digest to drop, `sha256:<hex>` or bare hex
+    digest: String,
 }
 
 // --- add -------------------------------------------------------------------
@@ -3664,6 +3747,23 @@ fn dispatch(cli: &Cli, printer: &Printer) -> Result<(), Box<dyn std::error::Erro
                 cli.config.as_deref(),
                 printer,
             ),
+            PackageCommand::Content(sub) => match sub {
+                PackageContentCommand::Ls(a) => {
+                    commands::package::content_ls(a.path.clone(), printer)
+                }
+                PackageContentCommand::Add(a) => {
+                    commands::package::content_add(a.path.clone(), a.file.clone(), printer)
+                }
+                PackageContentCommand::Get(a) => commands::package::content_get(
+                    a.path.clone(),
+                    &a.digest,
+                    a.out.clone(),
+                    printer,
+                ),
+                PackageContentCommand::Drop(a) => {
+                    commands::package::content_drop(a.path.clone(), &a.digest, printer)
+                }
+            },
             PackageCommand::Verify(a) => commands::package::verify(
                 a.path.clone(),
                 cli.config.as_deref(),

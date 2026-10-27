@@ -4,6 +4,7 @@
 //! session manifests, events, context propagation, agent graphs,
 //! side-effect tracking, and receipt composition.
 
+pub mod content;
 pub mod context;
 pub mod event;
 pub mod event_log;
@@ -15,6 +16,10 @@ pub mod receipt;
 pub mod render;
 pub mod side_effects;
 
+pub use content::{
+    digest_bytes, digests_in_statement, list_blobs, normalize_digest, read_blob, remove_blob,
+    write_blob, ContentError, DigestRef, StoredBlob, CONTENT_DIR,
+};
 pub use context::PropagationContext;
 pub use event::*;
 pub use event_log::EventLog;

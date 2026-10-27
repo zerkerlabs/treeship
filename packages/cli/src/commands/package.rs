@@ -1517,6 +1517,31 @@ pub fn redact(
         });
     }
 
+    // Content follows the step that named it. A blob is in a package
+    // because a signed statement there names its digest; withholding that
+    // statement takes the only thing that justified the bytes, so leaving
+    // them behind would both disclose what was meant to be withheld and
+    // fail the copy's own `content` row. Recomputed from what is left in
+    // the copy rather than from the withheld envelopes, so a digest two
+    // steps both name survives the withholding of one of them.
+    let kept_digests: std::collections::BTreeSet<String> = {
+        let mut r = receipt.clone();
+        r.artifacts
+            .retain(|a| !drop.contains(a.artifact_id.as_str()));
+        treeship_core::session::package::signed_digests(&out, &r)
+            .into_keys()
+            .collect()
+    };
+    let mut content_dropped: Vec<String> = Vec::new();
+    if let Ok((blobs, _)) = treeship_core::session::content::list_blobs(&out) {
+        for blob in blobs {
+            if !kept_digests.contains(&blob.digest) {
+                treeship_core::session::content::remove_blob(&out, &blob.digest)?;
+                content_dropped.push(format!("sha256:{}", blob.digest));
+            }
+        }
+    }
+
     // The narrative that describes what was withheld goes with it.
     let before_timeline = receipt.timeline.len();
     receipt
@@ -1568,6 +1593,7 @@ pub fn redact(
             "from": pkg.display().to_string(),
             "to": out.display().to_string(),
             "withheld": withheld_entries.iter().map(|w| &w.artifact_id).collect::<Vec<_>>(),
+            "content_dropped": content_dropped,
             "timeline_entries_removed": timeline_removed,
             "commands_removed": commands_removed,
             "source_receipt_digest": payload.source_receipt_digest,
@@ -1591,11 +1617,299 @@ pub fn redact(
                 "entries removed",
                 &format!("{timeline_removed} timeline, {commands_removed} command(s)"),
             ),
+            (
+                "content dropped",
+                &format!("{} blob(s)", content_dropped.len()),
+            ),
             ("signed by", signer.key_id()),
         ],
     );
     printer.hint("treeship package verify <out>  reads it as verified-partial");
     Ok(())
+}
+
+// --- content ---------------------------------------------------------------
+//
+// The bytes behind a digest. A step receipt commits to its output by digest,
+// which is what lets a trace be handed to someone who should not see the data
+// -- and also what leaves a reader holding a commitment to something nobody
+// can open. These four commands are the way content gets attached, read and
+// taken out again, and all four rest on one rule: a blob may live in a
+// package only when a signed statement there already names its digest.
+//
+// Nothing here re-signs anything. The digest is the binding, so attaching
+// content after sealing and dropping it before sharing both leave every
+// signature, the Merkle root and the chain exactly as they were.
+
+/// Every digest the trace names, and whether its bytes are here.
+pub fn content_ls(pkg: PathBuf, printer: &Printer) -> Result<(), Box<dyn std::error::Error>> {
+    use treeship_core::session::content;
+
+    let receipt = read_receipt(&pkg)?;
+    let named = treeship_core::session::package::signed_digests(&pkg, &receipt);
+    let (blobs, strays) = content::list_blobs(&pkg)?;
+    let stored: std::collections::BTreeMap<&str, &content::StoredBlob> =
+        blobs.iter().map(|b| (b.digest.as_str(), b)).collect();
+
+    // Rows are the trace's digests, not the files on disk: the question a
+    // reader has is "what does this commit to, and can I open it", and a
+    // listing of only what is present cannot answer the second half.
+    #[derive(serde::Serialize)]
+    struct Row {
+        digest: String,
+        present: bool,
+        bytes: Option<u64>,
+        /// Set only when the stored bytes do not hash to their own name.
+        hashes_to: Option<String>,
+        named_by: Vec<serde_json::Value>,
+    }
+    let rows: Vec<Row> = named
+        .iter()
+        .map(|(d, refs)| {
+            let blob = stored.get(d.as_str());
+            Row {
+                digest: format!("sha256:{d}"),
+                present: blob.is_some(),
+                bytes: blob.map(|b| b.bytes),
+                hashes_to: blob
+                    .and_then(|b| b.mismatch.clone())
+                    .map(|a| format!("sha256:{a}")),
+                named_by: refs
+                    .iter()
+                    .map(|r| serde_json::json!({"artifact_id": r.artifact_id, "field": r.field}))
+                    .collect(),
+            }
+        })
+        .collect();
+    // Blobs the trace does not name are listed too rather than hidden: they
+    // are why `package verify` fails, so the listing has to show them.
+    let unreferenced: Vec<String> = blobs
+        .iter()
+        .filter(|b| !named.contains_key(&b.digest))
+        .map(|b| format!("sha256:{}", b.digest))
+        .collect();
+
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "package": pkg.display().to_string(),
+            "committed": rows.len(),
+            "present": rows.iter().filter(|r| r.present).count(),
+            "content": rows,
+            "unreferenced": unreferenced,
+            "not_content": strays,
+        }));
+        return Ok(());
+    }
+
+    if rows.is_empty() {
+        printer.info("no signed statement in this package names a sha-256 digest");
+        printer.hint("nothing can be attached here: content is bound by a digest the trace signs");
+        return Ok(());
+    }
+    let present = rows.iter().filter(|r| r.present).count();
+    printer.section(&format!(
+        "content  {present} of {} digest(s) openable here",
+        rows.len()
+    ));
+    for r in &rows {
+        let state = match (&r.hashes_to, r.present) {
+            (Some(_), _) => printer.red("substituted"),
+            (None, true) => printer.green("present"),
+            (None, false) => printer.dim("absent"),
+        };
+        let size = match r.bytes {
+            Some(n) => human_bytes(n),
+            None => "-".to_string(),
+        };
+        printer.info(&format!(
+            "  {}  {:>9}  {}",
+            &r.digest[..r.digest.len().min(19)],
+            size,
+            state
+        ));
+        for n in &r.named_by {
+            printer.dim_info(&format!(
+                "      {} {}",
+                n["artifact_id"].as_str().unwrap_or("?"),
+                n["field"].as_str().unwrap_or("?")
+            ));
+        }
+    }
+    for d in &unreferenced {
+        printer.info(&format!(
+            "  {}  {}",
+            &d[..d.len().min(19)],
+            printer.red("named by no signed statement")
+        ));
+    }
+    for s in &strays {
+        printer.info(&format!("  {s}  {}", printer.red("not a blob")));
+    }
+    if present < rows.len() {
+        printer
+            .hint("the rest stay commitments: a reader can check the digest, not open the bytes");
+    }
+    Ok(())
+}
+
+/// Write the bytes stored for one digest, after confirming they hash to it.
+pub fn content_get(
+    pkg: PathBuf,
+    digest: &str,
+    out: Option<PathBuf>,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use treeship_core::session::content;
+
+    // The hash is recomputed inside `read_blob`, so a substituted file is
+    // refused here rather than written out and trusted downstream.
+    let bytes = content::read_blob(&pkg, digest).map_err(|e| crate::exit::usage(e.to_string()))?;
+    let digest = content::digest_bytes(&bytes);
+
+    match out {
+        Some(path) => {
+            std::fs::write(&path, &bytes)?;
+            if printer.format == crate::printer::Format::Json {
+                printer.json(&serde_json::json!({
+                    "status": "ok",
+                    "message": "content written",
+                    "digest": digest,
+                    "bytes": bytes.len(),
+                    "path": path.display().to_string(),
+                }));
+                return Ok(());
+            }
+            printer.success(
+                "content written",
+                &[
+                    ("digest", &digest),
+                    ("bytes", &bytes.len().to_string()),
+                    ("path", &path.display().to_string()),
+                ],
+            );
+        }
+        None => {
+            // No --out means stdout, so the bytes can be piped into
+            // `shasum -a 256` and checked against the signed statement by
+            // someone who trusts neither this package nor this binary.
+            use std::io::Write;
+            std::io::stdout().write_all(&bytes)?;
+        }
+    }
+    Ok(())
+}
+
+/// Attach a file's bytes, which the trace must already name by digest.
+pub fn content_add(
+    pkg: PathBuf,
+    file: PathBuf,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use treeship_core::session::content;
+
+    let bytes =
+        std::fs::read(&file).map_err(|e| crate::exit::usage(format!("{}: {e}", file.display())))?;
+    let receipt = read_receipt(&pkg)?;
+    let named = treeship_core::session::package::signed_digests(&pkg, &receipt);
+    let referenced: std::collections::BTreeSet<String> = named.keys().cloned().collect();
+
+    let digest = content::write_blob(&pkg, &bytes, &referenced).map_err(|e| match e {
+        // The useful error names the file and says what the rule is, because
+        // the common cause is a file that has been edited since the step ran
+        // rather than a misunderstanding of the command.
+        content::ContentError::Unreferenced(d) => crate::exit::usage(format!(
+            "{} hashes to sha256:{d}, which no signed statement in this package names.\n\
+             Content is bound by a digest the trace signs, so these are not the bytes that step saw.",
+            file.display()
+        )),
+        other => crate::exit::usage(other.to_string()),
+    })?;
+    let hex_digest = content::normalize_digest(&digest).unwrap_or_default();
+    let named_by: Vec<serde_json::Value> = named
+        .get(&hex_digest)
+        .map(|refs| {
+            refs.iter()
+                .map(|r| serde_json::json!({"artifact_id": r.artifact_id, "field": r.field}))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "message": "content attached",
+            "digest": digest,
+            "bytes": bytes.len(),
+            "from": file.display().to_string(),
+            "named_by": named_by,
+        }));
+        return Ok(());
+    }
+    printer.success(
+        "content attached",
+        &[
+            ("digest", &digest),
+            ("bytes", &bytes.len().to_string()),
+            ("from", &file.display().to_string()),
+            ("named by", &format!("{} signed field(s)", named_by.len())),
+        ],
+    );
+    printer.hint("no signature changed: the bytes are bound by their own hash");
+    Ok(())
+}
+
+/// Remove the bytes stored for one digest, keeping the commitment to them.
+pub fn content_drop(
+    pkg: PathBuf,
+    digest: &str,
+    printer: &Printer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use treeship_core::session::content;
+
+    let removed =
+        content::remove_blob(&pkg, digest).map_err(|e| crate::exit::usage(e.to_string()))?;
+    if printer.format == crate::printer::Format::Json {
+        printer.json(&serde_json::json!({
+            "status": "ok",
+            "message": if removed { "content dropped" } else { "no content stored for that digest" },
+            "digest": digest,
+            "removed": removed,
+        }));
+        return Ok(());
+    }
+    if removed {
+        printer.success("content dropped", &[("digest", digest)]);
+        printer.hint("the trace still commits to it; the bytes are no longer here");
+    } else {
+        printer.info(&format!("no content stored for {digest}"));
+    }
+    Ok(())
+}
+
+/// The package's receipt, or a usage error naming the path that is not one.
+fn read_receipt(pkg: &Path) -> Result<SessionReceipt, Box<dyn std::error::Error>> {
+    treeship_core::session::read_package(pkg)
+        .map_err(|e| crate::exit::usage(format!("{}: {e}", pkg.display())))
+}
+
+/// Sizes as a reader would say them, matching the `content` verify row.
+fn human_bytes(n: u64) -> String {
+    if n < 1000 {
+        return format!("{n} B");
+    }
+    let units = ["kB", "MB", "GB", "TB"];
+    let mut v = n as f64 / 1000.0;
+    let mut i = 0;
+    while v >= 1000.0 && i + 1 < units.len() {
+        v /= 1000.0;
+        i += 1;
+    }
+    if v < 10.0 {
+        format!("{v:.1} {}", units[i])
+    } else {
+        format!("{v:.0} {}", units[i])
+    }
 }
 
 #[cfg(test)]

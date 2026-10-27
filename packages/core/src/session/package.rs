@@ -12,6 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use crate::session::content::CONTENT_DIR;
 use crate::statements::ApprovalStatement;
 use crate::verify::{signed_parent, SignedParent};
 use serde::{Deserialize, Serialize};
@@ -992,6 +993,14 @@ pub fn verify_package_with_options(
     // when the sealed set carries any; flags one acted on below its own
     // declared bar, or with no bar at all. The row does not re-run a judge.
     if let Some(row) = judgements_check(pkg_dir, &receipt) {
+        checks.push(row);
+    }
+
+    // 3g. Content: the bytes behind the digests. Reported only when the
+    // package carries a content directory. Fails on a blob that does not
+    // hash to its own name and on one no signed statement names; otherwise
+    // states how much of what the trace commits to a reader can open.
+    if let Some(row) = content_check(pkg_dir, &receipt) {
         checks.push(row);
     }
 
@@ -4248,6 +4257,152 @@ fn retries_check(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<VerifyCheck
 /// Summarise the `judgement.v1` receipts in the sealed set: how many, which
 /// judges, and whether any was acted on below its own threshold. `None`
 /// when the package carries no judgement.
+/// Every SHA-256 digest named by a signed statement in the sealed set, and
+/// the fields that named it.
+///
+/// This is the whole of the content layer's binding rule. A blob belongs to a
+/// trace when a signature already covers its digest, so the question "may
+/// these bytes be attached here?" reduces to "is this digest in here?", which
+/// this answers. Artifacts whose envelopes are absent -- withheld under a
+/// redaction, or missing, which other rows fail on -- contribute nothing:
+/// their digests are unreadable, so nothing can be attached for them.
+pub fn signed_digests(
+    pkg_dir: &Path,
+    receipt: &SessionReceipt,
+) -> BTreeMap<String, BTreeSet<crate::session::content::DigestRef>> {
+    let art_dir = pkg_dir.join(ARTIFACTS_DIR);
+    let mut out: BTreeMap<String, BTreeSet<crate::session::content::DigestRef>> = BTreeMap::new();
+    for entry in &receipt.artifacts {
+        let path = art_dir.join(format!("{}.json", sanitize_filename(&entry.artifact_id)));
+        let Ok(raw) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(env) = crate::attestation::Envelope::from_json(&raw) else {
+            continue;
+        };
+        // The payload is read out of the envelope rather than from any
+        // alongside copy, so only bytes the signature covers can name a
+        // digest. Reading an unsigned mirror of the statement here would let
+        // whoever edited the mirror decide what content is attachable.
+        let Some(stmt) = env
+            .payload_bytes()
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        else {
+            continue;
+        };
+        crate::session::content::digests_in_statement(&entry.artifact_id, &stmt, &mut out);
+    }
+    out
+}
+
+/// The `content` row: the bytes stored beside the trace, whether each one
+/// hashes to the name it is filed under, and how much of what the trace
+/// commits to a reader can actually open.
+///
+/// `None` when the package has no content directory, which is the normal
+/// state and not worth a row: the `coverage` row already tells a reader what
+/// the harness could observe, and a warning on every package sealed before
+/// this existed would say nothing about that package.
+///
+/// Two conditions fail:
+///
+///   - **A blob that does not hash to its own name.** The bytes were
+///     substituted, or written by something that did not hash what it wrote.
+///   - **A blob no signed statement names.** Nothing binds it to this trace,
+///     and a reader who finds bytes inside a package reads them as part of it.
+///     This is also what keeps redaction honest: dropping a step means
+///     dropping its content, because the digest that justified the blob goes
+///     withheld along with the envelope that named it.
+///
+/// A trace that commits to more than it carries is not a failure. Content is
+/// optional by design and dropping it is a supported operation, so the row
+/// reports the ratio and leaves the judgement to the reader.
+fn content_check(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<VerifyCheck> {
+    let (blobs, strays) = match crate::session::content::list_blobs(pkg_dir) {
+        Ok(r) => r,
+        Err(e) => {
+            return Some(VerifyCheck::fail(
+                "content",
+                &format!("content directory present but unreadable: {e}"),
+            ))
+        }
+    };
+    if blobs.is_empty() && strays.is_empty() && !pkg_dir.join(CONTENT_DIR).exists() {
+        return None;
+    }
+
+    let named = signed_digests(pkg_dir, receipt);
+    let mut problems: Vec<String> = Vec::new();
+    let mut bytes_total: u64 = 0;
+    let mut resolvable = 0usize;
+
+    for blob in &blobs {
+        bytes_total += blob.bytes;
+        if let Some(actual) = &blob.mismatch {
+            problems.push(format!(
+                "sha256:{} hashes to sha256:{}: the bytes under that name were substituted",
+                short(&blob.digest),
+                short(actual)
+            ));
+            continue;
+        }
+        match named.get(&blob.digest) {
+            Some(_) => resolvable += 1,
+            None => problems.push(format!(
+                "sha256:{} is named by no signed statement in this package: content that is not part of this trace",
+                short(&blob.digest)
+            )),
+        }
+    }
+    for stray in &strays {
+        problems.push(format!(
+            "{stray} is in content/ and is not a blob: every file there is named by the digest of its own contents"
+        ));
+    }
+
+    let committed = named.len();
+    let detail = format!(
+        "{} blob(s), {}; {resolvable} of {committed} digest(s) the signed statements name can be opened here, the rest stay commitments",
+        blobs.len(),
+        human_bytes(bytes_total),
+    );
+    if problems.is_empty() {
+        Some(VerifyCheck::pass("content", &detail))
+    } else {
+        Some(VerifyCheck::fail(
+            "content",
+            &format!("{detail}; {}: {}", problems.len(), problems.join("; ")),
+        ))
+    }
+}
+
+/// First 12 hex characters of a digest, enough to recognise in a row without
+/// pushing the rest of it off the line.
+fn short(hex_digest: &str) -> &str {
+    &hex_digest[..hex_digest.len().min(12)]
+}
+
+/// Sizes as a reader would say them. Decimal units, because the number here
+/// is read, not allocated against.
+fn human_bytes(n: u64) -> String {
+    if n < 1000 {
+        return format!("{n} B");
+    }
+    let units = ["kB", "MB", "GB", "TB"];
+    let mut v = n as f64 / 1000.0;
+    let mut i = 0;
+    while v >= 1000.0 && i + 1 < units.len() {
+        v /= 1000.0;
+        i += 1;
+    }
+    if v < 10.0 {
+        format!("{v:.1} {}", units[i])
+    } else {
+        format!("{v:.0} {}", units[i])
+    }
+}
+
 fn judgements_check(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<VerifyCheck> {
     let art_dir = pkg_dir.join(ARTIFACTS_DIR);
     let mut total = 0usize;
