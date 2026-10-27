@@ -1,0 +1,63 @@
+---
+title: "One purchase, three views"
+description: "A wallet mandate, Anthropic's commerce blueprint, and a Treeship receipt chain. The network sees the amount. The merchant sees the tent. The chain sees the refusal."
+date: 2026-10-13
+tags: ["commerce", "verifiable-intent", "receipts"]
+readTime: "6 min read"
+category: integration
+systems: ["verifiable-intent", "commerce-agents"]
+---
+
+# One purchase, three views
+
+On 13 October 2026 a shopping agent bought one tent. A wallet had already said what it was allowed to buy. Anthropic's commerce blueprint decided which tool calls were legal. Treeship signed what the agent did, including the item it was not allowed to add. No card was charged.
+
+The September essay, [Receipts for agentic commerce](/blog/receipts-for-agentic-commerce), mapped the stack. This post is one purchase from that stack, sealed and checked.
+
+## Who decides what
+
+Three parties, three jobs.
+
+The blueprint, [anthropics/commerce-agents](https://github.com/anthropics/commerce-agents) at `fd4d592`, decides what the agent may do in the store. Search, read a product, add a line, hand the cart to checkout. The retail mock has no model in the loop. Its provenance gate refuses a write for a product the session has never read.
+
+The wallet issues the [Verifiable Intent](https://verifiableintent.dev/) mandate: which merchant, which line, what amount. The issuer key and the user key are the reference SDK's published demo scalars. The instrument is `mastercard.srcDigitalCard` with id `demo-src-token-not-a-live-pan`. The audience on the payment credential is `https://www.mastercard.com`, because that is the audience the draft uses. The process is not Mastercard. Nothing was authorized on a card network.
+
+Treeship records the session. `treeship vi attest` refuses to sign a purchase outside the mandate, and when the purchase fits it puts the receipt chain into the credential's `agent_attestation` and signs two presentations: L3a for the network, L3b for the merchant. The spec's security model checks that the agent stayed inside the mandate. It does not, on its own, say how the agent behaved. The attestation is that record.
+
+## The purchase
+
+Session `ssn_7c891c5a4a091c2e`, sealed 2026-10-13, treeship 0.31.14.
+
+The catalog search returned the ACME Basecamp 2-Person Backpacking Tent, SKU `AR-1201`, at $149.00. The mandate's quantity cap is 2, so the ceiling is $298.00. The agent added one.
+
+A second add used a product id the session had never read. The provenance gate blocked it. That refusal is a receipt, `art_fe1f7e20fd68f03667a52ff1b8d2bee9`, chained to its intent `art_17a813dc6cbbdb56ab41bfad7b95ad88`. The action is `commerce.tool.add_to_cart.result`. The status is `blocked`. The gate is `provenance`.
+
+Checkout produced one transaction id, `6-ZsETGYU01qW1LA7v7ND0SJRvJyzkAmCuMClbjqbzE`. The Layer 3 attestation, `art_aff1d283f1611440791529de9da2626b`, sits on a chain of 12 receipts that reaches the session root. The order, `art_da47233c7afb1804376e1728aef7768d`, chains onto the attestation, so the sealed package holds the calls, the refusal, the credential, and the order.
+
+`treeship vi verify --local` passed against the demo issuer key.
+
+## What each party can see
+
+The network's L3a is `mandate.payment.1`, audience `https://www.mastercard.com`. It discloses the payee `acme-retail`, the amount `14900` minor units ($149.00), and the demo instrument. It does not disclose the tent's title.
+
+The merchant's L3b is `mandate.checkout.1`, audience `https://acme.example`. It discloses the line `AR-1201` × 1 and the same checkout hash. The tent's title is inside the merchant checkout JWT that L3b carries, not a claim the network receives.
+
+The chain discloses the refusal. Neither credential does. That split is the point. The credential says the purchase fit the mandate. The receipt chain says what the agent attempted, including what was blocked, and names the key that signed it.
+
+The same three views are on the [commerce page](https://www.treeship.dev/commerce). They were decoded from the sealed session, not drawn as a mockup.
+
+## What this does not do
+
+It does not authorize a live card. The token is a demo. The issuer key is a published demo scalar.
+
+It does not carry a second mandate pair, a running budget, or occurrence counts. The draft leaves those with a network, and `treeship vi` evaluates one purchase.
+
+It does not speak UCP, ACP, or Visa Trusted Agent Protocol. Treeship signs the credential. It does not implement those transports.
+
+The command is on the repository today:
+
+```bash
+python -m treeship_commerce.demo_vi
+```
+
+It needs treeship 0.31 or later (the current release is 0.31.14), the commerce blueprint, and the Verifiable Intent reference SDK. The PyPI package `treeship-commerce` picks the command up at the next release. The guide is [Verifiable Intent](/integrations/verifiable-intent). The hand-off, including what a receipt does not prove, is [Claude Commerce Agents](/commerce/commerce-agents).
