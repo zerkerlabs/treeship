@@ -30,6 +30,15 @@ ark-serialize = { version = "0.4", optional = true }
 ark-ec        = { version = "0.4", optional = true }
 ark-ff        = { version = "0.4", optional = true }
 
+# p256 0.14 brought in getrandom 0.4 (via crypto-bigint 0.7), which refuses to
+# compile for wasm32-unknown-unknown unless a backend is named: the target has
+# no OS entropy source, so the crate makes you say where randomness comes from
+# rather than guessing. `wasm_js` routes it through crypto.getRandomValues, the
+# same place the 0.2 `js` feature above points. Scoped to wasm so native builds
+# of this crate do not pull wasm-bindgen in through getrandom.
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom_04  = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+
 [features]
 default = []
 zk = ["ark-groth16", "ark-bn254", "ark-serialize", "ark-ec", "ark-ff"]

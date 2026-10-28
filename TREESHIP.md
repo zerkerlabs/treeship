@@ -53,8 +53,18 @@ That is the **complete** set of fields the bridge writes. There are no other fie
 
 ## What `@treeship/mcp` does NOT capture
 
-- **Raw argument values** — only the `sha256` of `JSON.stringify(arguments)`. Anyone with the original arguments can recompute the digest to prove what was called; without them, the digest reveals nothing.
+- **Raw argument values** — only the `sha256` of `JSON.stringify(arguments)`. Anyone with the original arguments can recompute the digest to prove what was called.
 - **Raw output content** — only the `sha256` of `JSON.stringify(result.content)`. Same property as above.
+
+> **A digest is a commitment, not redaction.** It hides a value only when the
+> space of possible values is large. A digest over a small enumeration (`approve`
+> / `deny`), a short identifier, a bounded amount, or any other guessable input is
+> recoverable by running the candidates through SHA-256 and comparing. Hashing is
+> not anonymization for low-entropy values. Where the committed value is drawn
+> from a small set and the receipt will be shared, commit it as part of the
+> enclosing object, whose nonces, ids and timestamps supply the entropy, or use
+> the salted selective-disclosure path (`core::disclosure`) rather than digesting
+> the bare value.
 - **File contents** — the bridge has no filesystem access. It only sees what flows through MCP `callTool`. (If you're using `treeship wrap` to capture shell commands, that's a separate path with its own behavior — see the wrap docs.)
 - **Environment variable values** — never logged. `TREESHIP_APPROVAL_NONCE`, `TREESHIP_ACTOR`, `TREESHIP_DISABLE`, and `TREESHIP_DEBUG` are read but their values are only used to gate behavior, not stored. The `approval_nonce` IS recorded as part of the intent (so the binding is verifiable), but it's a one-time random nonce by design — not a credential.
 - **Secrets, credentials, API keys, tokens** — none of the captured fields above contain these unless your tool's *error messages* leak them, in which case they'd land in `payload.error_message`. Treat that field as you would any error log.
