@@ -27,7 +27,7 @@ aes-gcm       = "0.10"
 zeroize       = "1"
 # Verifiable Intent (spec v0.1) credentials are ES256: ECDSA over P-256.
 # Pure Rust (RustCrypto), so the same code verifies in the WASM build.
-p256          = { version = "0.13", features = ["ecdsa"] }
+p256          = { version = "0.14", features = ["ecdsa"] }
 
 # fs2 (advisory file locks via flock / Windows equivalents) is required by
 # the event_log append path so sequence_no assignment is race-free across

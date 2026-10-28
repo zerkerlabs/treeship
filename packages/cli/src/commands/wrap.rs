@@ -19,9 +19,12 @@ use crate::{ctx, printer::Printer};
 
 /// Whether to record a line of raw program output in the receipt.
 ///
-/// Off by default. A digest is a claim about output that discloses nothing;
+/// Off by default. A digest commits to the output without carrying it, while
 /// the text itself is a disclosure decision, and disclosure decisions should
 /// be made deliberately by the operator rather than inherited from a default.
+/// The digest conceals only to the extent the output is unguessable: a digest
+/// over a short, bounded or enumerable value is recoverable by trying the
+/// candidates, so it is a commitment, not redaction.
 fn record_output_summary() -> bool {
     matches!(
         std::env::var("TREESHIP_RECORD_OUTPUT_SUMMARY").as_deref(),

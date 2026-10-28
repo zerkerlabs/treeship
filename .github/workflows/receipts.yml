@@ -3,13 +3,19 @@ name: receipts
 # Dogfood: every pull request to this repository runs the verify-receipts
 # action against the sealed packages committed under receipts/, with the
 # ship key pinned in receipts/trust_roots.json. The summary says how many
-# packages were verified; zero is reported as zero, never as a green.
+# packages were verified; zero is reported as zero, never as a green, and a
+# verdict comment on the pull request says what the agent did and what was
+# not proven.
 
 on:
   pull_request:
 
 permissions:
   contents: read
+  # The action posts one verdict comment per pull request and edits it in
+  # place on later runs. Without this it still verifies, still annotates and
+  # still fails the job; it only loses the comment.
+  pull-requests: write
 
 jobs:
   receipts:
