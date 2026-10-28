@@ -5,6 +5,10 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use p256::ecdsa::{
     signature::Signer as _, signature::Verifier as _, Signature, SigningKey, VerifyingKey,
 };
+// p256 0.14 renamed the SEC1 encoder and replaced `SigningKey::random` with
+// the `Generate` trait. Both produce the same bytes as before, which is what
+// the VI interop fixtures pin.
+use p256::elliptic_curve::Generate as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -140,7 +144,10 @@ impl AgentKey {
     /// Generate a fresh key. The kid is the first 16 hex characters of
     /// SHA-256 over the SEC1 compressed point, prefixed `vik_`.
     pub fn generate() -> Self {
-        let signing = SigningKey::random(&mut rand::rngs::OsRng);
+        // `generate()` draws from the system's ambient CSPRNG through the crate's
+        // own getrandom path, rather than this crate reaching for a second,
+        // differently-versioned OsRng of its own.
+        let signing = SigningKey::generate();
         let kid = kid_for(signing.verifying_key());
         Self { signing, kid }
     }
@@ -192,7 +199,7 @@ impl AgentKey {
 
     /// The public JWK with this key's kid, as a wallet binds it under `cnf`.
     pub fn public_jwk(&self) -> Jwk {
-        let point = self.signing.verifying_key().to_encoded_point(false);
+        let point = self.signing.verifying_key().to_sec1_point(false);
         Jwk {
             kty: "EC".into(),
             crv: "P-256".into(),
@@ -217,7 +224,7 @@ impl AgentKey {
 }
 
 fn kid_for(vk: &VerifyingKey) -> String {
-    let compressed = vk.to_encoded_point(true);
+    let compressed = vk.to_sec1_point(true);
     let h = Sha256::digest(compressed.as_bytes());
     format!("vik_{}", hex::encode(&h[..8]))
 }
