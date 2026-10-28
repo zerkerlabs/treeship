@@ -10,6 +10,7 @@
 //! every leaf is either run here or named in SKIP with a reason. A new
 //! command fails this test until someone classifies it, which is the point.
 
+use sha2::Digest;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -251,6 +252,13 @@ fn every_json_capable_command_emits_json() {
     let grant_id = grant["grant_id"].as_str().unwrap().to_string();
     ship.must(&["declare", "--tools", "read_file"]);
     ship.must(&["session", "start", "--name", "json"]);
+    // The in-session action names the digest of `body`, which is what makes
+    // the `package content` leaves below runnable rather than skipped: a blob
+    // may only be stored when a signed statement already names its digest.
+    let body: &[u8] = b"{\"ok\":true}";
+    let body_digest = format!("sha256:{}", hex::encode(sha2::Sha256::digest(body)));
+    let body_path = ship.work.path().join("body.json");
+    std::fs::write(&body_path, body).unwrap();
     ship.must(&[
         "attest",
         "action",
@@ -258,6 +266,8 @@ fn every_json_capable_command_emits_json() {
         "agent://a",
         "--action",
         "in-session",
+        "--output-digest",
+        &body_digest,
     ]);
     let close = ship.run_json(&["session", "close"]);
     let pkg = close
@@ -354,6 +364,36 @@ fn every_json_capable_command_emits_json() {
             "--withhold",
             &sealed_id,
         ],
+    );
+    check("package content ls", &["package", "content", "ls", &pkg]);
+    check(
+        "package content add",
+        &[
+            "package",
+            "content",
+            "add",
+            &pkg,
+            body_path.to_str().unwrap(),
+        ],
+    );
+    // `get` writes the retrieved bytes to stdout without --out, by design, so
+    // the JSON shape is the --out one.
+    let got = ship.work.path().join("got.json");
+    check(
+        "package content get",
+        &[
+            "package",
+            "content",
+            "get",
+            &pkg,
+            &body_digest,
+            "--out",
+            got.to_str().unwrap(),
+        ],
+    );
+    check(
+        "package content drop",
+        &["package", "content", "drop", &pkg, &body_digest],
     );
     check("receipt export", &["receipt", "export", &first_id]);
     check("session status", &["session", "status"]);
