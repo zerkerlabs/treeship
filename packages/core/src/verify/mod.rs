@@ -512,6 +512,7 @@ mod tests {
             type_: crate::session::receipt::RECEIPT_TYPE.into(),
             schema_version: Some(crate::session::receipt::RECEIPT_SCHEMA_VERSION.into()),
             custody: None,
+            judgements: None,
             session: SessionSection {
                 id: "ssn_test".into(),
                 name: None,

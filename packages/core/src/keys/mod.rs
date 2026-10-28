@@ -1222,8 +1222,8 @@ fn encrypt_for_disk_v2(
     // expanded key schedule; that's outside our control, but the raw
     // 32-byte buffer at this scope is ours to clear.
     let key_buf: Zeroizing<[u8; 32]> = Zeroizing::new(*key);
-    let aead_key: &AesKey<Aes256Gcm> = AesKey::<Aes256Gcm>::from_slice(key_buf.as_slice());
-    let cipher = Aes256Gcm::new(aead_key);
+    let aead_key = AesKey::<Aes256Gcm>::from(*key_buf);
+    let cipher = Aes256Gcm::new(&aead_key);
 
     // 96-bit random nonce from the OS CSPRNG.
     let nonce = Aes256Gcm::generate_nonce(&mut AeadOsRng);
@@ -1242,7 +1242,7 @@ fn encrypt_for_disk_v2(
     let mut out = Vec::with_capacity(2 + 12 + ciphertext.len());
     out.push(KEYSTORE_MAGIC);
     out.push(KEYSTORE_VERSION_V2);
-    out.extend_from_slice(nonce.as_slice());
+    out.extend_from_slice(&nonce[..]);
     out.extend_from_slice(&ciphertext);
     Ok(out)
 }
@@ -1274,14 +1274,19 @@ fn decrypt_v2(
     let ct = &blob[14..];
 
     let key_buf: Zeroizing<[u8; 32]> = Zeroizing::new(*key);
-    let aead_key: &AesKey<Aes256Gcm> = AesKey::<Aes256Gcm>::from_slice(key_buf.as_slice());
-    let cipher = Aes256Gcm::new(aead_key);
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let aead_key = AesKey::<Aes256Gcm>::from(*key_buf);
+    let cipher = Aes256Gcm::new(&aead_key);
+    // Exactly 12 bytes by the length check above; try_into keeps that an
+    // assertion rather than an assumption.
+    let nonce_arr: [u8; 12] = nonce_bytes
+        .try_into()
+        .map_err(|_| "v2 nonce is not 12 bytes".to_string())?;
+    let nonce = Nonce::from(nonce_arr);
 
     let aad = build_aad_v2(entry_id, public_key);
     cipher
         .decrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: ct,
                 aad: aad.as_slice(),
@@ -2703,15 +2708,15 @@ mod tests {
         // but whose tag was computed empty.
         use aes_gcm::aead::Aead;
         let key_buf: Zeroizing<[u8; 32]> = Zeroizing::new(key);
-        let aead_key: &AesKey<Aes256Gcm> = AesKey::<Aes256Gcm>::from_slice(key_buf.as_slice());
-        let cipher = Aes256Gcm::new(aead_key);
+        let aead_key = AesKey::<Aes256Gcm>::from(*key_buf);
+        let cipher = Aes256Gcm::new(&aead_key);
         let nonce = Aes256Gcm::generate_nonce(&mut AeadOsRng);
         let ct_no_aad = cipher.encrypt(&nonce, plaintext.as_slice()).unwrap();
 
         let mut forged = Vec::with_capacity(2 + 12 + ct_no_aad.len());
         forged.push(KEYSTORE_MAGIC);
         forged.push(KEYSTORE_VERSION_V2);
-        forged.extend_from_slice(nonce.as_slice());
+        forged.extend_from_slice(&nonce[..]);
         forged.extend_from_slice(&ct_no_aad);
 
         // Framing sanity passes. AAD does not. decrypt_v2 must reject.
