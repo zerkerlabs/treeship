@@ -368,7 +368,13 @@ fn every_json_capable_command_emits_json() {
     check("package content ls", &["package", "content", "ls", &pkg]);
     check(
         "package content add",
-        &["package", "content", "add", &pkg, body_path.to_str().unwrap()],
+        &[
+            "package",
+            "content",
+            "add",
+            &pkg,
+            body_path.to_str().unwrap(),
+        ],
     );
     // `get` writes the retrieved bytes to stdout without --out, by design, so
     // the JSON shape is the --out one.

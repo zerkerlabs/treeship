@@ -742,12 +742,11 @@ pub fn package_verdict(checks: &[VerifyCheck], structural_only: bool) -> Package
 fn verified_redaction(pkg_dir: &Path, receipt: &SessionReceipt) -> Option<RedactionPayload> {
     // Keys are read here rather than passed in so every caller judges a
     // redaction by the same rule: the keys this package already names.
-    let mut keys: BTreeMap<String, ed25519_dalek::VerifyingKey> = BTreeMap::new();
-    for (id, encoded) in read_package_keys(pkg_dir)?.keys {
-        if let Ok(vk) = crate::trust::decode_ed25519_pubkey(&encoded) {
-            keys.insert(id, vk);
-        }
-    }
+    // `package_verifying_keys` is that same read-and-decode, and returns an
+    // empty map where this used to bail -- the `signed` check below rejects
+    // either way, so a package with no readable keys.json still honours no
+    // redaction.
+    let keys = package_verifying_keys(pkg_dir);
     let raw = std::fs::read(pkg_dir.join(REDACTION_FILE)).ok()?;
     let env = crate::attestation::Envelope::from_json(&raw).ok()?;
 
