@@ -25,6 +25,17 @@ inputs:
   base-ref:
     description: Base ref for reading commit trailers. Defaults to the pull request base.
     default: ""
+  comment:
+    description: >
+      Post a verdict comment on the pull request, updating the previous one
+      rather than adding another. Needs `permissions: pull-requests: write` in
+      the calling workflow. A fork pull request gets a read-only token, so the
+      comment is skipped there with a warning; it never changes whether the
+      check passes.
+    default: "true"
+  github-token:
+    description: Token used to post the verdict comment. Defaults to the workflow token.
+    default: ${{ github.token }}
 
 runs:
   using: composite
@@ -40,4 +51,7 @@ runs:
         REQUIRE: ${{ inputs.require }}
         BASE_REF: ${{ inputs.base-ref != '' && inputs.base-ref || github.event.pull_request.base.sha || '' }}
         HEAD_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        COMMENT: ${{ inputs.comment }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: bash "${{ github.action_path }}/verify-receipts.sh"
