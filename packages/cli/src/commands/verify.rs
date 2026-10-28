@@ -1190,6 +1190,12 @@ fn compute_chain_linkage(chain: &[(String, Envelope)]) -> (bool, String) {
             SignedParent::Named(p) => Some(p),
             // Accepted here and reported by `legacy_endorsement_edges`.
             SignedParent::LegacyEndorsement => continue,
+            // Only the package verifier constructs this, for an artifact
+            // whose envelope was withheld. This walk reads statements out of
+            // storage, where a withheld artifact has none to read, so the
+            // variant cannot arise here. Treated as no signed edge rather
+            // than silently accepted, in case that ever stops being true.
+            SignedParent::WithheldAsserted(_) => None,
             SignedParent::None => None,
         };
         if named.as_deref() != Some(parent_id.as_str()) {

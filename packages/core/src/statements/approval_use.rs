@@ -495,7 +495,7 @@ pub fn approval_use_record_digest(rec: &ApprovalUse) -> String {
     let digest = hasher.finalize();
     let mut hex = String::with_capacity(64 + 7);
     hex.push_str("sha256:");
-    for b in digest.as_slice() {
+    for b in &digest[..] {
         use std::fmt::Write;
         let _ = write!(hex, "{b:02x}");
     }
@@ -516,7 +516,7 @@ pub fn approval_revocation_record_digest(rec: &ApprovalRevocation) -> String {
     let digest = hasher.finalize();
     let mut hex = String::with_capacity(64 + 7);
     hex.push_str("sha256:");
-    for b in digest.as_slice() {
+    for b in &digest[..] {
         use std::fmt::Write;
         let _ = write!(hex, "{b:02x}");
     }
@@ -539,7 +539,7 @@ pub fn journal_checkpoint_record_digest(rec: &JournalCheckpoint) -> String {
     let digest = hasher.finalize();
     let mut hex = String::with_capacity(64 + 7);
     hex.push_str("sha256:");
-    for b in digest.as_slice() {
+    for b in &digest[..] {
         use std::fmt::Write;
         let _ = write!(hex, "{b:02x}");
     }
@@ -654,7 +654,7 @@ pub fn nonce_digest(raw_nonce: &str) -> String {
     let digest = hasher.finalize();
     let mut hex = String::with_capacity(64 + 7);
     hex.push_str("sha256:");
-    for b in digest.as_slice() {
+    for b in &digest[..] {
         use std::fmt::Write;
         let _ = write!(hex, "{b:02x}");
     }
@@ -860,7 +860,7 @@ mod tests {
         let empty_digest = hasher.finalize();
         let mut empty_hex = String::with_capacity(64 + 7);
         empty_hex.push_str("sha256:");
-        for b in empty_digest.as_slice() {
+        for b in &empty_digest[..] {
             use std::fmt::Write;
             let _ = write!(empty_hex, "{b:02x}");
         }
