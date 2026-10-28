@@ -30,6 +30,7 @@
 //! digest unguessable, so a verifier cannot brute-force a low-entropy withheld
 //! value from its digest.
 
+use crate::canonical::canonical_json_string;
 use rand::rngs::OsRng;
 use rand::RngCore;
 use serde_json::Value;
@@ -135,50 +136,6 @@ fn digest_of_encoded(encoded: &str) -> String {
     let digest = Sha256::digest(encoded.as_bytes());
     format!("sha256:{}", hex::encode(digest))
 }
-
-/// Sorted-key canonical JSON. Mirrors the copies in `statements::invitation`
-/// and `merkle::checkpoint` (intentionally duplicated rather than a cross-module
-/// `pub use`, to keep each module self-contained per the existing convention).
-fn canonical_json_string(value: &Value) -> String {
-    use std::collections::BTreeMap;
-    match value {
-        Value::Object(map) => {
-            let sorted: BTreeMap<&String, String> = map
-                .iter()
-                .map(|(k, v)| (k, canonical_json_string(v)))
-                .collect();
-            let mut out = String::from("{");
-            let mut first = true;
-            for (k, v) in sorted {
-                if !first {
-                    out.push(',');
-                }
-                first = false;
-                let key_json = serde_json::to_string(k).expect("string serializes to JSON");
-                out.push_str(&key_json);
-                out.push(':');
-                out.push_str(&v);
-            }
-            out.push('}');
-            out
-        }
-        Value::Array(items) => {
-            let mut out = String::from("[");
-            let mut first = true;
-            for v in items {
-                if !first {
-                    out.push(',');
-                }
-                first = false;
-                out.push_str(&canonical_json_string(v));
-            }
-            out.push(']');
-            out
-        }
-        other => serde_json::to_string(other).expect("scalar JSON value serializes"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
