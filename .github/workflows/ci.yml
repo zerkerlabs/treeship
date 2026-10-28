@@ -681,6 +681,17 @@ jobs:
       - name: Install the SDK and the integration
         run: pip install -q -e "$GITHUB_WORKSPACE/packages/sdk-python" -e "$GITHUB_WORKSPACE/integrations/commerce-agents"
 
+      # The wallet demo issues Layer 1 and Layer 2 through the reference SDK.
+      # Same pin as the vi-interop job: a moving clone would make a green run
+      # mean "still agrees with whatever the draft says today".
+      - name: Clone agent-intent/verifiable-intent at the reviewed commit
+        run: |
+          git init -q /tmp/verifiable-intent
+          git -C /tmp/verifiable-intent fetch -q --depth 1 https://github.com/agent-intent/verifiable-intent.git 356c29635f1c44df7de02edb58699ca9f29bece6
+          git -C /tmp/verifiable-intent checkout -q FETCH_HEAD
+      - name: Install the Verifiable Intent reference SDK
+        run: pip install -q -e /tmp/verifiable-intent
+
       - name: Test
         working-directory: integrations/commerce-agents
         run: python -m pytest -q -p asyncio
@@ -768,7 +779,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.26.6'
+          go-version: '1.26.9'
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -777,7 +788,10 @@ jobs:
       # actually reachable from this code, so a finding here is a real call
       # path rather than a version-range match. That makes it worth failing
       # on, and it is why the Go toolchain pin above matters -- most of what
-      # it finds is in the standard library the build ships with.
+      # it finds is in the standard library the build ships with. The pin
+      # moved 1.26.6 -> 1.26.9 for five net/http advisories (GO-2026-6610
+      # through 6613 and 6617); when this job fails on a stdlib finding, the
+      # fix is almost always to raise that pin rather than to change code.
       - name: govulncheck
         working-directory: packages/hub
         run: govulncheck ./...
@@ -826,7 +840,7 @@ jobs:
           # later, when 1.26.6 shipped fixing five stdlib advisories --
           # including a net/http one that `rekor.Anchor` actually calls.
           # Bump this when that job goes red; that is the job working.
-          go-version: '1.26.6'
+          go-version: '1.26.9'
 
       - name: Build Hub
         working-directory: packages/hub
