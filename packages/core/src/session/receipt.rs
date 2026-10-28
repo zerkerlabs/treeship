@@ -63,6 +63,17 @@ pub struct SessionReceipt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authority: Option<AuthoritySection>,
 
+    /// What judges said about this session's calls, when any were asked.
+    ///
+    /// Absent, like `authority`, when there is nothing to report: a session
+    /// nobody judged says nothing here rather than showing an empty band that
+    /// reads like a clean bill. The package verifier derives the same facts
+    /// from the sealed judgement receipts; this carries them for every reader
+    /// that has the receipt but not the envelopes, which is the pull-request
+    /// comment, the report, and any consumer of `receipt.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judgements: Option<JudgementsSection>,
+
     /// Who actually held the signing key, when that is not the actor.
     ///
     /// Absent means self-custody -- the actor signed for itself, which is the
@@ -163,6 +174,32 @@ pub struct AuthoritySection {
     /// Actions run under a grant naming no holder, spendable by anyone who
     /// obtained it.
     pub bearer: u32,
+}
+
+/// What judges said about this session's calls.
+///
+/// The counts are kept apart on purpose, the same way `AuthoritySection`
+/// keeps violations and unverified apart: a refusal, an open escalation and a
+/// resolved one mean different things to a reviewer, and summing them into a
+/// single "flags" number lets the worst of them hide inside the total.
+///
+/// This records what the caller's own record says. It does not re-run a judge,
+/// so it is evidence of what was asked and answered, not a second opinion.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct JudgementsSection {
+    /// How many `judgement.v1` receipts the session sealed.
+    pub total: u32,
+    /// Distinct judges that answered, sorted. A judge naming itself is not a
+    /// claim about its competence; it is how a reader knows who to doubt.
+    pub judges: Vec<String>,
+    /// Answers where the caller stopped the action.
+    pub refused: u32,
+    /// Answers sent to a human or a stronger judge that no signed resolution
+    /// has closed. These are open questions, and counting them with the
+    /// resolved ones would read as settled.
+    pub escalated: u32,
+    /// Escalations a signed resolution closed.
+    pub resolved: u32,
 }
 
 /// One action's authority record.
@@ -591,6 +628,10 @@ impl ReceiptComposer {
             // load envelopes and run the verifier. The composer sees only
             // manifest + events + artifact metadata.
             authority: None,
+            // Same reason as `authority` above: the composer never opens an
+            // envelope, and a judgement's outcome lives inside the signed
+            // payload. The CLI fills this in at close, where the store is.
+            judgements: None,
             custody,
         }
     }
