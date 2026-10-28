@@ -329,6 +329,32 @@ fn every_json_capable_command_emits_json() {
     check("log", &["log"]);
     check("verify", &["verify", "last"]);
     check("package verify", &["package", "verify", &pkg]);
+    // Redact writes a copy, so it needs a destination that does not exist
+    // yet. Run it against the same fixture with nothing withheld named by a
+    // real id, so the contract covers the JSON shape rather than the policy.
+    let redact_out = ship.work.path().join("redacted.treeship");
+    // An id actually sealed in this package: `first_id` is the first artifact
+    // in the store, which the package need not contain.
+    let sealed_id: String = {
+        let raw = std::fs::read(std::path::Path::new(&pkg).join("receipt.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        v["artifacts"][0]["artifact_id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    check(
+        "package redact",
+        &[
+            "package",
+            "redact",
+            &pkg,
+            "--out",
+            redact_out.to_str().unwrap(),
+            "--withhold",
+            &sealed_id,
+        ],
+    );
     check("receipt export", &["receipt", "export", &first_id]);
     check("session status", &["session", "status"]);
     check("session start", &["session", "start", "--name", "again"]);
