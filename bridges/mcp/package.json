@@ -1,6 +1,6 @@
 {
   "name": "@treeship/mcp",
-  "version": "0.31.14",
+  "version": "0.32.0",
   "description": "Drop-in Treeship attestation for MCP tool calls",
   "license": "Apache-2.0",
   "repository": {
@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "@treeship/core-wasm": "0.31.14",
+    "@treeship/core-wasm": "0.32.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
